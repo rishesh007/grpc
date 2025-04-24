@@ -102,6 +102,8 @@ void Chttp2Connector::Connect(const Args& args, Result* result,
     notify_ = notify;
     event_engine_ = args_.channel_args.GetObject<EventEngine>();
   }
+  std::unique_ptr<EventEngine::Endpoint> endpoint =
+      args_.channel_args.GetObject<std::unique_ptr<EventEngine::Endpoint>>();
   absl::StatusOr<std::string> address = grpc_sockaddr_to_uri(args.address);
   if (!address.ok()) {
     grpc_error_handle error = GRPC_ERROR_CREATE(address.status().ToString());

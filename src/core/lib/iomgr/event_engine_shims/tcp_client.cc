@@ -34,7 +34,7 @@
 namespace grpc_event_engine {
 namespace experimental {
 
-int64_t event_engine_tcp_client_connect(
+int64_t event_engine_tcp_client_connect( // from where this is getting called?
     grpc_closure* on_connect, grpc_endpoint** endpoint,
     const grpc_event_engine::experimental::EndpointConfig& config,
     const grpc_resolved_address* addr, grpc_core::Timestamp deadline) {
@@ -52,7 +52,7 @@ int64_t event_engine_tcp_client_connect(
   }
   EventEngine::ConnectionHandle handle = engine_ptr->Connect(
       [on_connect,
-       endpoint](absl::StatusOr<std::unique_ptr<EventEngine::Endpoint>> ep) {
+       endpoint](absl::StatusOr<std::unique_ptr<EventEngine::Endpoint>> ep) { // check here
         grpc_core::ExecCtx exec_ctx;
         absl::Status conn_status = ep.ok() ? absl::OkStatus() : ep.status();
         if (ep.ok()) {

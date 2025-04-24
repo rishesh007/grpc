@@ -58,6 +58,11 @@
 #include "src/core/util/unique_type_name.h"
 #include "src/core/util/work_serializer.h"
 
+/** This arg is intended for internal use only, primarily
+ *  for passing endpoint information during subchannel creation or connection.
+ */
+#define GRPC_ARG_SUBCHANNEL_ENDPOINT "grpc.internal.subchannel_endpoint"
+
 namespace grpc_core {
 
 class SubchannelCall;

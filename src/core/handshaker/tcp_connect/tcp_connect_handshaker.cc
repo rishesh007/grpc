@@ -23,6 +23,7 @@
 #include <grpc/support/alloc.h>
 #include <grpc/support/port_platform.h>
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -83,7 +84,7 @@ class TCPConnectHandshaker : public Handshaker {
   HandshakerArgs* args_ = nullptr;
   bool bind_endpoint_to_pollset_ = false;
   grpc_resolved_address addr_;
-  grpc_closure connected_;
+  connected_;
 };
 
 TCPConnectHandshaker::TCPConnectHandshaker(grpc_pollset_set* pollset_set)
@@ -122,6 +123,11 @@ void TCPConnectHandshaker::DoHandshake(
   {
     MutexLock lock(&mu_);
     on_handshake_done_ = std::move(on_handshake_done);
+  }
+  // If the endpoint already exists, no need to do any operations, simply
+  // signal that this handshake step is complete successfully.
+  if (args->endpoint.get() != nullptr) {
+    return;
   }
   CHECK_EQ(args->endpoint.get(), nullptr);
   args_ = args;

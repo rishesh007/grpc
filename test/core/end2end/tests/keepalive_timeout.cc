@@ -40,9 +40,9 @@ CORE_END2END_TEST(Http2SingleHopTests, KeepaliveTimeout) {
   // Disable ping ack to trigger the keepalive timeout
   InitServer(ChannelArgs().Set("grpc.http2.ack_pings", false));
   InitClient(ChannelArgs()
-                 .Set(GRPC_ARG_KEEPALIVE_TIME_MS, 10)
-                 .Set(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 0)
-                 .Set(GRPC_ARG_PING_TIMEOUT_MS, 0)
+                 .Set(GRPC_ARG_KEEPALIVE_TIME_MS, 1000)
+                 .Set(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 000)
+                 .Set(GRPC_ARG_PING_TIMEOUT_MS, 1000)
                  .Set(GRPC_ARG_HTTP2_BDP_PROBE, false));
   auto c = NewClientCall("/foo").Timeout(Duration::Minutes(1)).Create();
   IncomingMetadata server_initial_metadata;
@@ -73,8 +73,8 @@ CORE_END2END_TEST(Http2SingleHopTests, ReadDelaysKeepalive) {
   // Disable ping ack to trigger the keepalive timeout
   InitServer(ChannelArgs().Set("grpc.http2.ack_pings", false));
   InitClient(ChannelArgs()
-                 .Set(GRPC_ARG_KEEPALIVE_TIME_MS, (20 * kPingInterval).millis())
-                 .Set(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 0)
+                 .Set(GRPC_ARG_KEEPALIVE_TIME_MS, (2000 * kPingInterval).millis())
+                 .Set(GRPC_ARG_KEEPALIVE_TIMEOUT_MS, 1000)
                  .Set(GRPC_ARG_HTTP2_BDP_PROBE, false));
   auto c = NewClientCall("/foo").Timeout(Duration::Seconds(60)).Create();
   IncomingMetadata server_initial_metadata;

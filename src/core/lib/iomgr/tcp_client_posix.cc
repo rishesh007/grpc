@@ -391,7 +391,7 @@ int64_t grpc_tcp_client_create_from_prepared_fd(
   return connection_id;
 }
 
-static int64_t tcp_connect(grpc_closure* closure, grpc_endpoint** ep,
+static int64_t tcp_connect(grpc_closure* closure, grpc_endpoint** ep, //tcp connection
                            grpc_pollset_set* interested_parties,
                            const EndpointConfig& config,
                            const grpc_resolved_address* addr,
@@ -403,7 +403,7 @@ static int64_t tcp_connect(grpc_closure* closure, grpc_endpoint** ep,
   grpc_resolved_address mapped_addr;
   int fd = -1;
   grpc_error_handle error;
-  *ep = nullptr;
+  *ep = nullptr; // get fd
   if ((error = grpc_tcp_client_prepare_fd(TcpOptionsFromEndpointConfig(config),
                                           addr, &mapped_addr, &fd)) !=
       absl::OkStatus()) {

@@ -179,10 +179,11 @@ void HandshakeManager::CallNextHandshakerLocked(absl::Status error) {
       << handshaker->name() << " [" << handshaker.get() << "] at index "
       << index_;
   ++index_;
-  handshaker->DoHandshake(&args_, [self = Ref()](absl::Status error) mutable {
+  auto on_handshake_done = [self = Ref()](absl::Status error) mutable {
     MutexLock lock(&self->mu_);
     self->CallNextHandshakerLocked(std::move(error));
-  });
+  };
+  handshaker->DoHandshake(&args_, on_handshake_done);
 }
 
 }  // namespace grpc_core

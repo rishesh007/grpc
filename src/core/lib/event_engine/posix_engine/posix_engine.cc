@@ -644,7 +644,7 @@ bool PosixEventEngine::CancelConnect(EventEngine::ConnectionHandle handle) {
 #else   // GRPC_PLATFORM_SUPPORTS_POSIX_POLLING
   grpc_core::Crash(
       "EventEngine::CancelConnect is not supported on this platform");
-#endif  // GRPC_PLATFORM_SUPPORTS_POSIX_POLLING
+#endif  // GRPC_PLATFORM_SUPPORTS_PO  SIX_POLLING
 }
 
 EventEngine::ConnectionHandle PosixEventEngine::Connect(
@@ -655,12 +655,12 @@ EventEngine::ConnectionHandle PosixEventEngine::Connect(
   CHECK_NE(poller_manager_, nullptr);
   PosixTcpOptions options = TcpOptionsFromEndpointConfig(args);
   absl::StatusOr<PosixSocketWrapper::PosixSocketCreateResult> socket =
-      PosixSocketWrapper::CreateAndPrepareTcpClientSocket(options, addr);
+      PosixSocketWrapper::CreateAndPrepareTcpClientSocket(options, addr); //
   if (!socket.ok()) {
     Run([on_connect = std::move(on_connect),
          status = socket.status()]() mutable { on_connect(status); });
     return EventEngine::ConnectionHandle::kInvalid;
-  }
+  } // below we got the fd
   return CreateEndpointFromUnconnectedFdInternal(
       (*socket).sock.Fd(), std::move(on_connect), (*socket).mapped_target_addr,
       options, std::move(memory_allocator), timeout);
