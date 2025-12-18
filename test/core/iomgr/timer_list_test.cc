@@ -12,14 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
-#include "src/core/lib/iomgr/timer.h"
-
-#include "gtest/gtest.h"
-
 #include <grpc/grpc.h>
 
+#include "src/core/lib/iomgr/timer.h"
 #include "test/core/test_util/test_config.h"
+#include "gtest/gtest.h"
 
 namespace grpc_core {
 namespace {
