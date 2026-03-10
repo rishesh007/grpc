@@ -23,7 +23,6 @@
 #include "envoy/extensions/filters/common/matcher/action/v3/skip_action.upbdefs.h"
 #include "envoy/extensions/filters/http/composite/v3/composite.upb.h"
 #include "envoy/extensions/filters/http/composite/v3/composite.upbdefs.h"
-#include "envoy/type/v3/percent.upb.h"
 #include "src/core/filter/composite/composite_filter.h"
 #include "src/core/util/validation_errors.h"
 #include "src/core/xds/grpc/xds_bootstrap_grpc.h"
@@ -90,26 +89,6 @@ class SkipFilterActionFactory final : public XdsMatcherActionFactory {
     return std::make_unique<CompositeFilter::SkipFilterAction>();
   }
 };
-
-// Returns the number per million.
-uint32_t ParseFractionalPercent(
-    const envoy_type_v3_FractionalPercent* fractional_percent) {
-  if (fractional_percent == nullptr) return 1000000;
-  uint32_t numerator =
-      envoy_type_v3_FractionalPercent_numerator(fractional_percent);
-  const auto denominator =
-      static_cast<envoy_type_v3_FractionalPercent_DenominatorType>(
-          envoy_type_v3_FractionalPercent_denominator(fractional_percent));
-  switch (denominator) {
-    case envoy_type_v3_FractionalPercent_MILLION:
-      return numerator;
-    case envoy_type_v3_FractionalPercent_TEN_THOUSAND:
-      return numerator * 100;
-    case envoy_type_v3_FractionalPercent_HUNDRED:
-    default:
-      return numerator * 10000;
-  }
-}
 
 // Matcher action factory for ExecuteFilterAction.
 class ExecuteFilterActionFactory final : public XdsMatcherActionFactory {
@@ -261,18 +240,19 @@ RefCountedPtr<const FilterConfig> XdsHttpCompositeFilter::ParseTopLevelConfig(
     }
   }
   // Parse matcher.
-  ValidationErrors::ScopedField field(errors, ".xds_matcher");
   auto config = MakeRefCounted<CompositeFilter::Config>();
-  config->matcher = ParseMatcher(
-      context,
+  const auto* matcher =
       envoy_extensions_common_matching_v3_ExtensionWithMatcher_xds_matcher(
-          extension_with_matcher),
-      errors);
+          extension_with_matcher);
+  if (matcher != nullptr) {
+    ValidationErrors::ScopedField field(errors, ".xds_matcher");
+    config->matcher = ParseMatcher(context, matcher, errors);
+  }
   return config;
 }
 
 RefCountedPtr<const FilterConfig> XdsHttpCompositeFilter::ParseOverrideConfig(
-    absl::string_view instance_name,
+    absl::string_view /*instance_name*/,
     const XdsResourceType::DecodeContext& context,
     const XdsExtension& extension, ValidationErrors* errors) const {
   const absl::string_view* serialized_filter_config =
@@ -303,6 +283,7 @@ void XdsHttpCompositeFilter::UpdateBlackboard(
     const FilterConfig& config, const Blackboard* old_blackboard,
     Blackboard* new_blackboard) const {
   auto& composite_config = DownCast<const CompositeFilter::Config&>(config);
+  if (composite_config.matcher == nullptr) return;
   composite_config.matcher->ForEachAction(
       [&](const XdsMatcher::Action& action) {
         if (action.type() != CompositeFilter::ExecuteFilterAction::Type()) {

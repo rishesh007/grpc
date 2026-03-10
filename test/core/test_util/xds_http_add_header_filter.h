@@ -14,6 +14,9 @@
 // limitations under the License.
 //
 
+#ifndef GRPC_TEST_CORE_TEST_UTIL_XDS_HTTP_ADD_HEADER_FILTER_H
+#define GRPC_TEST_CORE_TEST_UTIL_XDS_HTTP_ADD_HEADER_FILTER_H
+
 #include <memory>
 #include <optional>
 #include <string>
@@ -123,7 +126,7 @@ class XdsHttpAddHeaderFilterFactory final : public XdsHttpFilterImpl {
   absl::string_view OverrideConfigProtoName() const override {
     return kFilterName;
   }
-  void PopulateSymtab(upb_DefPool* symtab) const override {}
+  void PopulateSymtab(upb_DefPool* /*symtab*/) const override {}
   void AddFilter(FilterChainBuilder& builder,
                  RefCountedPtr<const FilterConfig> config) const override {
     builder.AddFilter<AddHeaderFilter>(std::move(config));
@@ -179,3 +182,5 @@ class XdsHttpAddHeaderFilterFactory final : public XdsHttpFilterImpl {
 };
 
 }  // namespace grpc_core
+
+#endif  // GRPC_TEST_CORE_TEST_UTIL_XDS_HTTP_ADD_HEADER_FILTER_H
