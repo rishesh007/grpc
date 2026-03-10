@@ -74,8 +74,8 @@ std::string ExtProcFilter::Config::ToString() const {
                                  "]"));
   }
   if (mutation_rules.has_value()) {
-    parts.push_back(absl::StrCat("mutation_rules=",
-                                 mutation_rules->ToString()));
+    parts.push_back(
+        absl::StrCat("mutation_rules=", mutation_rules->ToString()));
   }
   if (!forwarding_allowed_headers.empty()) {
     std::vector<std::string> matchers;
@@ -104,11 +104,10 @@ std::string ExtProcFilter::Config::ToString() const {
   return absl::StrCat("{", absl::StrJoin(parts, ", "), "}");
 }
 
-const grpc_channel_filter ExtProcFilter::kFilterVtable =
-    MakePromiseBasedFilter<
-        ExtProcFilter, FilterEndpoint::kClient,
-        kFilterExaminesServerInitialMetadata | kFilterExaminesOutboundMessages |
-            kFilterExaminesInboundMessages | kFilterExaminesCallContext>();
+const grpc_channel_filter ExtProcFilter::kFilterVtable = MakePromiseBasedFilter<
+    ExtProcFilter, FilterEndpoint::kClient,
+    kFilterExaminesServerInitialMetadata | kFilterExaminesOutboundMessages |
+        kFilterExaminesInboundMessages | kFilterExaminesCallContext>();
 
 absl::StatusOr<RefCountedPtr<ExtProcFilter>> ExtProcFilter::Create(
     const ChannelArgs& args, ChannelFilter::Args filter_args) {
@@ -117,7 +116,7 @@ absl::StatusOr<RefCountedPtr<ExtProcFilter>> ExtProcFilter::Create(
   }
   auto config = filter_args.config().TakeAsSubclass<const Config>();
   return MakeRefCounted<ExtProcFilter>(args, std::move(config),
-                                         std::move(filter_args));
+                                       std::move(filter_args));
 }
 
 ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
@@ -125,8 +124,7 @@ ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
                              ChannelFilter::Args filter_args)
     : config_(std::move(config)) {}
 
-void ExtProcFilter::InterceptCall(
-    UnstartedCallHandler unstarted_call_handler) {
+void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {
   // Consume the call coming to us from the client side.
   CallHandler handler = Consume(std::move(unstarted_call_handler));
   // FIXME: implement

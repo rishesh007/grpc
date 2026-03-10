@@ -119,8 +119,7 @@ struct XdsHeaderMutationRules {
            disallow_is_error == other.disallow_is_error &&
            is_re_equal(disallow_expression.get(),
                        other.disallow_expression.get()) &&
-           is_re_equal(allow_expression.get(),
-                       other.allow_expression.get());
+           is_re_equal(allow_expression.get(), other.allow_expression.get());
   }
 
   std::string ToString() const;

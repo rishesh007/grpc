@@ -70,13 +70,12 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<CompositeFilter> {
 
     bool Equals(const FilterConfig& other) const override {
       const auto& o = DownCast<const Config&>(other);
-      auto grpc_service_eq =
-          [](const std::shared_ptr<XdsGrpcService>& a,
-             const std::shared_ptr<XdsGrpcService>& b) {
-            if (a == nullptr) return b == nullptr;
-            if (b == nullptr) return false;
-            return *a == *b;
-          };
+      auto grpc_service_eq = [](const std::shared_ptr<XdsGrpcService>& a,
+                                const std::shared_ptr<XdsGrpcService>& b) {
+        if (a == nullptr) return b == nullptr;
+        if (b == nullptr) return false;
+        return *a == *b;
+      };
       return grpc_service_eq(grpc_service, o.grpc_service) &&
              failure_mode_allow == o.failure_mode_allow &&
              processing_mode == o.processing_mode &&
@@ -120,11 +119,10 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<CompositeFilter> {
                 ChannelFilter::Args filter_args);
 
  private:
-  void Orphaned() override {}
+  void Orphaned();
+  d InterceptCall(UnstartedCallHandler unstarted_call_handler);
 
-  void InterceptCall(UnstartedCallHandler unstarted_call_handler) override;
-
-  RefCountedPtr<const Config> config_;
+  RefCr<const Config> config_;
 };
 
 }  // namespace grpc_core

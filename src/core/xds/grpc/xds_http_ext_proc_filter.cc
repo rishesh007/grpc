@@ -87,10 +87,10 @@ bool ParseBodyProcessingMode(int32_t value, ValidationErrors* errors) {
   }
 }
 
-ProcessingMode ParseProcessingMode(
+ExtProcFilter::ProcessingMode ParseProcessingMode(
     const envoy_extensions_filters_http_ext_proc_v3_ProcessingMode* proto,
     ValidationErrors* errors) {
-  ProcessingMode processing_mode;
+  ExtProcFilter::ProcessingMode processing_mode;
   if (proto == nullptr) {
     errors->AddError("field not set");
     return processing_mode;
@@ -165,20 +165,20 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
   }
   // failure_mode_allow
   config->failure_mode_allow =
-     envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_failure_mode_allow(
-         ext_proc);
+      envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_failure_mode_allow(
+          ext_proc);
   // processing_mode
   {
     ValidationErrors::ScopedField field(errors, ".processing_mode");
     config->processing_mode = ParseProcessingMode(
-       envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_processing_mode(
-           ext_proc),
-       errors);
+        envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_processing_mode(
+            ext_proc),
+        errors);
   }
   // allow_mode_override
   config->allow_mode_override =
-     envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_allow_mode_override(
-         ext_proc);
+      envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_allow_mode_override(
+          ext_proc);
   size_t size;
   const auto* const* allowed_override_modes =
       envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_allowed_override_modes(
@@ -215,17 +215,17 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
   }
   // forwarding_rules
   if (const auto* forwarding_rules =
-          envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_forwarding_rules(
+          envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_forward_rules(
               ext_proc);
       forwarding_rules != nullptr) {
     const auto* allowed_headers =
         envoy_extensions_filters_http_ext_proc_v3_HeaderForwardingRules_allowed_headers(
             forwarding_rules);
     if (allowed_headers != nullptr) {
-      ValidationErrors::ScopedField field(
-          errors, ".forwarding_rules.allowed_headers");
-      config->forwarding_allowed_headers = ListStringMatcherParse(
-          context, allowed_headers, errors);
+      ValidationErrors::ScopedField field(errors,
+                                          ".forwarding_rules.allowed_headers");
+      config->forwarding_allowed_headers =
+          ListStringMatcherParse(context, allowed_headers, errors);
     }
     const auto* disallowed_headers =
         envoy_extensions_filters_http_ext_proc_v3_HeaderForwardingRules_disallowed_headers(
@@ -233,18 +233,18 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
     if (disallowed_headers != nullptr) {
       ValidationErrors::ScopedField field(
           errors, ".forwarding_rules.disallowed_headers");
-      config->forwarding_disallowed_headers = ListStringMatcherParse(
-          context, disallowed_headers, errors);
+      config->forwarding_disallowed_headers =
+          ListStringMatcherParse(context, disallowed_headers, errors);
     }
   }
   // disable_immediate_response
   config->disable_immediate_response =
-     envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_disable_immediate_response(
-         ext_proc);
+      envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_disable_immediate_response(
+          ext_proc);
   // observability_mode
   config->observability_mode =
-     envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_observability_mode(
-         ext_proc);
+      envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_observability_mode(
+          ext_proc);
   // deferred_close_timeout
   const auto* deferred_close_timeout =
       envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_deferred_close_timeout(
@@ -302,7 +302,7 @@ struct OverrideConfig final : public FilterConfig {
     return absl::StrCat("{", absl::StrJoin(parts, ", "), "}");
   }
 
-  std::optional<ProcessingMode> processing_mode;
+  std::optional<ExtProcFilter::ProcessingMode> processing_mode;
   std::shared_ptr<XdsGrpcService> grpc_service;
   std::vector<std::string> request_attributes;
   std::vector<std::string> response_attributes;

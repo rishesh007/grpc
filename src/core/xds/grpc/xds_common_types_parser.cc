@@ -277,8 +277,8 @@ std::vector<StringMatcher> ListStringMatcherParse(
       envoy_type_matcher_v3_ListStringMatcher_patterns(matcher_proto, &size);
   std::vector<StringMatcher> matchers;
   for (size_t i = 0; i < size; ++i) {
-    ValidationErrors::ScopedField field(
-        errors, absl::StrCat(".patterns[", i, "]"));
+    ValidationErrors::ScopedField field(errors,
+                                        absl::StrCat(".patterns[", i, "]"));
     matchers.push_back(StringMatcherParse(patterns[i], errors);
   }
   return matchers;
@@ -293,8 +293,8 @@ std::vector<StringMatcher> ListStringMatcherParse(
       xds_type_matcher_v3_ListStringMatcher_patterns(matcher_proto, &size);
   std::vector<StringMatcher> matchers;
   for (size_t i = 0; i < size; ++i) {
-    ValidationErrors::ScopedField field(
-        errors, absl::StrCat(".patterns[", i, "]"));
+    ValidationErrors::ScopedField field(errors,
+                                        absl::StrCat(".patterns[", i, "]"));
     matchers.push_back(StringMatcherParse(patterns[i], errors);
   }
   return matchers;
