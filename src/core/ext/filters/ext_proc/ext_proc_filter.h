@@ -14,8 +14,8 @@
 // limitations under the License.
 //
 
-#ifndef GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
-#define GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
+#ifndef GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_FILTER_H
+#define GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_FILTER_H
 
 #include <memory>
 #include <string>
@@ -24,7 +24,6 @@
 
 // struct envoy_service_ext_proc_v3_ProcessingRequest;
 // struct envoy_config_core_v3_HeaderMap;
-#include "upb/base/string_view.h"
 #include "envoy/config/core/v3/base.upb.h"
 #include "envoy/service/ext_proc/v3/external_processor.upb.h"
 #include "src/core/call/call_destination.h"
@@ -35,6 +34,7 @@
 #include "src/core/util/ref_counted_ptr.h"
 #include "src/core/util/unique_type_name.h"
 #include "src/core/xds/grpc/xds_common_types.h"
+#include "upb/base/string_view.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 
@@ -67,9 +67,11 @@ class ExtProcRequest {
     Builder& SetResponseBody(upb_StringView buf, bool end_of_stream);
     Builder& SetResponseTrailers(envoy_config_core_v3_HeaderMap* trailer);
     Builder& SetObservabilityMode(bool mode);
-    Builder& SetAttributes(const std::map<std::string, std::string>& attributes);
+    Builder& SetAttributes(
+        const std::map<std::string, std::string>& attributes);
     Builder& SetProtocolConfigRequest(bool is_first_message, BodySendMode mode);
-    Builder& SetProtocolConfigResponse(bool is_first_message, BodySendMode mode);
+    Builder& SetProtocolConfigResponse(bool is_first_message,
+                                       BodySendMode mode);
 
     ExtProcRequest Build();
 
@@ -83,7 +85,7 @@ class ExtProcRequest {
  private:
   explicit ExtProcRequest(upb_Arena* arena,
                           envoy_service_ext_proc_v3_ProcessingRequest* request);
-                          
+
   upb_Arena* arena_;
   envoy_service_ext_proc_v3_ProcessingRequest* request_;
 };
@@ -187,4 +189,4 @@ extern void (*g_test_ext_proc_message_modifier)(MessageHandle*);
 
 }  // namespace grpc_core
 
-#endif  // GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
+#endif  // GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_FILTER_H
