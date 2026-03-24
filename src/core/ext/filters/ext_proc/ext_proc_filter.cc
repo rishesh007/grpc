@@ -59,8 +59,8 @@ ExtProcRequest::Builder& ExtProcRequest::Builder::SetRequestHeaders(
   envoy_service_ext_proc_v3_HttpHeaders_set_headers(http_headers, headers);
   envoy_service_ext_proc_v3_HttpHeaders_set_end_of_stream(http_headers,
                                                           end_of_stream);
-  envoy_service_ext_proc_v3_ProcessingRequest_set_request_headers(
-      request_, http_headers);
+  envoy_service_ext_proc_v3_ProcessingRequest_set_request_headers(request_,
+                                                                  http_headers);
   return *this;
 }
 
@@ -81,8 +81,7 @@ ExtProcRequest::Builder& ExtProcRequest::Builder::SetRequestBody(
       envoy_service_ext_proc_v3_HttpBody_new(arena_);
   envoy_service_ext_proc_v3_HttpBody_set_body(body, buf);
   envoy_service_ext_proc_v3_HttpBody_set_end_of_stream(body, end_of_stream);
-  envoy_service_ext_proc_v3_ProcessingRequest_set_request_body(
-      request_, body);
+  envoy_service_ext_proc_v3_ProcessingRequest_set_request_body(request_, body);
   return *this;
 }
 
@@ -92,8 +91,7 @@ ExtProcRequest::Builder& ExtProcRequest::Builder::SetResponseBody(
       envoy_service_ext_proc_v3_HttpBody_new(arena_);
   envoy_service_ext_proc_v3_HttpBody_set_body(body, buf);
   envoy_service_ext_proc_v3_HttpBody_set_end_of_stream(body, end_of_stream);
-  envoy_service_ext_proc_v3_ProcessingRequest_set_response_body(
-      request_, body);
+  envoy_service_ext_proc_v3_ProcessingRequest_set_response_body(request_, body);
   return *this;
 }
 
@@ -108,8 +106,8 @@ ExtProcRequest::Builder& ExtProcRequest::Builder::SetResponseTrailers(
 
 ExtProcRequest::Builder& ExtProcRequest::Builder::SetObservabilityMode(
     bool mode) {
-  envoy_service_ext_proc_v3_ProcessingRequest_set_observability_mode(
-      request_, mode);
+  envoy_service_ext_proc_v3_ProcessingRequest_set_observability_mode(request_,
+                                                                     mode);
   return *this;
 }
 
@@ -121,7 +119,8 @@ ExtProcRequest::Builder& ExtProcRequest::Builder::SetAttributes(
   for (const auto& [name, value] : attributes) {
     char* name_buf = static_cast<char*>(upb_Arena_Malloc(arena_, name.size()));
     memcpy(name_buf, name.data(), name.size());
-    char* value_buf = static_cast<char*>(upb_Arena_Malloc(arena_, value.size()));
+    char* value_buf =
+        static_cast<char*>(upb_Arena_Malloc(arena_, value.size()));
     memcpy(value_buf, value.data(), value.size());
     google_protobuf_Value* val_msg = google_protobuf_Value_new(arena_);
     google_protobuf_Value_set_string_value(
