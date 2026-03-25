@@ -16,6 +16,8 @@
 
 #include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
 
+#include <memory>
+
 // #include "src/core/call/interception_chain.h"
 // #include "src/core/filter/filter_chain.h"
 #include "envoy/extensions/filters/http/ext_proc/v3/processing_mode.upb.h"
@@ -31,6 +33,7 @@
 #include "src/core/lib/promise/try_join.h"
 #include "src/core/lib/promise/try_seq.h"
 #include "src/core/lib/resource_quota/arena.h"
+#include "absl/cleanup/cleanup.h"
 // #include "src/core/util/shared_bit_gen.h"
 // #include "src/core/xds/grpc/xds_http_filter.h"
 // #include "absl/random/random.h"
@@ -135,12 +138,19 @@ absl::StatusOr<ExtProcResponse::BodyMutation> ParseBodyMutation(
 }
 }  // namespace
 
-absl::StatusOr<ExtProcResponse> ParseExtProcResponse(
-    envoy_service_ext_proc_v3_ProcessingResponse* response) {
+void ParseExtProcResponse(
+    const envoy_service_ext_proc_v3_ProcessingResponse* response,
+    PipeOwner2* pipe_owner, bool observability_mode = false) {
   ExtProcResponse ext_proc_response;
-  if (response == nullptr) {
-    return ext_proc_response;
+  if (response == nullptr || observability_mode) {
+    return;
   }
+  // parse mode_override
+  ext_proc_response.mode_override =
+      envoy_service_ext_proc_v3_ProcessingResponse_mode_override(response);
+  // parse request_drain
+  ext_proc_response.request_drain =
+      envoy_service_ext_proc_v3_ProcessingResponse_request_drain(response);
   switch (
       envoy_service_ext_proc_v3_ProcessingResponse_response_case(response)) {
     case envoy_service_ext_proc_v3_ProcessingResponse_response_request_headers: {
@@ -151,10 +161,13 @@ absl::StatusOr<ExtProcResponse> ParseExtProcResponse(
           envoy_service_ext_proc_v3_HeadersResponse_response(request_headers);
       auto request_headers_response = ParseHeaders(common_response);
       if (!request_headers_response.ok()) {
-        return request_headers_response.status();
+        pipe_owner->client_initial_metadata.Set(
+            request_headers_response.status());
+        return;
       }
       ext_proc_response.request_headers =
           std::move(request_headers_response.value());
+      pipe_owner->client_initial_metadata.Set(std::move(ext_proc_response));
       break;
     }
     case envoy_service_ext_proc_v3_ProcessingResponse_response_response_headers: {
@@ -165,14 +178,13 @@ absl::StatusOr<ExtProcResponse> ParseExtProcResponse(
           envoy_service_ext_proc_v3_HeadersResponse_response(response_headers);
       auto response_headers_response = ParseHeaders(common_response);
       if (!response_headers_response.ok()) {
-        return response_headers_response.status();
+        pipe_owner->server_initial_metadata.Set(
+            response_headers_response.status());
+        return;
       }
       ext_proc_response.response_headers =
           std::move(response_headers_response.value());
-      break;
-    }
-    case envoy_service_ext_proc_v3_ProcessingResponse_response_request_trailers: {
-      // Not implemented in ExtProcResponse currently
+      pipe_owner->server_initial_metadata.Set(std::move(ext_proc_response));
       break;
     }
     case envoy_service_ext_proc_v3_ProcessingResponse_response_response_trailers: {
@@ -184,6 +196,7 @@ absl::StatusOr<ExtProcResponse> ParseExtProcResponse(
               response_trailer);
       ext_proc_response.response_trailers =
           ParseHeaderMutation(header_mutation);
+      pipe_owner->server_trailing_metadata.Set(std::move(ext_proc_response));
       break;
     }
     case envoy_service_ext_proc_v3_ProcessingResponse_response_request_body: {
@@ -193,9 +206,13 @@ absl::StatusOr<ExtProcResponse> ParseExtProcResponse(
           envoy_service_ext_proc_v3_BodyResponse_response(request_body);
       auto request_body_response = ParseBodyMutation(common_response);
       if (!request_body_response.ok()) {
-        return request_body_response.status();
+        pipe_owner->client_to_server_messages.sender.Push(
+            request_body_response.status());
+        return;
       }
       ext_proc_response.request_body = std::move(request_body_response.value());
+      pipe_owner->client_to_server_messages.sender.Push(
+          std::move(ext_proc_response));
       break;
     }
     case envoy_service_ext_proc_v3_ProcessingResponse_response_response_body: {
@@ -205,10 +222,14 @@ absl::StatusOr<ExtProcResponse> ParseExtProcResponse(
           envoy_service_ext_proc_v3_BodyResponse_response(response_body);
       auto response_body_response = ParseBodyMutation(common_response);
       if (!response_body_response.ok()) {
-        return response_body_response.status();
+        pipe_owner->server_to_client_messages.sender.Push(
+            response_body_response.status());
+        return;
       }
       ext_proc_response.response_body =
           std::move(response_body_response.value());
+      pipe_owner->server_to_client_messages.sender.Push(
+          std::move(ext_proc_response));
       break;
     }
     case envoy_service_ext_proc_v3_ProcessingResponse_response_immediate_response: {
@@ -232,19 +253,13 @@ absl::StatusOr<ExtProcResponse> ParseExtProcResponse(
       }
       ext_proc_response.immediate_response =
           std::move(immediate_response_value);
+      pipe_owner->immediate_response.Set(std::move(ext_proc_response));
       break;
     }
     case envoy_service_ext_proc_v3_ProcessingResponse_response_NOT_SET:
     default:
       break;
   }
-  // parse mode_override
-  ext_proc_response.mode_override =
-      envoy_service_ext_proc_v3_ProcessingResponse_mode_override(response);
-  // parse request_drain
-  ext_proc_response.request_drain =
-      envoy_service_ext_proc_v3_ProcessingResponse_request_drain(response);
-  return ext_proc_response;
 }
 
 //
@@ -407,10 +422,14 @@ std::string ExtProcRequest::SerializeMessage() {
 //
 
 void (*g_test_ext_proc_metadata_modifier)(grpc_metadata_batch*) = nullptr;
-void (*g_test_ext_proc_server_initial_metadata_modifier)(grpc_metadata_batch*) = nullptr;
-void (*g_test_ext_proc_server_trailing_metadata_modifier)(grpc_metadata_batch*) = nullptr;
-void (*g_test_ext_proc_client_to_server_message_modifier)(MessageHandle*) = nullptr;
-void (*g_test_ext_proc_server_to_client_message_modifier)(MessageHandle*) = nullptr;
+void (*g_test_ext_proc_server_initial_metadata_modifier)(grpc_metadata_batch*) =
+    nullptr;
+void (*g_test_ext_proc_server_trailing_metadata_modifier)(
+    grpc_metadata_batch*) = nullptr;
+void (*g_test_ext_proc_client_to_server_message_modifier)(MessageHandle*) =
+    nullptr;
+void (*g_test_ext_proc_server_to_client_message_modifier)(MessageHandle*) =
+    nullptr;
 
 std::string ExtProcFilter::ProcessingMode::ToString() const {
   std::vector<std::string> parts;
@@ -510,28 +529,30 @@ ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
 auto ExtProcFilter::ServerTrailingMetadata(CallHandler handler,
                                            CallInitiator initiator,
                                            PipeOwner* pipe_owner) {
-  return Seq(initiator.PullServerTrailingMetadata(),
-             [self = RefAsSubclass<ExtProcFilter>(), handler,
-              pipe_owner](ServerMetadataHandle md) mutable {
-               return If(
-                   !self->config_->observability_mode,
-                   [handler, pipe_owner, &md]() mutable {
-                     if (g_test_ext_proc_server_trailing_metadata_modifier != nullptr) {
-                       g_test_ext_proc_server_trailing_metadata_modifier(md.get());
-                     }
-                     pipe_owner->server_trailing_metadata.Set(std::move(md));
-                     return Seq(pipe_owner->server_trailing_metadata.Wait(),
-                                [handler](ServerMetadataHandle md) mutable {
-                                  handler.SpawnPushServerTrailingMetadata(
-                                      std::move(md));
-                                  return absl::OkStatus();
-                                });
-                   },
-                   [handler, &md]() mutable {
-                     handler.SpawnPushServerTrailingMetadata(std::move(md));
-                     return absl::OkStatus();
-                   });
-             });
+  return Seq(
+      initiator.PullServerTrailingMetadata(),
+      [self = RefAsSubclass<ExtProcFilter>(), handler,
+       pipe_owner](ServerMetadataHandle md) mutable {
+        return If(
+            !self->config_->observability_mode,
+            [handler, pipe_owner, &md]() mutable {
+              if (g_test_ext_proc_server_trailing_metadata_modifier !=
+                  nullptr) {
+                g_test_ext_proc_server_trailing_metadata_modifier(md.get());
+              }
+              pipe_owner->server_trailing_metadata.Set(std::move(md));
+              return Seq(
+                  pipe_owner->server_trailing_metadata.Wait(),
+                  [handler](ServerMetadataHandle md) mutable {
+                    handler.SpawnPushServerTrailingMetadata(std::move(md));
+                    return absl::OkStatus();
+                  });
+            },
+            [handler, &md]() mutable {
+              handler.SpawnPushServerTrailingMetadata(std::move(md));
+              return absl::OkStatus();
+            });
+      });
 }
 
 auto ExtProcFilter::ServerToClientMessages(CallHandler handler,
@@ -556,8 +577,10 @@ auto ExtProcFilter::ServerToClientMessages(CallHandler handler,
         auto producer = Seq(
             ForEach(MessagesFrom(initiator),
                     [pipe_owner](MessageHandle message) {
-                      if (g_test_ext_proc_server_to_client_message_modifier != nullptr) {
-                        g_test_ext_proc_server_to_client_message_modifier(&message);
+                      if (g_test_ext_proc_server_to_client_message_modifier !=
+                          nullptr) {
+                        g_test_ext_proc_server_to_client_message_modifier(
+                            &message);
                       }
                       return Map(
                           pipe_owner->server_to_client_messages.sender.Push(
@@ -606,15 +629,17 @@ auto ExtProcFilter::ServerInitialMetadata(CallHandler handler,
               return If(
                   !self->config_->observability_mode,
                   [self, handler, initiator, pipe_owner, &pulled_md]() mutable {
-                    if (g_test_ext_proc_server_initial_metadata_modifier != nullptr) {
-                      g_test_ext_proc_server_initial_metadata_modifier((*pulled_md).get());
+                    if (g_test_ext_proc_server_initial_metadata_modifier !=
+                        nullptr) {
+                      g_test_ext_proc_server_initial_metadata_modifier(
+                          (*pulled_md).get());
                     }
                     pipe_owner->server_initial_metadata.Set(
                         std::move(pulled_md));
                     return Seq(pipe_owner->server_initial_metadata.Wait(),
                                [self, handler, initiator,
                                 pipe_owner](std::optional<ServerMetadataHandle>
-                                                 waited_metadata) mutable {
+                                                waited_metadata) mutable {
                                  handler.SpawnPushServerInitialMetadata(
                                      std::move(*waited_metadata));
                                  return Seq(
@@ -665,8 +690,10 @@ auto ExtProcFilter::ClientToServerMessages(CallHandler handler,
         auto producer = Seq(
             ForEach(MessagesFrom(handler),
                     [pipe_owner](MessageHandle message) {
-                      if (g_test_ext_proc_client_to_server_message_modifier != nullptr) {
-                        g_test_ext_proc_client_to_server_message_modifier(&message);
+                      if (g_test_ext_proc_client_to_server_message_modifier !=
+                          nullptr) {
+                        g_test_ext_proc_client_to_server_message_modifier(
+                            &message);
                       }
                       return Map(
                           pipe_owner->client_to_server_messages.sender.Push(
@@ -752,6 +779,95 @@ void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {
                                          handler]() mutable {
     return self->ClientInitialMetadata(handler);
   });
+}
+
+//
+// ExtProcFilter::ExtProcChannel
+//
+
+ExtProcFilter::ExtProcChannel::ExtProcChannel(
+    std::shared_ptr<const XdsBootstrap::XdsServerTarget> server,
+    const RefCountedPtr<XdsTransportFactory> transport_factory)
+    : DualRefCounted<ExtProcChannel>(GRPC_TRACE_FLAG_ENABLED(ext_proc_filter)
+                                         ? "ExtProcChannel"
+                                         : nullptr),
+      server_(server) {
+  GRPC_TRACE_LOG(ext_proc_filter, INFO)
+      << "creating channel " << this << " for server " << server_->server_uri();
+  absl::Status status;
+  transport_ = transport_factory->GetTransport(*server_, &status);
+  GRPC_CHECK(transport_ != nullptr);
+  if (!status.ok()) {
+    LOG(ERROR) << "Error creating ext_proc channel to " << server_->server_uri()
+               << ": " << status;
+  }
+}
+
+ExtProcFilter::ExtProcChannel::~ExtProcChannel() {
+  GRPC_TRACE_LOG(ext_proc_filter, INFO)
+      << "destroying ext_proc channel " << this << " for server "
+      << server_->server_uri();
+}
+
+void ExtProcFilter::ExtProcChannel::Orphaned() {
+  GRPC_TRACE_LOG(ext_proc_filter, INFO)
+      << "orphaning ext_proc channel " << this << " for server "
+      << server_->server_uri();
+  transport_.reset();
+}
+
+//
+// ExtProcFilter::ExtProcCall
+//
+
+ExtProcFilter::ExtProcCall::ExtProcCall(
+    RefCountedPtr<ExtProcFilter::ExtProcChannel> ext_proc_channel)
+    : DualRefCounted<ExtProcFilter::ExtProcCall>(
+          GRPC_TRACE_FLAG_ENABLED(ext_proc_filter) ? "ExtProcCall" : nullptr),
+      channel_(std::move(ext_proc_channel)) {
+  pipe_owner_ = GetContext<Arena>()->ManagedNew<PipeOwner2>();
+  GRPC_CHECK_NE(channel(), nullptr);
+  const char* method = "/envoy.service.ext_proc.v3.ExternalProcessor/Process";
+  streaming_call_ = channel()->transport()->CreateStreamingCall(
+      method, std::make_unique<StreamEventHandler>(
+                  RefCountedPtr<ExtProcFilter::ExtProcCall>(this)));
+  GRPC_CHECK(streaming_call_ != nullptr);
+  // Start the call.
+  GRPC_TRACE_LOG(xds_client, INFO)
+      << "ext_proc server " << channel()->server()->server_uri()
+      << ": starting ext_proc call (ext_proc_call=" << this
+      << ", streaming_call=" << streaming_call_.get() << ")";
+  // Read initial response.
+  streaming_call_->StartRecvMessage();
+}
+
+void ExtProcFilter::ExtProcCall::Orphaned() { streaming_call_.reset(); }
+
+void ExtProcFilter::ExtProcCall::SendMessageLocked(std::string payload) {
+  send_message_pending_ = true;
+  streaming_call_->SendMessage(std::move(payload));
+}
+
+void ExtProcFilter::ExtProcCall::OnRequestSent() {
+  MutexLock lock(&mu_);
+  send_message_pending_ = true;
+}
+
+void ExtProcFilter::ExtProcCall::OnRecvMessage(absl::string_view payload) {
+  MutexLock lock(&mu_);
+  // see if we need the logic for checking whether the the call is active or not
+  auto cleanup = absl::MakeCleanup(
+      [call = streaming_call_.get()]() { call->StartRecvMessage(); });
+  upb::Arena arena;
+  const envoy_service_ext_proc_v3_ProcessingResponse* decoded_response =
+      envoy_service_ext_proc_v3_ProcessingResponse_parse(
+          payload.data(), payload.size(), arena.ptr());
+  ParseExtProcResponse(decoded_response, pipe_owner_);
+}
+
+void ExtProcFilter::ExtProcCall::OnStatusReceived(absl::Status status) {
+  MutexLock lock(&mu_);
+  // FIXME(rishesh)
 }
 
 }  // namespace grpc_core

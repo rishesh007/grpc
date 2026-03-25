@@ -34,6 +34,7 @@
 #include "src/core/util/ref_counted_ptr.h"
 #include "src/core/util/unique_type_name.h"
 #include "src/core/xds/grpc/xds_common_types.h"
+#include "src/core/xds/xds_client/xds_transport.h"
 #include "upb/base/string_view.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -49,6 +50,7 @@ struct PipeOwner {
   InterActivityLatch<ServerMetadataHandle> server_trailing_metadata;
 };
 
+// FIXME(rishesh): change this to bool
 enum class BodySendMode {
   kNone = 0,
   kGrpc,
@@ -79,8 +81,19 @@ struct ExtProcResponse {
   bool request_drain = false;
 };
 
-absl::StatusOr<ExtProcResponse> ParseExtProcResponse(
-    envoy_service_ext_proc_v3_ProcessingResponse* response);
+struct PipeOwner2 {
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>> client_initial_metadata;
+  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 1> client_to_server_messages;
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>>
+      server_initial_metadata;
+  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 1> server_to_client_messages;
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>> server_trailing_metadata;
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>> immediate_response;
+};
+
+void ParseExtProcResponse(
+    const envoy_service_ext_proc_v3_ProcessingResponse* response,
+    PipeOwner* pipe_owner, bool observability_mode);
 
 class ExtProcRequest {
  public:
@@ -191,11 +204,76 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
   ExtProcFilter(const ChannelArgs& args, RefCountedPtr<const Config> config,
                 ChannelFilter::Args filter_args);
+  class ExtProcChannel final : public DualRefCounted<ExtProcChannel> {
+   public:
+    explicit ExtProcChannel(
+        std::shared_ptr<const XdsBootstrap::XdsServerTarget> server,
+        const RefCountedPtr<XdsTransportFactory> transport_factory);
+    ~ExtProcChannel() override;
+    std::shared_ptr<const XdsBootstrap::XdsServerTarget> server() const {
+      return server_;
+    }
+
+    RefCountedPtr<XdsTransportFactory::XdsTransport> transport() const {
+      return transport_;
+    }
+
+   private:
+    void Orphaned() override;
+
+    std::shared_ptr<const XdsBootstrap::XdsServerTarget> server_;
+    RefCountedPtr<XdsTransportFactory::XdsTransport> transport_;
+  };
 
  private:
   void Orphaned() override {}
 
   void InterceptCall(UnstartedCallHandler unstarted_call_handler) override;
+  class ExtProcCall : public DualRefCounted<ExtProcCall> {
+   public:
+    explicit ExtProcCall(RefCountedPtr<ExtProcChannel> channel);
+    ~ExtProcCall() override;
+
+    ExtProcChannel* channel() const { return channel_.get(); }
+
+    PipeOwner2* pipe_owner() const { return pipe_owner_; }
+
+    void OnRecvMessage(absl::string_view payload);
+    void OnRequestSent();
+    void OnStatusReceived(absl::Status status);
+
+    void SendMessageLocked(std::string payload)
+        ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_);
+
+   private:
+    void Orphaned() override;
+    class StreamEventHandler final : public XdsTransportFactory::XdsTransport::
+                                         StreamingCall::EventHandler {
+     public:
+      explicit StreamEventHandler(RefCountedPtr<ExtProcCall> ext_proc_call)
+          : ext_proc_call_(std::move(ext_proc_call)) {}
+
+      void OnRequestSent(bool /*ok*/) override {
+        ext_proc_call_->OnRequestSent();
+      }
+      void OnRecvMessage(absl::string_view payload) override {
+        ext_proc_call_->OnRecvMessage(payload);
+      }
+      void OnStatusReceived(absl::Status status) override {
+        ext_proc_call_->OnStatusReceived(std::move(status));
+      }
+
+     private:
+      RefCountedPtr<ExtProcCall> ext_proc_call_;
+    };
+    RefCountedPtr<ExtProcChannel> channel_;
+    Mutex mu_;
+    bool send_message_pending_ ABSL_GUARDED_BY(&mu_) = false;
+    bool client_initial_metadata_seen = false;
+    PipeOwner2* pipe_owner_;
+    OrphanablePtr<XdsTransportFactory::XdsTransport::StreamingCall>
+        streaming_call_;
+  };
 
   auto ClientInitialMetadata(CallHandler handler);
   auto StartCallLoops(CallHandler handler, PipeOwner* pipe_owner,
@@ -209,14 +287,19 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   auto ServerTrailingMetadata(CallHandler handler, CallInitiator initiator,
                               PipeOwner* pipe_owner);
 
+  RefCountedPtr<XdsTransportFactory> transport_factory_;
   RefCountedPtr<const Config> config_;
 };
 
 extern void (*g_test_ext_proc_metadata_modifier)(grpc_metadata_batch*);
-extern void (*g_test_ext_proc_server_initial_metadata_modifier)(grpc_metadata_batch*);
-extern void (*g_test_ext_proc_server_trailing_metadata_modifier)(grpc_metadata_batch*);
-extern void (*g_test_ext_proc_client_to_server_message_modifier)(MessageHandle*);
-extern void (*g_test_ext_proc_server_to_client_message_modifier)(MessageHandle*);
+extern void (*g_test_ext_proc_server_initial_metadata_modifier)(
+    grpc_metadata_batch*);
+extern void (*g_test_ext_proc_server_trailing_metadata_modifier)(
+    grpc_metadata_batch*);
+extern void (*g_test_ext_proc_client_to_server_message_modifier)(
+    MessageHandle*);
+extern void (*g_test_ext_proc_server_to_client_message_modifier)(
+    MessageHandle*);
 
 }  // namespace grpc_core
 
