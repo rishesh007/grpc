@@ -58,7 +58,7 @@ enum class BodySendMode {
 
 struct ExtProcResponse {
   struct HeaderMutation {
-    std::vector<std::pair<std::string, std::string>> set_headers;
+    std::vector<XdsHeaderValueOption> set_headers;
     std::vector<std::string> remove_headers;
   };
   std::optional<HeaderMutation> request_headers;
@@ -83,10 +83,11 @@ struct ExtProcResponse {
 
 struct PipeOwner2 {
   InterActivityLatch<absl::StatusOr<ExtProcResponse>> client_initial_metadata;
-  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 1> client_to_server_messages;
-  InterActivityLatch<absl::StatusOr<ExtProcResponse>>
-      server_initial_metadata;
-  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 1> server_to_client_messages;
+  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 1>
+      client_to_server_messages;
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>> server_initial_metadata;
+  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 1>
+      server_to_client_messages;
   InterActivityLatch<absl::StatusOr<ExtProcResponse>> server_trailing_metadata;
   InterActivityLatch<absl::StatusOr<ExtProcResponse>> immediate_response;
 };
@@ -202,6 +203,8 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   static absl::StatusOr<RefCountedPtr<ExtProcFilter>> Create(
       const ChannelArgs& args, ChannelFilter::Args filter_args);
 
+  upb_Arena* arena() const { return arena_; };
+
   ExtProcFilter(const ChannelArgs& args, RefCountedPtr<const Config> config,
                 ChannelFilter::Args filter_args);
   class ExtProcChannel final : public DualRefCounted<ExtProcChannel> {
@@ -242,8 +245,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     void OnRequestSent();
     void OnStatusReceived(absl::Status status);
 
-    void SendMessageLocked(std::string payload)
-        ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_);
+    void SendMessageLocked(std::string payload);
 
    private:
     void Orphaned() override;
@@ -275,7 +277,9 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
         streaming_call_;
   };
 
-  auto ClientInitialMetadata(CallHandler handler);
+  auto ClientInitialMetadata(
+      CallHandler handler,
+      RefCountedPtr<ExtProcFilter::ExtProcCall> ext_proc_call);
   auto StartCallLoops(CallHandler handler, PipeOwner* pipe_owner,
                       ClientMetadataHandle metadata);
   auto ClientToServerMessages(CallHandler handler, CallInitiator initiator,
@@ -289,6 +293,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
   RefCountedPtr<XdsTransportFactory> transport_factory_;
   RefCountedPtr<const Config> config_;
+  upb_Arena* arena_;
 };
 
 extern void (*g_test_ext_proc_metadata_modifier)(grpc_metadata_batch*);

@@ -33,9 +33,11 @@
 #include "src/core/lib/promise/try_join.h"
 #include "src/core/lib/promise/try_seq.h"
 #include "src/core/lib/resource_quota/arena.h"
+#include "src/core/lib/surface/validate_metadata.h"
 #include "absl/cleanup/cleanup.h"
 // #include "src/core/util/shared_bit_gen.h"
 // #include "src/core/xds/grpc/xds_http_filter.h"
+#include "src/core/xds/grpc/xds_common_types.h"
 // #include "absl/random/random.h"
 #include "envoy/config/core/v3/base.upb.h"
 #include "google/protobuf/struct.upb.h"
@@ -50,6 +52,76 @@ namespace grpc_core {
 
 namespace {
 
+XdsHeaderValueOption::AppendAction
+UpbHeaderAppendActionToHeaderValueOptionAppendAction(
+    int32_t header_value_option_append_action) {
+  switch (header_value_option_append_action) {
+    case envoy_config_core_v3_HeaderValueOption_APPEND_IF_EXISTS_OR_ADD:
+      return XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd;
+
+    case envoy_config_core_v3_HeaderValueOption_ADD_IF_ABSENT:
+      return XdsHeaderValueOption::AppendAction::kAddIfAbsent;
+
+    case envoy_config_core_v3_HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD:
+      return XdsHeaderValueOption::AppendAction::kOverwriteIfExistsOrAdd;
+
+    case envoy_config_core_v3_HeaderValueOption_OVERWRITE_IF_EXISTS:
+      return XdsHeaderValueOption::AppendAction::kOverwriteIfExists;
+
+    default:
+      return XdsHeaderValueOption::AppendAction::kDefault;
+  }
+}
+
+XdsHeaderValueOption::HeaderValue ParseHeader(
+    const envoy_config_core_v3_HeaderValue* header_value) {
+  // key
+  absl::string_view key =
+      UpbStringToAbsl(envoy_config_core_v3_HeaderValue_key(header_value));
+  // value or raw_value
+  absl::string_view value;
+  if (absl::EndsWith(key, "-bin")) {
+    value = UpbStringToAbsl(
+        envoy_config_core_v3_HeaderValue_raw_value(header_value));
+    if (value.empty()) {
+      value =
+          UpbStringToAbsl(envoy_config_core_v3_HeaderValue_value(header_value));
+    }
+  } else {
+    // Key does not end in "-bin".
+    value =
+        UpbStringToAbsl(envoy_config_core_v3_HeaderValue_value(header_value));
+  }
+  return {key, value};
+}
+
+XdsHeaderValueOption ParseHeaderValueOption(
+    const envoy_config_core_v3_HeaderValueOption* header_value_option_config) {
+  if (header_value_option_config == nullptr) {
+    return {};
+  }
+  XdsHeaderValueOption header_value_option;
+  // parse header
+  if (auto* header = envoy_config_core_v3_HeaderValueOption_header(
+          header_value_option_config);
+      header != nullptr) {
+    header_value_option.header = ParseHeader(header);
+  }
+  // parse header_append_action
+  int32_t header_append_action =
+      envoy_config_core_v3_HeaderValueOption_append_action(
+          header_value_option_config);
+  header_value_option.append_action =
+      UpbHeaderAppendActionToHeaderValueOptionAppendAction(
+          header_append_action);
+  // parse keep_empty_value
+  auto keep_empty_value =
+      envoy_config_core_v3_HeaderValueOption_keep_empty_value(
+          header_value_option_config);
+  header_value_option.keep_empty_value = keep_empty_value;
+  return header_value_option;
+}
+
 ExtProcResponse::HeaderMutation ParseHeaderMutation(
     const envoy_service_ext_proc_v3_HeaderMutation* header_mutation) {
   if (header_mutation == nullptr) {
@@ -61,15 +133,8 @@ ExtProcResponse::HeaderMutation ParseHeaderMutation(
       envoy_service_ext_proc_v3_HeaderMutation_set_headers(header_mutation,
                                                            &set_headers_size);
   for (size_t i = 0; i < set_headers_size; ++i) {
-    const envoy_config_core_v3_HeaderValue* header_value =
-        envoy_config_core_v3_HeaderValueOption_header(set_headers[i]);
-    if (header_value != nullptr) {
-      upb_StringView key = envoy_config_core_v3_HeaderValue_key(header_value);
-      upb_StringView value =
-          envoy_config_core_v3_HeaderValue_value(header_value);
-      header_mutation_response.set_headers.emplace_back(
-          UpbStringToStdString(key), UpbStringToStdString(value));
-    }
+    header_mutation_response.set_headers.emplace_back(
+        ParseHeaderValueOption(set_headers[i]));
   }
   size_t remove_headers_size = 0;
   upb_StringView const* remove_headers =
@@ -135,6 +200,83 @@ absl::StatusOr<ExtProcResponse::BodyMutation> ParseBodyMutation(
           streamed_response);
   return ExtProcResponse::BodyMutation{
       UpbStringToStdString(body), end_of_stream, end_of_stream_without_message};
+}
+
+envoy_config_core_v3_HeaderValue* ParseEnvoyHeaderValue(absl::string_view key,
+                                                        absl::string_view value,
+                                                        upb_Arena* arena) {
+  if (key.empty()) return nullptr;
+  if (key.size() > 16384) return nullptr;
+  if (key == "host") return nullptr;
+  if (ValidateHeaderKeyIsLegal(key) != ValidateMetadataResult::kOk) {
+    return nullptr;
+  }
+  if (value.size() > 16384) return nullptr;
+  auto* header_value = envoy_config_core_v3_HeaderValue_new(arena);
+  envoy_config_core_v3_HeaderValue_set_key(header_value,
+                                           StdStringToUpbString(key));
+  if (absl::EndsWith(key, "-bin")) {
+    envoy_config_core_v3_HeaderValue_set_raw_value(header_value,
+                                                   StdStringToUpbString(value));
+  } else {
+    envoy_config_core_v3_HeaderValue_set_value(header_value,
+                                               StdStringToUpbString(value));
+  }
+  return header_value;
+}
+
+std::string GetHeaderValue(const absl::string_view& header, grpc_metadata_batch& md) {
+  std::string buffer;
+  return md.GetStringValue(header, &buffer).has_value() ? buffer : "";
+};
+
+bool isHeaderMutationPossibleForHeaderValueOptions(
+    const XdsHeaderValueOption& header, grpc_metadata_batch& md, bool allowed,
+    bool disallow_is_error) {
+  auto header_value = GetHeaderValue(header.header.key, md);
+  switch (header.append_action) {
+    case XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd: {
+      if (!allowed && disallow_is_error) {
+        return false;
+      } else if (allowed) {
+        md.Remove(absl::string_view(header.header.key));
+        md.Append(
+            header.header.key,
+            Slice::FromCopiedString(header_value.append(header.header.value)),
+            [](absl::string_view, const Slice&) {});
+      }
+    } break;
+    case XdsHeaderValueOption::AppendAction::kAddIfAbsent: {
+      if (header_value.empty() && !allowed && disallow_is_error) {
+        return false;
+      } else if (header_value.empty() && allowed) {
+        md.Append(header.header.key,
+                  Slice::FromCopiedString(header.header.value),
+                  [](absl::string_view, const Slice&) {});
+      }
+    } break;
+    case XdsHeaderValueOption::AppendAction::kOverwriteIfExists: {
+      if (!header_value.empty() && !allowed && disallow_is_error) {
+        return false;
+      } else if (!header_value.empty() && allowed) {
+        md.Remove(absl::string_view(header.header.key));
+        md.Append(header.header.key,
+                  Slice::FromCopiedString(header.header.value),
+                  [](absl::string_view, const Slice&) {});
+      }
+    } break;
+    case XdsHeaderValueOption::AppendAction::kOverwriteIfExistsOrAdd: {
+      if (!allowed && disallow_is_error) {
+        return false;
+      } else if (allowed) {
+        md.Remove(absl::string_view(header.header.key));
+        md.Append(header.header.key,
+                  Slice::FromCopiedString(header.header.value),
+                  [](absl::string_view, const Slice&) {});
+      }
+    } break;
+  }
+  return true;
 }
 }  // namespace
 
@@ -745,25 +887,46 @@ auto ExtProcFilter::StartCallLoops(CallHandler handler, PipeOwner* pipe_owner,
   return ClientToServerMessages(handler, initiator, pipe_owner);
 }
 
-auto ExtProcFilter::ClientInitialMetadata(CallHandler handler) {
+auto ExtProcFilter::ClientInitialMetadata(
+    CallHandler handler,
+    RefCountedPtr<ExtProcFilter::ExtProcCall> ext_proc_call) {
   auto* pipe_owner = GetContext<Arena>()->ManagedNew<PipeOwner>();
   return TrySeq(
       handler.PullClientInitialMetadata(),
-      [self = RefAsSubclass<ExtProcFilter>(), handler,
-       pipe_owner](ClientMetadataHandle metadata) mutable {
+      [self = RefAsSubclass<ExtProcFilter>(), handler, pipe_owner,
+       ext_proc_call](ClientMetadataHandle metadata) mutable {
+        // create header map for ext_proc server request
+        auto* header_map = envoy_config_core_v3_HeaderMap_new(self->arena());
+        metadata->Log([&](absl::string_view key, absl::string_view value) {
+          if (auto* header = ParseEnvoyHeaderValue(key, value, self->arena());
+              header != nullptr) {
+            auto* header_value = envoy_config_core_v3_HeaderMap_add_headers(
+                header_map, self->arena());
+            *header_value = *header;
+          }
+        });
+        // FIXME(rishesh): add attributes
+        auto metadata_request =
+            ExtProcRequest::Builder(self->arena())
+                .SetRequestHeaders(header_map, /*end_of_stream=*/false)
+                .SetObservabilityMode(self->config_->observability_mode)
+                .Build()
+                .SerializeMessage();
+        ext_proc_call->SendMessageLocked(metadata_request);
         return If(
             !self->config_->observability_mode,
-            [self, handler, pipe_owner, &metadata]() mutable {
+            [self, handler, pipe_owner, ext_proc_call, &metadata]() mutable {
               if (g_test_ext_proc_metadata_modifier != nullptr) {
-                g_test_ext_proc_metadata_modifier(metadata.get());
+                // g_test_ext_proc_metadata_modifier(metadata.get());
               }
-              pipe_owner->client_initial_metadata.Set(std::move(metadata));
-              return Seq(pipe_owner->client_initial_metadata.Wait(),
-                         [self, handler,
-                          pipe_owner](ClientMetadataHandle metadata) mutable {
-                           return self->StartCallLoops(handler, pipe_owner,
-                                                       std::move(metadata));
-                         });
+              // pipe_owner->client_initial_metadata.Set(std::move(metadata));
+              return Seq(
+                  ext_proc_call->pipe_owner()->client_initial_metadata.Wait(),
+                  [self, handler, pipe_owner, &metadata](
+                      absl::StatusOr<ExtProcResponse> response) mutable {
+                    return self->StartCallLoops(handler, pipe_owner,
+                                                std::move(metadata));
+                  });
             },
             [self, handler, pipe_owner, &metadata]() mutable {
               return self->StartCallLoops(handler, pipe_owner,
@@ -774,10 +937,12 @@ auto ExtProcFilter::ClientInitialMetadata(CallHandler handler) {
 
 void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {
   CallHandler handler = Consume(std::move(unstarted_call_handler));
+  RefCountedPtr<ExtProcCall> ext_proc_call;
+  // GetContext<Arena>()->ManagedNew<RefCountedPtr<ExtProcCall>>();
 
   handler.SpawnGuarded("ext_proc_call", [self = RefAsSubclass<ExtProcFilter>(),
-                                         handler]() mutable {
-    return self->ClientInitialMetadata(handler);
+                                         handler, ext_proc_call]() mutable {
+    return self->ClientInitialMetadata(handler, std::move(ext_proc_call));
   });
 }
 
@@ -844,6 +1009,7 @@ ExtProcFilter::ExtProcCall::ExtProcCall(
 void ExtProcFilter::ExtProcCall::Orphaned() { streaming_call_.reset(); }
 
 void ExtProcFilter::ExtProcCall::SendMessageLocked(std::string payload) {
+  MutexLock lock(&mu_);
   send_message_pending_ = true;
   streaming_call_->SendMessage(std::move(payload));
 }
