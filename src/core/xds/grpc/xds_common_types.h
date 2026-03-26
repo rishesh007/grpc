@@ -129,7 +129,7 @@ struct HeaderMutationRules {
 
 struct XdsHeaderValueOption {
   struct HeaderValue {
-    // Header name. 
+    // Header name.
     absl::string_view key;
     // Only one of ``value`` or ``raw_value`` can be set.
     // Header value is encoded as string. This does not work for non-utf8
