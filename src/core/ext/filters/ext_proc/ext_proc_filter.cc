@@ -225,7 +225,8 @@ envoy_config_core_v3_HeaderValue* ParseEnvoyHeaderValue(absl::string_view key,
   return header_value;
 }
 
-std::string GetHeaderValue(const absl::string_view& header, grpc_metadata_batch& md) {
+std::string GetHeaderValue(const absl::string_view& header,
+                           grpc_metadata_batch& md) {
   std::string buffer;
   return md.GetStringValue(header, &buffer).has_value() ? buffer : "";
 };

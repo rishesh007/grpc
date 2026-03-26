@@ -3860,7 +3860,6 @@ grpc_cc_library(
         "context",
         "down_cast",
         "envoy_config_core_upb",
-        "//:xds_client",
         "filter_args",
         "for_each",
         "if",
@@ -3875,11 +3874,12 @@ grpc_cc_library(
         "try_seq",
         "unique_type_name",
         "xds_common_types",
-        "//:envoy_extensions_filters_http_ext_proc_upb",
         "xds_http_filter",
+        "//:envoy_extensions_filters_http_ext_proc_upb",
         "//:envoy_service_ext_proc_upb",
         "//:grpc_base",
         "//:ref_counted_ptr",
+        "//:xds_client",
     ],
 )
 
