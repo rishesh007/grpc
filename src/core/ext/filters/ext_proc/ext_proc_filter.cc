@@ -407,10 +407,14 @@ std::string ExtProcRequest::SerializeMessage() {
 //
 
 void (*g_test_ext_proc_metadata_modifier)(grpc_metadata_batch*) = nullptr;
-void (*g_test_ext_proc_server_initial_metadata_modifier)(grpc_metadata_batch*) = nullptr;
-void (*g_test_ext_proc_server_trailing_metadata_modifier)(grpc_metadata_batch*) = nullptr;
-void (*g_test_ext_proc_client_to_server_message_modifier)(MessageHandle*) = nullptr;
-void (*g_test_ext_proc_server_to_client_message_modifier)(MessageHandle*) = nullptr;
+void (*g_test_ext_proc_server_initial_metadata_modifier)(grpc_metadata_batch*) =
+    nullptr;
+void (*g_test_ext_proc_server_trailing_metadata_modifier)(
+    grpc_metadata_batch*) = nullptr;
+void (*g_test_ext_proc_client_to_server_message_modifier)(MessageHandle*) =
+    nullptr;
+void (*g_test_ext_proc_server_to_client_message_modifier)(MessageHandle*) =
+    nullptr;
 
 std::string ExtProcFilter::ProcessingMode::ToString() const {
   std::vector<std::string> parts;
@@ -510,28 +514,30 @@ ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
 auto ExtProcFilter::ServerTrailingMetadata(CallHandler handler,
                                            CallInitiator initiator,
                                            PipeOwner* pipe_owner) {
-  return Seq(initiator.PullServerTrailingMetadata(),
-             [self = RefAsSubclass<ExtProcFilter>(), handler,
-              pipe_owner](ServerMetadataHandle md) mutable {
-               return If(
-                   !self->config_->observability_mode,
-                   [handler, pipe_owner, &md]() mutable {
-                     if (g_test_ext_proc_server_trailing_metadata_modifier != nullptr) {
-                       g_test_ext_proc_server_trailing_metadata_modifier(md.get());
-                     }
-                     pipe_owner->server_trailing_metadata.Set(std::move(md));
-                     return Seq(pipe_owner->server_trailing_metadata.Wait(),
-                                [handler](ServerMetadataHandle md) mutable {
-                                  handler.SpawnPushServerTrailingMetadata(
-                                      std::move(md));
-                                  return absl::OkStatus();
-                                });
-                   },
-                   [handler, &md]() mutable {
-                     handler.SpawnPushServerTrailingMetadata(std::move(md));
-                     return absl::OkStatus();
-                   });
-             });
+  return Seq(
+      initiator.PullServerTrailingMetadata(),
+      [self = RefAsSubclass<ExtProcFilter>(), handler,
+       pipe_owner](ServerMetadataHandle md) mutable {
+        return If(
+            !self->config_->observability_mode,
+            [handler, pipe_owner, &md]() mutable {
+              if (g_test_ext_proc_server_trailing_metadata_modifier !=
+                  nullptr) {
+                g_test_ext_proc_server_trailing_metadata_modifier(md.get());
+              }
+              pipe_owner->server_trailing_metadata.Set(std::move(md));
+              return Seq(
+                  pipe_owner->server_trailing_metadata.Wait(),
+                  [handler](ServerMetadataHandle md) mutable {
+                    handler.SpawnPushServerTrailingMetadata(std::move(md));
+                    return absl::OkStatus();
+                  });
+            },
+            [handler, &md]() mutable {
+              handler.SpawnPushServerTrailingMetadata(std::move(md));
+              return absl::OkStatus();
+            });
+      });
 }
 
 auto ExtProcFilter::ServerToClientMessages(CallHandler handler,
@@ -556,8 +562,10 @@ auto ExtProcFilter::ServerToClientMessages(CallHandler handler,
         auto producer = Seq(
             ForEach(MessagesFrom(initiator),
                     [pipe_owner](MessageHandle message) {
-                      if (g_test_ext_proc_server_to_client_message_modifier != nullptr) {
-                        g_test_ext_proc_server_to_client_message_modifier(&message);
+                      if (g_test_ext_proc_server_to_client_message_modifier !=
+                          nullptr) {
+                        g_test_ext_proc_server_to_client_message_modifier(
+                            &message);
                       }
                       return Map(
                           pipe_owner->server_to_client_messages.sender.Push(
@@ -606,15 +614,17 @@ auto ExtProcFilter::ServerInitialMetadata(CallHandler handler,
               return If(
                   !self->config_->observability_mode,
                   [self, handler, initiator, pipe_owner, &pulled_md]() mutable {
-                    if (g_test_ext_proc_server_initial_metadata_modifier != nullptr) {
-                      g_test_ext_proc_server_initial_metadata_modifier((*pulled_md).get());
+                    if (g_test_ext_proc_server_initial_metadata_modifier !=
+                        nullptr) {
+                      g_test_ext_proc_server_initial_metadata_modifier(
+                          (*pulled_md).get());
                     }
                     pipe_owner->server_initial_metadata.Set(
                         std::move(pulled_md));
                     return Seq(pipe_owner->server_initial_metadata.Wait(),
                                [self, handler, initiator,
                                 pipe_owner](std::optional<ServerMetadataHandle>
-                                                 waited_metadata) mutable {
+                                                waited_metadata) mutable {
                                  handler.SpawnPushServerInitialMetadata(
                                      std::move(*waited_metadata));
                                  return Seq(
@@ -665,8 +675,10 @@ auto ExtProcFilter::ClientToServerMessages(CallHandler handler,
         auto producer = Seq(
             ForEach(MessagesFrom(handler),
                     [pipe_owner](MessageHandle message) {
-                      if (g_test_ext_proc_client_to_server_message_modifier != nullptr) {
-                        g_test_ext_proc_client_to_server_message_modifier(&message);
+                      if (g_test_ext_proc_client_to_server_message_modifier !=
+                          nullptr) {
+                        g_test_ext_proc_client_to_server_message_modifier(
+                            &message);
                       }
                       return Map(
                           pipe_owner->client_to_server_messages.sender.Push(
