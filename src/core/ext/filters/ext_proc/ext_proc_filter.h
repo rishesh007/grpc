@@ -14,8 +14,8 @@
 // limitations under the License.
 //
 
-#ifndef GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
-#define GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
+#ifndef GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_FILTER_H
+#define GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_FILTER_H
 
 #include <memory>
 #include <string>
@@ -215,14 +215,19 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 };
 
 extern void (*g_test_ext_proc_metadata_modifier)(grpc_metadata_batch*);
-extern void (*g_test_ext_proc_server_initial_metadata_modifier)(grpc_metadata_batch*);
-extern void (*g_test_ext_proc_server_trailing_metadata_modifier)(grpc_metadata_batch*);
-extern void (*g_test_ext_proc_client_to_server_message_modifier)(MessageHandle*);
-extern void (*g_test_ext_proc_server_to_client_message_modifier)(MessageHandle*);
+extern void (*g_test_ext_proc_server_initial_metadata_modifier)(
+    grpc_metadata_batch*);
+extern void (*g_test_ext_proc_server_trailing_metadata_modifier)(
+    grpc_metadata_batch*);
+extern void (*g_test_ext_proc_client_to_server_message_modifier)(
+    MessageHandle*);
+extern void (*g_test_ext_proc_server_to_client_message_modifier)(
+    MessageHandle*);
 extern absl::Status (*g_test_ext_proc_client_initial_metadata_status_hook)();
-extern absl::Status (*g_test_ext_proc_client_initial_metadata_wait_status_hook)();
+extern absl::Status (
+    *g_test_ext_proc_client_initial_metadata_wait_status_hook)();
 extern absl::Status (*g_test_ext_proc_server_to_client_message_status_hook)();
 
 }  // namespace grpc_core
 
-#endif  // GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
+#endif  // GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_FILTER_H
