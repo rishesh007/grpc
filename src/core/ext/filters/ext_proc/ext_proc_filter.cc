@@ -664,8 +664,10 @@ auto ExtProcFilter::ServerInitialMetadata(CallHandler handler,
                                pipe_owner](absl::Status status) mutable {
                                 return If(
                                     !status.ok(),
-                                    [self, handler, initiator, status]() mutable {
-                                      return self->CancelAndPushError(handler, initiator, status);
+                                    [self, handler, initiator,
+                                     status]() mutable {
+                                      return self->CancelAndPushError(
+                                          handler, initiator, status);
                                     },
                                     [self, handler, initiator,
                                      pipe_owner]() mutable {
@@ -686,7 +688,8 @@ auto ExtProcFilter::ServerInitialMetadata(CallHandler handler,
                           return If(
                               !status.ok(),
                               [self, handler, initiator, status]() mutable {
-                                return self->CancelAndPushError(handler, initiator, status);
+                                return self->CancelAndPushError(
+                                    handler, initiator, status);
                               },
                               [self, handler, initiator, pipe_owner]() mutable {
                                 return self->ServerTrailingMetadata(

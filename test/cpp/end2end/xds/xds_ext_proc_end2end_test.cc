@@ -63,7 +63,8 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     grpc_core::g_test_ext_proc_client_to_server_message_modifier = nullptr;
     grpc_core::g_test_ext_proc_server_to_client_message_modifier = nullptr;
     grpc_core::g_test_ext_proc_client_initial_metadata_status_hook = nullptr;
-    grpc_core::g_test_ext_proc_client_initial_metadata_wait_status_hook = nullptr;
+    grpc_core::g_test_ext_proc_client_initial_metadata_wait_status_hook =
+        nullptr;
     grpc_core::g_test_ext_proc_server_to_client_message_status_hook = nullptr;
     XdsEnd2endTest::TearDown();
   }
@@ -413,7 +414,8 @@ TEST_P(XdsExtProcEnd2endTest, ClientInitialMetadataStatusHookFailsRpc) {
 
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(), ::testing::HasSubstr("forced failure from hook"));
+  EXPECT_THAT(status.error_message(),
+              ::testing::HasSubstr("forced failure from hook"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, ClientInitialMetadataWaitStatusHookFailsRpc) {
@@ -438,12 +440,14 @@ TEST_P(XdsExtProcEnd2endTest, ClientInitialMetadataWaitStatusHookFailsRpc) {
 
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(), ::testing::HasSubstr("forced failure from wait hook"));
+  EXPECT_THAT(status.error_message(),
+              ::testing::HasSubstr("forced failure from wait hook"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, ServerToClientMessageStatusHookFailsRpc) {
   grpc_core::g_test_ext_proc_server_to_client_message_status_hook = []() {
-    return absl::InternalError("forced failure from server to client message hook");
+    return absl::InternalError(
+        "forced failure from server to client message hook");
   };
 
   CreateAndStartBackends(1, /*xds_enabled=*/false);
@@ -463,7 +467,9 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientMessageStatusHookFailsRpc) {
 
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(), ::testing::HasSubstr("forced failure from server to client message hook"));
+  EXPECT_THAT(status.error_message(),
+              ::testing::HasSubstr(
+                  "forced failure from server to client message hook"));
 }
 
 }  // namespace
