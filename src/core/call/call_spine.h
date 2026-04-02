@@ -311,15 +311,17 @@ class CallSpine final : public Party, public channelz::DataSource {
           "check_cancellation", [self = RefAsSubclass<CallSpine>()]() mutable {
             auto was_completed =
                 self->call_filters().ServerTrailingMetadataWasPushed();
-            return Map(std::move(was_completed),
-                       [self = std::move(self)](Empty) {
-                        LOG(INFO) << "!!!! Parent call cancelled. Propagating cancellation to child call, call_spine: " << self.get();
-                         for (auto& child : self->child_calls_) {
-                          LOG(INFO) << "!!!! child call propagate: " << child.get();
-                           child->SpawnCancel();
-                         }
-                         return Empty{};
-                       });
+            return Map(
+                std::move(was_completed), [self = std::move(self)](Empty) {
+                  LOG(INFO) << "!!!! Parent call cancelled. Propagating "
+                               "cancellation to child call, call_spine: "
+                            << self.get();
+                  for (auto& child : self->child_calls_) {
+                    LOG(INFO) << "!!!! child call propagate: " << child.get();
+                    child->SpawnCancel();
+                  }
+                  return Empty{};
+                });
           });
     }
   }
