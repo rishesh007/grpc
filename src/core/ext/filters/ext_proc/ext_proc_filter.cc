@@ -181,7 +181,8 @@ auto ExtProcFilter::ServerToClient(CallHandler handler,
             },
             [self, handler, initiator]() mutable {
               GRPC_TRACE_LOG(ext_proc_filter, INFO)
-                  << "ExtProc: ServerToClient initial metadata not present, skipping to trailing";
+                  << "ExtProc: ServerToClient initial metadata not present, "
+                     "skipping to trailing";
               return self->ServerTrailingMetadata(handler, initiator);
             });
       });

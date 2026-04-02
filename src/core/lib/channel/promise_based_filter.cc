@@ -1204,7 +1204,8 @@ class ClientCallData::PollContext {
                       "wake_inside_combiner:recv_initial_metadata_ready");
               }
             }
-            LOG(INFO) << "!!!! self_->send_initial_state_: " << static_cast<int>(self_->send_initial_state_);
+            LOG(INFO) << "!!!! self_->send_initial_state_: "
+                      << static_cast<int>(self_->send_initial_state_);
             if (self_->send_initial_state_ == SendInitialState::kQueued) {
               self_->send_initial_state_ = SendInitialState::kCancelled;
               self_->send_initial_metadata_batch_.CancelWith(
