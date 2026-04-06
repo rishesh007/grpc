@@ -309,7 +309,7 @@ int main(int argc, char** argv) {
       {"minstack", {/*client=*/{"--minstack"}, /*server=*/{"--minstack"}}},
       {"insecure", {{}, {}}},
       // {"chaotic_good", {{"--chaotic_good"}, {"--chaotic_good"}}}
-    };
+  };
   auto it_scenario = scenarios.find(absl::GetFlag(FLAGS_scenario_config));
   if (it_scenario == scenarios.end()) {
     printf("No scenario matching the name could be found\n");
