@@ -66,7 +66,10 @@ def _commandfile_spawn(self, command, **kwargs):
         ).lower() in ["cl.exe", "cl"]:
             if shutil.which("ccache"):
                 modified_command = ["ccache"] + modified_command
-                print("gRPC Windows Build: ccache intercepting -> " + " ".join(modified_command))
+                print(
+                    "gRPC Windows Build: ccache intercepting -> "
+                    + " ".join(modified_command)
+                )
         try:
             _classic_spawn(self, modified_command, **kwargs)
         finally:
@@ -81,9 +84,11 @@ def _commandfile_spawn(self, command, **kwargs):
         ]:
             if shutil.which("ccache"):
                 command = ["ccache"] + command
-                print("gRPC Windows Build: ccache intercepting -> " + " ".join(command))
+                print(
+                    "gRPC Windows Build: ccache intercepting -> "
+                    + " ".join(command)
+                )
         _classic_spawn(self, command, **kwargs)
-
 
 
 def monkeypatch_spawn():
