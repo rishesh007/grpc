@@ -528,8 +528,8 @@ static void init_openssl(void) {
       }
     }
     grpc_wait_for_shutdown_with_timeout(absl::Seconds(timeout_sec));
-  // Note that we do NOT call OPENSSL_cleanup() for 3.0+ as it can cause double
-  // free crashes on deinitialization.
+    // Note that we do NOT call OPENSSL_cleanup() for 3.0+ as it can cause
+    // double free crashes on deinitialization.
 #if OPENSSL_VERSION_NUMBER < 0x30000000L
     OPENSSL_cleanup();
 #endif
