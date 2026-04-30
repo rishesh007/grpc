@@ -29,8 +29,6 @@
 #include "src/core/client_channel/backup_poller.h"
 #include "src/core/config/config_vars.h"
 #include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
-#include "src/core/client_channel/backup_poller.h"
-#include "src/core/config/config_vars.h"
 #include "test/core/test_util/scoped_env_var.h"
 #include "test/core/test_util/test_config.h"
 #include "test/cpp/end2end/xds/xds_end2end_test_lib.h"
@@ -87,15 +85,13 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
 };
 
 INSTANTIATE_TEST_SUITE_P(XdsTest, XdsExtProcEnd2endTest,
-                         ::testing::Values(XdsTestType()),
-                         &XdsTestType::Name);
+                         ::testing::Values(XdsTestType()), &XdsTestType::Name);
 
 TEST_P(XdsExtProcEnd2endTest, Basic) {
   // Set xDS resources.
   CreateAndStartBackends(1, /*xds_enabled=*/false);
   SetListenerAndRouteConfiguration(
-      balancer_.get(), BuildListenerWithExtProcFilter(),
-      default_route_config_);
+      balancer_.get(), BuildListenerWithExtProcFilter(), default_route_config_);
 
   // Configure ext_proc cluster
   Cluster ext_proc_cluster = default_cluster_;
@@ -111,17 +107,18 @@ TEST_P(XdsExtProcEnd2endTest, Basic) {
 
 TEST_P(XdsExtProcEnd2endTest, ModificationHook) {
   // Set up hooks
-  grpc_core::g_test_ext_proc_metadata_modifier = [](grpc_metadata_batch* metadata) {
-    metadata->Append("x-ext-proc-test", grpc_core::Slice::FromCopiedString("modified"),
-                     [](absl::string_view, const grpc_core::Slice&) {});
-    return absl::OkStatus();
-  };
+  grpc_core::g_test_ext_proc_metadata_modifier =
+      [](grpc_metadata_batch* metadata) {
+        metadata->Append("x-ext-proc-test",
+                         grpc_core::Slice::FromCopiedString("modified"),
+                         [](absl::string_view, const grpc_core::Slice&) {});
+        return absl::OkStatus();
+      };
 
   // Set xDS resources.
   CreateAndStartBackends(1, /*xds_enabled=*/false);
   SetListenerAndRouteConfiguration(
-      balancer_.get(), BuildListenerWithExtProcFilter(),
-      default_route_config_);
+      balancer_.get(), BuildListenerWithExtProcFilter(), default_route_config_);
 
   // Configure ext_proc cluster
   Cluster ext_proc_cluster = default_cluster_;
@@ -134,12 +131,12 @@ TEST_P(XdsExtProcEnd2endTest, ModificationHook) {
   EchoResponse response;
   Status status = SendRpc(RpcOptions().set_echo_metadata_initially(true),
                           &response, &server_initial_metadata);
-  
+
   // Clean up hooks
   grpc_core::g_test_ext_proc_metadata_modifier = nullptr;
 
   EXPECT_TRUE(status.ok());
-  
+
   bool metadata_found = false;
   for (const auto& kv : server_initial_metadata) {
     if (kv.first == "x-ext-proc-test" && kv.second == "modified") {
@@ -151,14 +148,12 @@ TEST_P(XdsExtProcEnd2endTest, ModificationHook) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, MessageSuccessHook) {
-  grpc_core::g_test_ext_proc_message_modifier = [](grpc_core::MessageHandle* /*message*/) {
-    return absl::OkStatus();
-  };
+  grpc_core::g_test_ext_proc_message_modifier =
+      [](grpc_core::MessageHandle* /*message*/) { return absl::OkStatus(); };
 
   CreateAndStartBackends(1, /*xds_enabled=*/false);
   SetListenerAndRouteConfiguration(
-      balancer_.get(), BuildListenerWithExtProcFilter(),
-      default_route_config_);
+      balancer_.get(), BuildListenerWithExtProcFilter(), default_route_config_);
 
   Cluster ext_proc_cluster = default_cluster_;
   ext_proc_cluster.set_name(std::string(kExtProcClusterName));
@@ -167,21 +162,21 @@ TEST_P(XdsExtProcEnd2endTest, MessageSuccessHook) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(args));
 
   Status status = SendRpc();
-  
+
   grpc_core::g_test_ext_proc_message_modifier = nullptr;
 
   EXPECT_TRUE(status.ok());
 }
 
 TEST_P(XdsExtProcEnd2endTest, MessageFailureHook) {
-  grpc_core::g_test_ext_proc_message_modifier = [](grpc_core::MessageHandle* /*message*/) {
-    return absl::InvalidArgumentError("injected error");
-  };
+  grpc_core::g_test_ext_proc_message_modifier =
+      [](grpc_core::MessageHandle* /*message*/) {
+        return absl::InvalidArgumentError("injected error");
+      };
 
   CreateAndStartBackends(1, /*xds_enabled=*/false);
   SetListenerAndRouteConfiguration(
-      balancer_.get(), BuildListenerWithExtProcFilter(),
-      default_route_config_);
+      balancer_.get(), BuildListenerWithExtProcFilter(), default_route_config_);
 
   Cluster ext_proc_cluster = default_cluster_;
   ext_proc_cluster.set_name(std::string(kExtProcClusterName));
@@ -190,7 +185,7 @@ TEST_P(XdsExtProcEnd2endTest, MessageFailureHook) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(args));
 
   Status status = SendRpc();
-  
+
   grpc_core::g_test_ext_proc_message_modifier = nullptr;
 
   EXPECT_FALSE(status.ok());
@@ -199,14 +194,14 @@ TEST_P(XdsExtProcEnd2endTest, MessageFailureHook) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, ClientInitialMetadataHookFailure) {
-  grpc_core::g_test_ext_proc_metadata_modifier = [](grpc_metadata_batch* /*metadata*/) {
-    return absl::InvalidArgumentError("injected error");
-  };
+  grpc_core::g_test_ext_proc_metadata_modifier =
+      [](grpc_metadata_batch* /*metadata*/) {
+        return absl::InvalidArgumentError("injected error");
+      };
 
   CreateAndStartBackends(1, /*xds_enabled=*/false);
   SetListenerAndRouteConfiguration(
-      balancer_.get(), BuildListenerWithExtProcFilter(),
-      default_route_config_);
+      balancer_.get(), BuildListenerWithExtProcFilter(), default_route_config_);
 
   Cluster ext_proc_cluster = default_cluster_;
   ext_proc_cluster.set_name(std::string(kExtProcClusterName));
@@ -215,7 +210,7 @@ TEST_P(XdsExtProcEnd2endTest, ClientInitialMetadataHookFailure) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(args));
 
   Status status = SendRpc();
-  
+
   grpc_core::g_test_ext_proc_metadata_modifier = nullptr;
 
   EXPECT_FALSE(status.ok());
@@ -231,8 +226,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerTrailingMetadataHookFailure) {
 
   CreateAndStartBackends(1, /*xds_enabled=*/false);
   SetListenerAndRouteConfiguration(
-      balancer_.get(), BuildListenerWithExtProcFilter(),
-      default_route_config_);
+      balancer_.get(), BuildListenerWithExtProcFilter(), default_route_config_);
 
   Cluster ext_proc_cluster = default_cluster_;
   ext_proc_cluster.set_name(std::string(kExtProcClusterName));
@@ -241,7 +235,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerTrailingMetadataHookFailure) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(args));
 
   Status status = SendRpc();
-  
+
   grpc_core::g_test_ext_proc_server_trailing_metadata_modifier = nullptr;
 
   EXPECT_FALSE(status.ok());
@@ -257,8 +251,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerInitialMetadataHookFailure) {
 
   CreateAndStartBackends(1, /*xds_enabled=*/false);
   SetListenerAndRouteConfiguration(
-      balancer_.get(), BuildListenerWithExtProcFilter(),
-      default_route_config_);
+      balancer_.get(), BuildListenerWithExtProcFilter(), default_route_config_);
 
   Cluster ext_proc_cluster = default_cluster_;
   ext_proc_cluster.set_name(std::string(kExtProcClusterName));
@@ -267,7 +260,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerInitialMetadataHookFailure) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(args));
 
   Status status = SendRpc();
-  
+
   grpc_core::g_test_ext_proc_server_initial_metadata_modifier = nullptr;
 
   EXPECT_FALSE(status.ok());
@@ -283,8 +276,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientMessageHookFailure) {
 
   CreateAndStartBackends(1, /*xds_enabled=*/false);
   SetListenerAndRouteConfiguration(
-      balancer_.get(), BuildListenerWithExtProcFilter(),
-      default_route_config_);
+      balancer_.get(), BuildListenerWithExtProcFilter(), default_route_config_);
 
   Cluster ext_proc_cluster = default_cluster_;
   ext_proc_cluster.set_name(std::string(kExtProcClusterName));
@@ -293,7 +285,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientMessageHookFailure) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(args));
 
   Status status = SendRpc();
-  
+
   grpc_core::g_test_ext_proc_server_to_client_message_modifier = nullptr;
 
   EXPECT_FALSE(status.ok());
