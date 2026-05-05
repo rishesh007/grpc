@@ -276,9 +276,11 @@ std::vector<StringMatcher> ListStringMatcherParse(
   if (list_matcher_proto == nullptr) return matchers;
   size_t size = 0;
   const auto* const* patterns =
-      envoy_type_matcher_v3_ListStringMatcher_patterns(list_matcher_proto, &size);
+      envoy_type_matcher_v3_ListStringMatcher_patterns(list_matcher_proto,
+                                                       &size);
   for (size_t i = 0; i < size; ++i) {
-    ValidationErrors::ScopedField field(errors, absl::StrCat(".patterns[", i, "]"));
+    ValidationErrors::ScopedField field(errors,
+                                        absl::StrCat(".patterns[", i, "]"));
     matchers.push_back(StringMatcherParse(context, patterns[i], errors));
   }
   return matchers;
