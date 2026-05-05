@@ -28941,11 +28941,9 @@ targets:
   - absl/strings:internal
   - protobuf
   - grpc_test_util
-  uses_polling: false
 - name: xds_ext_proc_end2end_test
   gtest: true
   build: test
-  run: false
   language: c++
   headers:
   - test/core/test_util/scoped_env_var.h
