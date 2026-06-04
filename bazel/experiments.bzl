@@ -179,7 +179,6 @@ EXPERIMENTS = {
                 "pollset_alternative",
                 "promise_based_http2_client_transport",
                 "promise_filter_avoid_ok_status_on_completed_call",
-                "promise_filter_send_cancel_metadata",
                 "retry_in_callv3",
                 "secure_endpoint_offload_large_reads",
                 "secure_endpoint_offload_large_writes",
