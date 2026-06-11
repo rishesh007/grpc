@@ -376,8 +376,7 @@ void SetRequestHeaders(envoy_service_ext_proc_v3_ProcessingRequest* request,
                        envoy_config_core_v3_HeaderMap* headers) {
   auto http_headers = envoy_service_ext_proc_v3_HttpHeaders_new(arena);
   envoy_service_ext_proc_v3_HttpHeaders_set_headers(http_headers, headers);
-  envoy_service_ext_proc_v3_HttpHeaders_set_end_of_stream(http_headers,
-                                                          false);
+  envoy_service_ext_proc_v3_HttpHeaders_set_end_of_stream(http_headers, false);
   envoy_service_ext_proc_v3_ProcessingRequest_set_request_headers(request,
                                                                   http_headers);
 }
