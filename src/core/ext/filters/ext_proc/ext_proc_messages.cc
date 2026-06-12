@@ -235,9 +235,10 @@ absl::StatusOr<ExtProcResponse> ParseExtProcResponse(
     case envoy_service_ext_proc_v3_ProcessingResponse_response_NOT_SET:
       break;
     default:
-      return absl::InternalError(
-          absl::StrCat("Unsupported ProcessingResponse response case: ",
-                       envoy_service_ext_proc_v3_ProcessingResponse_response_case(response)));
+      return absl::InternalError(absl::StrCat(
+          "Unsupported ProcessingResponse response case: ",
+          envoy_service_ext_proc_v3_ProcessingResponse_response_case(
+              response)));
   }
   return ext_proc_response;
 }
@@ -380,8 +381,7 @@ void SetRequestHeaders(upb_Arena* arena,
                        envoy_service_ext_proc_v3_ProcessingRequest* request) {
   auto http_headers = envoy_service_ext_proc_v3_HttpHeaders_new(arena);
   envoy_service_ext_proc_v3_HttpHeaders_set_headers(http_headers, headers);
-  envoy_service_ext_proc_v3_HttpHeaders_set_end_of_stream(http_headers,
-                                                          false);
+  envoy_service_ext_proc_v3_HttpHeaders_set_end_of_stream(http_headers, false);
   envoy_service_ext_proc_v3_ProcessingRequest_set_request_headers(request,
                                                                   http_headers);
 }
@@ -433,8 +433,8 @@ void SetResponseTrailers(upb_Arena* arena,
       request, http_trailers);
 }
 
-void SetObservabilityMode(bool mode,
-                          envoy_service_ext_proc_v3_ProcessingRequest* request) {
+void SetObservabilityMode(
+    bool mode, envoy_service_ext_proc_v3_ProcessingRequest* request) {
   envoy_service_ext_proc_v3_ProcessingRequest_set_observability_mode(request,
                                                                      mode);
 }
