@@ -911,8 +911,9 @@ TEST_F(ExtProcResponseTest, UnsupportedResponseCaseRequestTrailers) {
   auto parsed_or = ParseResponse(response, arena.ptr());
   EXPECT_FALSE(parsed_or.ok());
   EXPECT_EQ(parsed_or.status().code(), absl::StatusCode::kInternal);
-  EXPECT_THAT(parsed_or.status().message(),
-              ::testing::StartsWith("Unsupported ProcessingResponse response case:"));
+  EXPECT_THAT(
+      parsed_or.status().message(),
+      ::testing::StartsWith("Unsupported ProcessingResponse response case:"));
 }
 
 TEST_F(ExtProcResponseTest, RequestHeadersCommonResponseNull) {
