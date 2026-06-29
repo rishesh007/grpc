@@ -47,10 +47,6 @@ class SerializedStreamingCall::InternalEventHandler
   explicit InternalEventHandler(RefCountedPtr<SerializedStreamingCall> parent)
       : parent_(std::move(parent)) {}
 
-  ~InternalEventHandler() override {
-    parent_->OnUnderlyingCallDestroyed();
-  }
-
   void OnRequestSent(bool ok) override {
     RefCountedPtr<SerializedStreamingCall> parent = parent_;
     parent->OnRequestSent(ok);
@@ -95,21 +91,29 @@ SerializedStreamingCall::SerializedStreamingCall(
             bool ok = state_or_failure.ok();
             std::shared_ptr<WriteState> state;
             bool has_call = false;
+            bool is_half_close = false;
             if (ok) {
               auto queued = std::move(*state_or_failure);
               state = *queued;
+              is_half_close = state->is_half_close;
               {
                 MutexLock lock(&mu_);
                 active_write_ = state;
                 if (underlying_call_ != nullptr) {
-                  underlying_call_->SendMessage(state->payload);
-                  has_call = true;
+                  if (is_half_close) {
+                    underlying_call_->SendHalfClose();
+                  } else {
+                    underlying_call_->SendMessage(state->payload);
+                    has_call = true;
+                  }
                 }
               }
             }
             return Seq(
-                [this, ok, has_call]() -> Poll<bool> {
-                  if (!ok || !has_call) return false;
+                [this, ok, has_call, is_half_close]() -> Poll<bool> {
+                  if (!ok) return false;
+                  if (is_half_close) return true;
+                  if (!has_call) return false;
                   MutexLock lock(&mu_);
                   // Double-check pattern to prevent a "lost wakeup" race
                   // condition: If OnRequestSent completes after the first check
@@ -126,11 +130,29 @@ SerializedStreamingCall::SerializedStreamingCall(
                   }
                   return Pending{};
                 },
-                [this, ok, state, has_call](bool write_ok) -> LoopCtl<absl::Status> {
+                [this, ok, state, has_call, is_half_close](bool write_ok) -> LoopCtl<absl::Status> {
                   if (!ok) {
                     return absl::CancelledError("Receiver closed");
                   }
                   Waker waker_to_wakeup;
+                  if (is_half_close) {
+                    {
+                      MutexLock lock(&state->mu);
+                      if (!state->done) {
+                        state->status = absl::OkStatus();
+                        state->done = true;
+                        waker_to_wakeup = std::move(state->waker);
+                      }
+                    }
+                    if (!waker_to_wakeup.is_unwakeable()) {
+                      waker_to_wakeup.Wakeup();
+                    }
+                    {
+                      MutexLock lock(&mu_);
+                      active_write_ = nullptr;
+                    }
+                    return absl::OkStatus();
+                  }
                   if (!write_ok || !has_call) {
                     {
                       MutexLock lock(&state->mu);
@@ -144,11 +166,9 @@ SerializedStreamingCall::SerializedStreamingCall(
                     if (!waker_to_wakeup.is_unwakeable()) {
                       waker_to_wakeup.Wakeup();
                     }
-                    if (has_call) {
-                      // Fail all pending writes in the queue as well
-                      DrainQueueAndFail(absl::InternalError(
-                          "Write failed due to previous stream error"));
-                    }
+                    // Fail all pending writes in the queue as well
+                    DrainQueueAndFail(absl::InternalError(
+                        has_call ? "Write failed" : "Stream closed"));
                     {
                       MutexLock lock(&mu_);
                       active_write_ = nullptr;
@@ -178,7 +198,13 @@ SerializedStreamingCall::SerializedStreamingCall(
           });
         });
       },
-      [](absl::Status) {});
+      [this](absl::Status status) {
+        if (!status.ok()) {
+          DrainQueueAndFail(status);
+        } else {
+          DrainQueueAndFail(absl::CancelledError("Stream closed"));
+        }
+      });
 }
 
 SerializedStreamingCall::~SerializedStreamingCall() {
@@ -200,6 +226,12 @@ void SerializedStreamingCall::SendMessage(std::string payload) {
 
 void SerializedStreamingCall::StartRecvMessage() {
   underlying_call_->StartRecvMessage();
+}
+
+void SerializedStreamingCall::SendHalfClose() {
+  auto state = std::make_shared<WriteState>();
+  state->is_half_close = true;
+  mpsc_sender_.UnbufferedImmediateSend(std::move(state), 1);
 }
 
 void SerializedStreamingCall::DrainQueueAndFail(absl::Status status) {
@@ -298,10 +330,7 @@ void SerializedStreamingCall::Orphan() {
   Unref();
 }
 
-void SerializedStreamingCall::OnUnderlyingCallDestroyed() {
-  MutexLock lock(&mu_);
-  underlying_call_.release();
-}
+
 
 void SerializedStreamingCall::OnRequestSent(bool ok) {
   Waker waker_to_wakeup;

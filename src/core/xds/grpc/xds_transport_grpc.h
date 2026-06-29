@@ -118,9 +118,12 @@ class GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall final
 
   void StartRecvMessage() override;
 
+  void SendHalfClose() override;
+
  private:
   static void OnRecvInitialMetadata(void* arg, grpc_error_handle /*error*/);
   static void OnRequestSent(void* arg, grpc_error_handle error);
+  static void OnHalfClosed(void* arg, grpc_error_handle error);
   static void OnResponseReceived(void* arg, grpc_error_handle /*error*/);
   static void OnStatusReceived(void* arg, grpc_error_handle /*error*/);
 
@@ -138,6 +141,9 @@ class GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall final
   // send_message
   grpc_byte_buffer* send_message_payload_ = nullptr;
   grpc_closure on_request_sent_;
+
+  // half_close
+  grpc_closure on_half_closed_;
 
   // recv_message
   grpc_byte_buffer* recv_message_payload_ = nullptr;

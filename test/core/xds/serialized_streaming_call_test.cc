@@ -72,7 +72,24 @@ class FakeEventHandler
           event_engine)
       : event_engine_(std::move(event_engine)) {}
 
-  void OnRequestSent(bool /*ok*/) override {}
+  void OnRequestSent(bool ok) override {
+    MutexLock lock(&mu_);
+    if (ok) {
+      ++sent_ok_count_;
+    } else {
+      ++sent_fail_count_;
+    }
+  }
+
+  size_t sent_ok_count() const {
+    MutexLock lock(&mu_);
+    return sent_ok_count_;
+  }
+
+  size_t sent_fail_count() const {
+    MutexLock lock(&mu_);
+    return sent_fail_count_;
+  }
 
   void OnRecvMessage(absl::string_view payload) override {
     MutexLock lock(&mu_);
@@ -114,8 +131,10 @@ class FakeEventHandler
  private:
   std::shared_ptr<grpc_event_engine::experimental::FuzzingEventEngine>
       event_engine_;
-  Mutex mu_;
+  mutable Mutex mu_;
   std::deque<CallbackEvent> events_ ABSL_GUARDED_BY(&mu_);
+  size_t sent_ok_count_ ABSL_GUARDED_BY(&mu_) = 0;
+  size_t sent_fail_count_ ABSL_GUARDED_BY(&mu_) = 0;
 };
 
 class FakeXdsServerTarget : public XdsBootstrap::XdsServerTarget {
@@ -563,6 +582,49 @@ TEST_F(SerializedStreamingCallTest, StreamDestructionCleanup) {
   EXPECT_FALSE(status2.ok());
   EXPECT_TRUE(resolved3);
   EXPECT_FALSE(status3.ok());
+}
+
+TEST_F(SerializedStreamingCallTest, HalfCloseSerialization) {
+  InitTransport(false);
+  auto wrapper = MakeSerializedCall();
+  auto fake_stream = transport_factory_->WaitForStream(
+      server_target_, FakeXdsTransportFactory::kAdsMethod);
+  ASSERT_NE(fake_stream, nullptr);
+  auto party = MakeParty();
+  bool resolved = false;
+  absl::Status status;
+  party->Spawn(
+      "Send1", [wrapper = wrapper.get()]() { return wrapper->Send("msg1"); },
+      [&resolved, &status](absl::Status s) {
+        resolved = true;
+        status = std::move(s);
+      });
+  // Call SendHalfClose. It should be queued.
+  wrapper->SendHalfClose();
+  
+  // Verify msg1 is forwarded, but not half-close
+  auto msg1 = fake_stream->WaitForMessageFromClient();
+  ASSERT_TRUE(msg1.has_value());
+  EXPECT_EQ(*msg1, "msg1");
+  EXPECT_FALSE(fake_stream->half_closed());
+  
+  // Complete msg1
+  fake_stream->CompleteSendMessageFromClient(true);
+  event_engine_->TickUntilIdle();
+  
+  EXPECT_TRUE(resolved);
+  EXPECT_TRUE(status.ok());
+  
+  // Verify half-close is now processed
+  EXPECT_TRUE(fake_stream->half_closed());
+
+  // Verify we can still receive messages after half-close
+  wrapper->StartRecvMessage();
+  fake_stream->SendMessageToClient("resp1");
+  auto recv_event = event_handler_->WaitForNextEvent();
+  ASSERT_TRUE(recv_event.has_value());
+  EXPECT_EQ(recv_event->type, CallbackEvent::Type::kRecvMessage);
+  EXPECT_EQ(recv_event->payload, "resp1");
 }
 
 }  // namespace testing

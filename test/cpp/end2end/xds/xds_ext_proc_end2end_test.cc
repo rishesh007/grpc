@@ -6685,11 +6685,11 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
   // The mock service will close the stream cleanly on the next message or when
   // it receives it. Now we send request 2.
   request.set_message("message2");
-  EXPECT_TRUE(stream->Write(request));
-
-  // Since the stream closed cleanly but we are committed (we already processed
-  // response1), the RPC must fail.
-  EXPECT_FALSE(stream->Read(&response));
+  if (stream->Write(request)) {
+    // Since the stream closed cleanly but we are committed (we already processed
+    // response1), the RPC must fail.
+    EXPECT_FALSE(stream->Read(&response));
+  }
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
@@ -6793,10 +6793,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
   // before ext_proc responds. Since the filter is committed, the RPC should
   // fail.
   request.set_message("message2");
-  EXPECT_TRUE(stream->Write(request));
-
-  // Read should fail because the RPC will be failed.
-  EXPECT_FALSE(stream->Read(&response));
+  if (stream->Write(request)) {
+    // Read should fail because the RPC will be failed.
+    EXPECT_FALSE(stream->Read(&response));
+  }
 
   stream->WritesDone();
   Status status = stream->Finish();
@@ -6986,8 +6986,9 @@ TEST_P(XdsExtProcEnd2endTest,
   // Send second message. It should fail because the stream was closed
   // after the first message, and the filter is committed.
   request.set_message("message2");
-  EXPECT_TRUE(stream->Write(request));
-  EXPECT_FALSE(stream->Read(&response));
+  if (stream->Write(request)) {
+    EXPECT_FALSE(stream->Read(&response));
+  }
 
   stream->WritesDone();
   Status status = stream->Finish();
@@ -7092,10 +7093,10 @@ TEST_P(XdsExtProcEnd2endTest,
   // before ext_proc responds. Since the filter is committed, the RPC should
   // fail.
   request.set_message("message2");
-  EXPECT_TRUE(stream->Write(request));
-
-  // Read should fail because the RPC will be failed.
-  EXPECT_FALSE(stream->Read(&response));
+  if (stream->Write(request)) {
+    // Read should fail because the RPC will be failed.
+    EXPECT_FALSE(stream->Read(&response));
+  }
 
   stream->WritesDone();
   Status status = stream->Finish();

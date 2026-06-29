@@ -42,6 +42,7 @@ namespace grpc_core {
 // (Write Loop)
 struct WriteState {
   std::string payload;
+  bool is_half_close = false;
   Mutex mu;
   bool done ABSL_GUARDED_BY(&mu) = false;
   absl::Status status ABSL_GUARDED_BY(&mu);
@@ -94,6 +95,7 @@ class SerializedStreamingCall
   // Standard interface methods
   void SendMessage(std::string payload) override;
   void StartRecvMessage() override;
+  void SendHalfClose() override;
   void Orphan() override;
 
  private:
@@ -111,7 +113,6 @@ class SerializedStreamingCall
 
   void DrainQueueAndFail(absl::Status status);
   void CleanupExpiredNodes();
-  void OnUnderlyingCallDestroyed();
 
   const std::unique_ptr<
       XdsTransportFactory::XdsTransport::StreamingCall::EventHandler>

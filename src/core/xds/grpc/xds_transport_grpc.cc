@@ -85,6 +85,7 @@ GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall::GrpcStreamingCall(
   grpc_metadata_array_init(&trailing_metadata_recv_);
   // Initialize closure to be used for sending messages.
   GRPC_CLOSURE_INIT(&on_request_sent_, OnRequestSent, this, nullptr);
+  GRPC_CLOSURE_INIT(&on_half_closed_, OnHalfClosed, this, nullptr);
   // Start ops on the call.
   grpc_call_error call_error;
   grpc_op ops[2];
@@ -182,6 +183,18 @@ void GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall::
 }
 
 void GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall::
+    SendHalfClose() {
+  Ref(DEBUG_LOCATION, "SendHalfClose").release();
+  grpc_op op;
+  memset(&op, 0, sizeof(op));
+  op.op = GRPC_OP_SEND_CLOSE_FROM_CLIENT;
+  GRPC_CHECK_NE(call_, nullptr);
+  const grpc_call_error call_error =
+      grpc_call_start_batch_and_execute(call_, &op, 1, &on_half_closed_);
+  GRPC_CHECK_EQ(call_error, GRPC_CALL_OK);
+}
+
+void GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall::
     OnRecvInitialMetadata(void* arg, grpc_error_handle /*error*/) {
   RefCountedPtr<GrpcStreamingCall> self(static_cast<GrpcStreamingCall*>(arg));
   grpc_metadata_array_destroy(&self->initial_metadata_recv_);
@@ -195,6 +208,11 @@ void GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall::
   self->send_message_payload_ = nullptr;
   // Invoke request handler.
   self->event_handler_->OnRequestSent(error.ok());
+}
+
+void GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall::OnHalfClosed(
+    void* arg, grpc_error_handle /*error*/) {
+  RefCountedPtr<GrpcStreamingCall> self(static_cast<GrpcStreamingCall*>(arg));
 }
 
 void GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall::
