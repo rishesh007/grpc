@@ -6258,7 +6258,7 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly but filter is committed");
+            "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6291,12 +6291,14 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoRequest request;
   EchoResponse response;
   request.set_message("message1");
-  EXPECT_TRUE(stream->Write(request));
-  EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_FALSE(stream->Write(request));
+  EXPECT_FALSE(stream->Read(&response));
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_TRUE(status.ok()) << status.error_message();
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(),
+            "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6371,11 +6373,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyNoInFlight) {
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(
-      status.error_message(),
-      ::testing::AnyOf(
-          ::testing::Eq("Stream closed cleanly but filter is committed"),
-          ::testing::Eq("Stream closed cleanly with outstanding messages")));
+  EXPECT_EQ(status.error_message(),
+            "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6459,7 +6458,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyWithInFlight) {
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly with outstanding messages");
+            "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6694,11 +6693,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(
-      status.error_message(),
-      ::testing::AnyOf(
-          ::testing::Eq("Stream closed cleanly but filter is committed"),
-          ::testing::Eq("Stream closed cleanly with outstanding messages")));
+  EXPECT_EQ(status.error_message(),
+            "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6803,7 +6799,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly with outstanding messages");
+            "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6899,11 +6895,13 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
-  EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  stream->Read(&response);
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_TRUE(status.ok()) << status.error_message();
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(),
+            "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6995,7 +6993,7 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly but filter is committed");
+            "Stream closed cleanly without drain");
 }
 
 TEST_P(
@@ -7103,7 +7101,7 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly with outstanding messages");
+            "Stream closed cleanly without drain");
 }
 
 TEST_P(

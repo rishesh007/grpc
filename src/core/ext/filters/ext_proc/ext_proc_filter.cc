@@ -266,6 +266,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   }
 
   bool IsStreamFailOpenAllowed() {
+    if (drain_requested()) return false;
     MutexLock lock(&mu_);
     if (observability_mode_) return failure_mode_allow_;
     if (!failure_mode_allow_) return false;
@@ -283,6 +284,14 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
 
   bool IsStreamClosed() const {
     return stream_closed_.load(std::memory_order_acquire);
+  }
+
+  bool drain_requested() const {
+    return drain_requested_.load(std::memory_order_acquire);
+  }
+
+  void SetDrainRequested() {
+    drain_requested_.store(true, std::memory_order_release);
   }
 
   bool IsStreamClosedCleanly() const {
@@ -739,11 +748,17 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
           s2c_first_body_message_sent_ && !s2c_writes_done_;
       return c2s_committed || s2c_committed;
     }();
-    if (status.ok() && (has_outstanding_messages || is_committed)) {
-      status = absl::InternalError(
-          has_outstanding_messages
-              ? "Stream closed cleanly with outstanding messages"
-              : "Stream closed cleanly but filter is committed");
+    const bool must_drain =
+        !observability_mode_ && (processing_mode_.send_request_body ||
+                                 processing_mode_.send_response_body);
+    const bool drain_requested_active = drain_requested();
+    if (status.ok()) {
+      if (must_drain && !drain_requested_active) {
+        status = absl::InternalError("Stream closed cleanly without drain");
+      } else if (has_outstanding_messages) {
+        status = absl::InternalError(
+            "Stream closed cleanly with outstanding messages");
+      }
     }
     const bool fail_open_allowed = IsStreamFailOpenAllowed();
     const bool should_propagate_error = !status.ok() && !fail_open_allowed;
@@ -797,6 +812,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   OrphanablePtr<SerializedStreamingCall> streaming_call_;
   Mutex mu_;
   std::atomic<bool> stream_closed_{false};
+  std::atomic<bool> drain_requested_{false};
   bool is_first_message_on_ext_proc_stream_ ABSL_GUARDED_BY(&mu_) = true;
   bool c2s_first_body_message_sent_ ABSL_GUARDED_BY(&mu_) = false;
   bool s2c_first_body_message_sent_ ABSL_GUARDED_BY(&mu_) = false;
@@ -917,8 +933,13 @@ auto ReadServerInitialMetadataResponse(
             }
             return absl::OkStatus();
           }),
-      [handler, metadata](absl::Status result) mutable {
-        handler.SpawnPushServerInitialMetadata(std::move(*metadata));
+      [handler, metadata, ext_proc_call](absl::Status result) mutable {
+        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+            << "ExtProcCall " << ext_proc_call.get()
+            << " SpawnPushServerInitialMetadata. result=" << result;
+        if (result.ok()) {
+          handler.SpawnPushServerInitialMetadata(std::move(*metadata));
+        }
         return result;
       });
 }
@@ -1309,6 +1330,9 @@ absl::AnyInvocable<Poll<absl::Status>()> ReadServerToClientMessagesResponse(
         auto new_msg =
             handler.arena()->MakePooled<Message>(SliceBuffer(std::move(slice)),
                                                  /*flags=*/0);
+        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+            << "ExtProcCall " << ext_proc_call.get()
+            << " SpawnPushMessage (normal mode)";
         handler.SpawnPushMessage(std::move(new_msg));
         if (!ext_proc_call->DecrementOutstandingServerToClientMessages()) {
           return absl::InternalError(
@@ -2462,6 +2486,8 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ProcessCallNormalMode(
 absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ProcessServerToClient(
     CallHandler handler, CallInitiator initiator,
     RefCountedPtr<ExtProcCall> ext_proc_call) {
+  GRPC_TRACE_LOG(ext_proc_filter, INFO) << "ExtProcCall " << ext_proc_call.get()
+                                        << " ProcessServerToClient started";
   auto response_pipeline = Seq(
       // Phase 1: Headers and Messages (short-circuiting!)
       TrySeq(
@@ -2536,11 +2562,18 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ProcessServerToClient(
           promise = std::move(run_pipeline)]() mutable -> Poll<absl::Status> {
     auto p = promise();
     if (auto* status = p.value_if_ready()) {
+      GRPC_TRACE_LOG(ext_proc_filter, INFO)
+          << "ExtProcCall " << ext_proc_call.get()
+          << " ProcessServerToClient finished. status=" << *status;
       if (!status->ok()) {
         GRPC_TRACE_LOG(ext_proc_filter, INFO)
-            << "ExtProc: ProcessServerToClient failed: " << *status;
+            << "ExtProcCall " << ext_proc_call.get()
+            << " ProcessServerToClient failed: " << *status;
         // Push error trailers to parent call
         auto error_md = CancelledServerMetadataFromStatus(*status);
+        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+            << "ExtProcCall " << ext_proc_call.get()
+            << " SpawnPushServerTrailingMetadata (error)";
         handler.SpawnPushServerTrailingMetadata(std::move(error_md));
         // Cancel child call
         initiator.Cancel();
