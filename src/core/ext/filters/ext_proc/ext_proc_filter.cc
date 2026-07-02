@@ -265,9 +265,8 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return failure_mode_allow_ && !s2c_first_body_message_sent_;
   }
 
-  bool IsStreamFailOpenAllowed() {
-    if (drain_requested()) return false;
-    MutexLock lock(&mu_);
+  bool IsStreamFailOpenAllowedLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
+    if (drain_requested_.load(std::memory_order_relaxed)) return false;
     if (observability_mode_) return failure_mode_allow_;
     if (!failure_mode_allow_) return false;
     const bool c2s_committed =
@@ -277,6 +276,12 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return !(c2s_committed || s2c_committed);
   }
 
+  bool IsStreamFailOpenAllowed() {
+    if (drain_requested()) return false;
+    MutexLock lock(&mu_);
+    return IsStreamFailOpenAllowedLocked();
+  }
+
   void MarkClientHalfCloseInitiatedLocked()
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     c2s_half_close_initiated_ = true;
@@ -284,6 +289,26 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
 
   bool IsStreamClosed() const {
     return stream_closed_.load(std::memory_order_acquire);
+  }
+
+  bool ext_proc_stream_half_closed() {
+    MutexLock lock(&mu_);
+    return ext_proc_stream_half_closed_;
+  }
+
+  bool ext_proc_stream_half_closed_locked() const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
+    return ext_proc_stream_half_closed_;
+  }
+
+  void SendHalfClose() {
+    MutexLock lock(&mu_);
+    ext_proc_stream_half_closed_ = true;
+    if (streaming_call_ != nullptr) {
+      GRPC_TRACE_LOG(ext_proc_filter, INFO)
+          << "ExtProcCall " << this << " sending half-close";
+      streaming_call_->SendHalfClose();
+    }
   }
 
   bool drain_requested() const {
@@ -342,8 +367,8 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return processor_sent_half_close_;
   }
 
-  void IncrementOutstandingClientToServerMessages() {
-    MutexLock lock(&mu_);
+  void IncrementOutstandingClientToServerMessagesLocked()
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     outstanding_c2s_messages_++;
   }
 
@@ -549,6 +574,12 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         return;
       } else {
         auto parsed_response = std::move(*parsed_response_or);
+        if (parsed_response.request_drain) {
+          GRPC_TRACE_LOG(ext_proc_filter, INFO)
+              << "ExtProcCall " << this << " received request_drain=true";
+          SetDrainRequested();
+          SendHalfClose();
+        }
         if (parsed_response.immediate_response.has_value() &&
             disable_immediate_response_) {
           auto error = absl::PermissionDeniedError(
@@ -734,37 +765,29 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         << "ExtProcCall " << this << " status received: " << status;
     bool should_unref = false;
     bool already_closed = false;
-    // Determine if we should propagate the stream error and fail the call.
-    const bool has_outstanding_messages = [this]() {
-      MutexLock lock(&mu_);
-      return outstanding_c2s_messages_ > 0 || outstanding_s2c_messages_ > 0;
-    }();
-    const bool is_committed = [this]() {
-      if (observability_mode_) return false;
-      MutexLock lock(&mu_);
-      const bool c2s_committed =
-          c2s_first_body_message_sent_ && !c2s_half_close_initiated_;
-      const bool s2c_committed =
-          s2c_first_body_message_sent_ && !s2c_writes_done_;
-      return c2s_committed || s2c_committed;
-    }();
-    const bool must_drain =
-        !observability_mode_ && (processing_mode_.send_request_body ||
-                                 processing_mode_.send_response_body);
-    const bool drain_requested_active = drain_requested();
-    if (status.ok()) {
-      if (must_drain && !drain_requested_active) {
-        status = absl::InternalError("Stream closed cleanly without drain");
-      } else if (has_outstanding_messages) {
-        status = absl::InternalError(
-            "Stream closed cleanly with outstanding messages");
-      }
-    }
-    const bool fail_open_allowed = IsStreamFailOpenAllowed();
-    const bool should_propagate_error = !status.ok() && !fail_open_allowed;
+    bool should_propagate_error = false;
 
     {
       MutexLock lock(&mu_);
+      const bool has_outstanding_messages =
+          outstanding_c2s_messages_ > 0 || outstanding_s2c_messages_ > 0;
+
+      const bool must_drain =
+          !observability_mode_ && (processing_mode_.send_request_body ||
+                                   processing_mode_.send_response_body);
+      const bool drain_requested_active =
+          drain_requested_.load(std::memory_order_relaxed);
+      if (status.ok()) {
+        if (must_drain && !drain_requested_active) {
+          status = absl::InternalError("Stream closed cleanly without drain");
+        } else if (has_outstanding_messages) {
+          status = absl::InternalError(
+              "Stream closed cleanly with outstanding messages");
+        }
+      }
+      const bool fail_open_allowed = IsStreamFailOpenAllowedLocked();
+      should_propagate_error = !status.ok() && !fail_open_allowed;
+
       already_closed = stream_closed_.load(std::memory_order_relaxed);
       if (!already_closed) {
         if (should_propagate_error) {
@@ -826,6 +849,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   InterActivityLatch<void> all_server_to_client_responses_received_latch_;
   RefCountedPtr<ConnectivityWatcher> connectivity_watcher_
       ABSL_GUARDED_BY(&mu_);
+  bool ext_proc_stream_half_closed_ ABSL_GUARDED_BY(&mu_) = false;
   InterActivityLatch<absl::Status> stream_status_;
   bool unreffed_active_stream_ ABSL_GUARDED_BY(&mu_) = false;
 };
@@ -1822,6 +1846,9 @@ auto SendClientMessageRequest(const MessageHandle& message,
                               bool send_to_ext_proc_stream,
                               ::google_protobuf_Struct* attributes)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(ext_proc_call->mu()) {
+  if (send_to_ext_proc_stream && !config->observability_mode) {
+    ext_proc_call->IncrementOutstandingClientToServerMessagesLocked();
+  }
   if (end_of_stream_without_message && send_to_ext_proc_stream) {
     ext_proc_call->MarkClientHalfCloseInitiatedLocked();
   }
@@ -1861,6 +1888,9 @@ auto SendClientMessageRequest(std::string message_bytes,
                               bool send_to_ext_proc_stream,
                               ::google_protobuf_Struct* attributes)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(ext_proc_call->mu()) {
+  if (send_to_ext_proc_stream && !config->observability_mode) {
+    ext_proc_call->IncrementOutstandingClientToServerMessagesLocked();
+  }
   const bool is_first_message = ext_proc_call->IsFirstMessageOnStream();
   return ext_proc_call->SendMessageLocked(
       send_to_ext_proc_stream,
@@ -1990,50 +2020,100 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
           MessagesFrom(handler),
           [config, initiator, ext_proc_call,
            attributes](MessageHandle message) mutable {
+            auto shared_message =
+                std::make_shared<MessageHandle>(std::move(message));
             return If(
-                ext_proc_call->IsProcessorSentHalfClose(),
-                []() {
-                  // TODO(rishesh): Once PH2 work is done, we should make this
-                  // pass (discard or handle cleanly). Currently we fail the
-                  // RPC to avoid crashes on half-closed transport.
-                  return absl::InternalError(
-                      "Client sends closed by external processor");
+                ext_proc_call->drain_requested(),
+                [ext_proc_call, initiator, shared_message]() mutable {
+                  GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                      << "ExtProc: Drain active, blocking data plane read";
+                  return Map(ext_proc_call->stream_status().Wait(),
+                             [ext_proc_call, initiator, shared_message](
+                                 absl::Status status) mutable -> absl::Status {
+                               GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                                   << "ExtProc: Drain complete (stream "
+                                      "closed), resuming data plane. Status: "
+                                   << status;
+                               if (ext_proc_call->IsStreamClosedCleanly() ||
+                                   ext_proc_call->IsClientFailOpenAllowed()) {
+                                 if (*shared_message != nullptr) {
+                                   initiator.SpawnPushMessage(
+                                       std::move(*shared_message));
+                                 }
+                                 return absl::OkStatus();
+                               }
+                               return ext_proc_call->GetStreamErrorStatus();
+                             });
                 },
                 [config, initiator, ext_proc_call, attributes,
-                 message = std::move(message)]() mutable {
-                  const bool send_to_ext_proc_stream =
-                      !ext_proc_call->IsStreamClosed();
-                  if (send_to_ext_proc_stream) {
-                    ext_proc_call->IncrementOutstandingClientToServerMessages();
-                  }
-                  absl::AnyInvocable<Poll<absl::Status>()> send_promise;
-                  {
-                    MutexLock lock(ext_proc_call->mu());
-                    send_promise = SendClientMessageRequest(
-                        message, ext_proc_call.get(), config,
-                        /*end_of_stream=*/false,
-                        /*end_of_stream_without_message=*/false,
-                        send_to_ext_proc_stream, attributes);
-                  }
-                  return Map(
-                      std::move(send_promise),
-                      [ext_proc_call, initiator, config,
-                       message = std::move(message)](
-                          absl::Status status) mutable -> absl::Status {
-                        if (!status.ok() || ext_proc_call->IsStreamClosed()) {
-                          if (ext_proc_call->IsStreamClosedCleanly() ||
-                              ext_proc_call->IsClientFailOpenAllowed()) {
-                            if (message != nullptr) {
-                              initiator.SpawnPushMessage(std::move(message));
-                            }
-                            return absl::OkStatus();
-                          } else {
-                            return ext_proc_call->IsStreamClosed()
-                                       ? ext_proc_call->GetStreamErrorStatus()
-                                       : status;
-                          }
+                 shared_message]() mutable {
+                  return If(
+                      ext_proc_call->IsProcessorSentHalfClose(),
+                      []() {
+                        // TODO(rishesh): Once PH2 work is done, we should make
+                        // this pass (discard or handle cleanly). Currently we
+                        // fail the RPC to avoid crashes on half-closed
+                        // transport.
+                        return absl::InternalError(
+                            "Client sends closed by external processor");
+                      },
+                      [config, initiator, ext_proc_call, attributes,
+                       shared_message]() mutable {
+                        absl::AnyInvocable<Poll<absl::Status>()> send_promise;
+                        bool send_to_ext_proc_stream = false;
+                        {
+                          MutexLock lock(ext_proc_call->mu());
+                          send_to_ext_proc_stream =
+                              !ext_proc_call->IsStreamClosed() &&
+                              !ext_proc_call
+                                   ->ext_proc_stream_half_closed_locked();
+                          send_promise = SendClientMessageRequest(
+                              *shared_message, ext_proc_call.get(), config,
+                              /*end_of_stream=*/false,
+                              /*end_of_stream_without_message=*/false,
+                              send_to_ext_proc_stream, attributes);
                         }
-                        return absl::OkStatus();
+                        return Map(
+                            std::move(send_promise),
+                            [ext_proc_call, initiator, config,
+                             send_to_ext_proc_stream, shared_message](
+                                absl::Status status) mutable -> absl::Status {
+                              if (!send_to_ext_proc_stream) {
+                                // Stream was closed before we could send.
+                                if (ext_proc_call->IsStreamClosedCleanly() ||
+                                    ext_proc_call->IsClientFailOpenAllowed()) {
+                                  if (*shared_message != nullptr) {
+                                    initiator.SpawnPushMessage(
+                                        std::move(*shared_message));
+                                  }
+                                  return absl::OkStatus();
+                                } else {
+                                  return ext_proc_call->IsStreamClosed()
+                                             ? ext_proc_call
+                                                   ->GetStreamErrorStatus()
+                                             : status;
+                                }
+                              }
+                              // Message was sent, wait for response in
+                              // sidestream_to_server loop.
+                              if (!status.ok() ||
+                                  ext_proc_call->IsStreamClosed()) {
+                                if (ext_proc_call->IsStreamClosedCleanly() ||
+                                    ext_proc_call->IsClientFailOpenAllowed()) {
+                                  if (*shared_message != nullptr) {
+                                    initiator.SpawnPushMessage(
+                                        std::move(*shared_message));
+                                  }
+                                  return absl::OkStatus();
+                                } else {
+                                  return ext_proc_call->IsStreamClosed()
+                                             ? ext_proc_call
+                                                   ->GetStreamErrorStatus()
+                                             : status;
+                                }
+                              }
+                              return absl::OkStatus();
+                            });
                       });
                 });
           }),
@@ -2046,14 +2126,13 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
             },
             [config, initiator, ext_proc_call, attributes]() mutable {
               MessageHandle null_msg = nullptr;
-              const bool send_to_ext_proc_stream =
-                  !ext_proc_call->IsStreamClosed();
-              if (send_to_ext_proc_stream) {
-                ext_proc_call->IncrementOutstandingClientToServerMessages();
-              }
               absl::AnyInvocable<Poll<absl::Status>()> send_promise;
+              bool send_to_ext_proc_stream = false;
               {
                 MutexLock lock(ext_proc_call->mu());
+                send_to_ext_proc_stream =
+                    !ext_proc_call->IsStreamClosed() &&
+                    !ext_proc_call->ext_proc_stream_half_closed_locked();
                 send_promise = SendClientMessageRequest(
                     null_msg, ext_proc_call.get(), config,
                     /*end_of_stream=*/false,
@@ -2062,8 +2141,21 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
               }
               return Map(
                   std::move(send_promise),
-                  [ext_proc_call, initiator,
+                  [ext_proc_call, initiator, send_to_ext_proc_stream,
                    config](absl::Status status) mutable -> absl::Status {
+                    if (!send_to_ext_proc_stream) {
+                      if (ext_proc_call->drain_requested() ||
+                          ext_proc_call->IsStreamClosedCleanly() ||
+                          ext_proc_call->IsClientFailOpenAllowed()) {
+                        initiator.SpawnFinishSends();
+                        ext_proc_call->MarkClientSendsDone();
+                        return absl::OkStatus();
+                      } else {
+                        return ext_proc_call->IsStreamClosed()
+                                   ? ext_proc_call->GetStreamErrorStatus()
+                                   : status;
+                      }
+                    }
                     if (!status.ok() || ext_proc_call->IsStreamClosed()) {
                       if (ext_proc_call->IsStreamClosedCleanly() ||
                           ext_proc_call->IsClientFailOpenAllowed()) {
