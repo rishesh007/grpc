@@ -5279,6 +5279,7 @@ TEST_P(
   })));
 
   RpcOptions rpc_options;
+  rpc_options.skip_cancelled_check = true;
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_FALSE(status.ok());

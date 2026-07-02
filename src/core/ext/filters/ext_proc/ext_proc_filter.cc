@@ -31,6 +31,7 @@
 #include "src/core/lib/promise/context.h"
 #include "src/core/lib/promise/for_each.h"
 #include "src/core/lib/promise/if.h"
+#include "src/core/lib/promise/inter_activity_latch.h"
 #include "src/core/lib/promise/latch.h"
 #include "src/core/lib/promise/map.h"
 #include "src/core/lib/promise/pipe.h"
@@ -328,8 +329,8 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return closed && status.ok();
   }
 
-  void IncrementOutstandingServerToClientMessages() {
-    MutexLock lock(&mu_);
+  void IncrementOutstandingServerToClientMessagesLocked()
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     outstanding_s2c_messages_++;
   }
 
@@ -1074,7 +1075,8 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerInitialMetadata(
     std::shared_ptr<ServerMetadataHandle> metadata) {
   const bool send_headers = config->processing_mode.send_response_headers &&
                             ext_proc_call != nullptr &&
-                            !ext_proc_call->IsStreamClosed();
+                            !ext_proc_call->IsStreamClosed() &&
+                            !ext_proc_call->ext_proc_stream_half_closed();
   absl::AnyInvocable<Poll<absl::Status>()> promise;
   if (send_headers) {
     if (config->observability_mode) {
@@ -1109,6 +1111,9 @@ auto SendServerMessageRequest(std::string message_bytes,
                               RefCountedPtr<const ExtProcFilter::Config> config,
                               bool send_to_ext_proc_stream)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(ext_proc_call->mu()) {
+  if (send_to_ext_proc_stream && !config->observability_mode) {
+    ext_proc_call->IncrementOutstandingServerToClientMessagesLocked();
+  }
   bool is_first_message = ext_proc_call->IsFirstMessageOnStream();
   return ext_proc_call->SendMessageLocked(
       send_to_ext_proc_stream,
@@ -1226,63 +1231,96 @@ absl::AnyInvocable<Poll<absl::Status>()> SendServerToClientMessagesRequest(
           []() -> absl::Status { return absl::OkStatus(); }),
       // Phase 2: Start polling messages from the backend.
       [handler, initiator, ext_proc_call, config]() mutable {
-        return ForEach(
-            MessagesFrom(initiator),
-            [handler, ext_proc_call, config](MessageHandle message) mutable {
-              GRPC_TRACE_LOG(ext_proc_filter, INFO)
-                  << "ExtProc: ServerToClient S2C Write Loop pulled message, "
-                     "processing";
-              const bool send_to_ext_proc_stream =
-                  config->processing_mode.send_response_body &&
-                  !ext_proc_call->IsStreamClosed();
-              return If(
-                  send_to_ext_proc_stream,
-                  [handler, ext_proc_call, config,
-                   message = std::move(message)]() mutable {
-                    ext_proc_call->IncrementOutstandingServerToClientMessages();
-                    absl::AnyInvocable<Poll<absl::Status>()> send_promise;
-                    {
-                      MutexLock lock(ext_proc_call->mu());
-                      send_promise = SendServerMessageHandleRequest(
-                          message, ext_proc_call.get(), config,
-                          /*send_to_ext_proc_stream=*/true);
-                    }
-                    return Map(
-                        std::move(send_promise),
-                        [handler, ext_proc_call, message = std::move(message)](
-                            absl::Status status) mutable -> absl::Status {
-                          if (!status.ok() || ext_proc_call->IsStreamClosed()) {
-                            if (ext_proc_call->IsStreamClosedCleanly() ||
-                                ext_proc_call->IsServerFailOpenAllowed()) {
-                              if (message != nullptr) {
-                                handler.SpawnPushMessage(std::move(message));
+        return ForEach(MessagesFrom(initiator), [handler, ext_proc_call,
+                                                 config](MessageHandle
+                                                             message) mutable {
+          GRPC_TRACE_LOG(ext_proc_filter, INFO)
+              << "ExtProc: ServerToClient S2C Write Loop pulled message, "
+                 "processing";
+          auto shared_message =
+              std::make_shared<MessageHandle>(std::move(message));
+          return If(
+              ext_proc_call->drain_requested(),
+              [ext_proc_call, handler, shared_message]() mutable {
+                GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                    << "ExtProc: Drain active, blocking S2C Write Loop";
+                return Map(ext_proc_call->stream_status().Wait(),
+                           [ext_proc_call, handler, shared_message](
+                               absl::Status status) mutable -> absl::Status {
+                             GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                                 << "ExtProc: S2C Drain complete, resuming S2C "
+                                    "bypass. Status: "
+                                 << status;
+                             auto message = std::move(*shared_message);
+                             if (ext_proc_call->IsStreamClosedCleanly() ||
+                                 ext_proc_call->IsServerFailOpenAllowed()) {
+                               if (message != nullptr) {
+                                 handler.SpawnPushMessage(std::move(message));
+                               }
+                               return absl::OkStatus();
+                             }
+                             return ext_proc_call->GetStreamErrorStatus();
+                           });
+              },
+              [config, handler, ext_proc_call, shared_message]() mutable {
+                absl::AnyInvocable<Poll<absl::Status>()> send_promise;
+                bool send_to_ext_proc_stream = false;
+                {
+                  MutexLock lock(ext_proc_call->mu());
+                  send_to_ext_proc_stream =
+                      config->processing_mode.send_response_body &&
+                      !ext_proc_call->IsStreamClosed() &&
+                      !ext_proc_call->ext_proc_stream_half_closed_locked();
+                  if (send_to_ext_proc_stream) {
+                    send_promise = SendServerMessageHandleRequest(
+                        *shared_message, ext_proc_call.get(), config,
+                        /*send_to_ext_proc_stream=*/true);
+                  }
+                }
+                return If(
+                    send_to_ext_proc_stream,
+                    [handler, ext_proc_call, shared_message,
+                     send_promise = std::move(send_promise)]() mutable {
+                      return Map(
+                          std::move(send_promise),
+                          [handler, ext_proc_call, shared_message](
+                              absl::Status status) mutable -> absl::Status {
+                            auto message = std::move(*shared_message);
+                            if (!status.ok() ||
+                                ext_proc_call->IsStreamClosed()) {
+                              if (ext_proc_call->IsStreamClosedCleanly() ||
+                                  ext_proc_call->IsServerFailOpenAllowed()) {
+                                if (message != nullptr) {
+                                  handler.SpawnPushMessage(std::move(message));
+                                }
+                                return absl::OkStatus();
+                              } else {
+                                return ext_proc_call->IsStreamClosed()
+                                           ? ext_proc_call
+                                                 ->GetStreamErrorStatus()
+                                           : status;
                               }
-                              return absl::OkStatus();
-                            } else {
-                              return ext_proc_call->IsStreamClosed()
-                                         ? ext_proc_call->GetStreamErrorStatus()
-                                         : status;
                             }
-                          }
-                          return absl::OkStatus();
-                        });
-                  },
-                  [handler, ext_proc_call, config,
-                   message = std::move(message)]() mutable {
-                    if (config->processing_mode.send_response_body &&
-                        ext_proc_call->IsStreamClosed()) {
-                      if (!ext_proc_call->IsStreamClosedCleanly() &&
-                          !ext_proc_call->IsServerFailOpenAllowed()) {
-                        return ext_proc_call->GetStreamErrorStatus();
+                            return absl::OkStatus();
+                          });
+                    },
+                    [handler, ext_proc_call, config, shared_message]() mutable {
+                      auto message = std::move(*shared_message);
+                      if (config->processing_mode.send_response_body &&
+                          ext_proc_call->IsStreamClosed()) {
+                        if (!ext_proc_call->IsStreamClosedCleanly() &&
+                            !ext_proc_call->IsServerFailOpenAllowed()) {
+                          return ext_proc_call->GetStreamErrorStatus();
+                        }
                       }
-                    }
-                    GRPC_TRACE_LOG(ext_proc_filter, INFO)
-                        << "ExtProc: ServerToClient S2C Write Loop "
-                           "bypassing ext_proc";
-                    handler.SpawnPushMessage(std::move(message));
-                    return absl::OkStatus();
-                  });
-            });
+                      GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                          << "ExtProc: ServerToClient S2C Write Loop "
+                             "bypassing ext_proc";
+                      handler.SpawnPushMessage(std::move(message));
+                      return absl::OkStatus();
+                    });
+              });
+        });
       },
       // Phase 3: Mark writes done when polling finishes.
       [ext_proc_call]() {
@@ -1749,7 +1787,8 @@ MaybeHandleClosedStream(CallHandler handler,
                         ExtProcFilter::ExtProcCall* ext_proc_call,
                         RefCountedPtr<const ExtProcFilter::Config> config,
                         std::shared_ptr<ServerMetadataHandle> metadata) {
-  if (ext_proc_call->IsStreamClosed()) {
+  if (ext_proc_call->IsStreamClosed() ||
+      ext_proc_call->ext_proc_stream_half_closed_locked()) {
     absl::Status error = ext_proc_call->GetStreamErrorStatus();
     if (!error.ok()) {
       return [error]() -> Poll<absl::Status> { return error; };
