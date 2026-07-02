@@ -1786,7 +1786,8 @@ absl::optional<absl::AnyInvocable<Poll<absl::Status>()>>
 MaybeHandleClosedStream(CallHandler handler,
                         ExtProcFilter::ExtProcCall* ext_proc_call,
                         RefCountedPtr<const ExtProcFilter::Config> config,
-                        std::shared_ptr<ServerMetadataHandle> metadata) {
+                        std::shared_ptr<ServerMetadataHandle> metadata)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(ext_proc_call->mu()) {
   if (ext_proc_call->IsStreamClosed() ||
       ext_proc_call->ext_proc_stream_half_closed_locked()) {
     absl::Status error = ext_proc_call->GetStreamErrorStatus();

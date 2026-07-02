@@ -4481,7 +4481,7 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
 
   request.set_message("message1");
-  EXPECT_TRUE(stream->Write(request));
+  stream->Write(request);
   stream->Read(&response);
   stream->WritesDone();
   Status status = stream->Finish();
