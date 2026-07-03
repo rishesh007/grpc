@@ -1215,7 +1215,10 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseHeadersAllow) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_TRUE(status.ok()) << "Expected OK, got: " << status.error_message();
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(status.error_message(),
+            "unhandled immediate response due to config disabled it");
 }
 
 TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseHeadersBlock) {
@@ -1374,7 +1377,10 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseTrailersAllow) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_TRUE(status.ok()) << "Expected OK, got: " << status.error_message();
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(status.error_message(),
+            "unhandled immediate response due to config disabled it");
 }
 
 TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseTrailersBlock) {
@@ -1454,7 +1460,10 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseTrailersOnlyAllow) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_TRUE(status.ok()) << "Expected OK, got: " << status.error_message();
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(status.error_message(),
+            "unhandled immediate response due to config disabled it");
 }
 
 TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseTrailersOnlyBlock) {
@@ -5846,6 +5855,117 @@ class CleanCloseMockService : public MockExternalProcessorBase {
   bool close_before_responding_;
 };
 
+class DrainMockService : public MockExternalProcessorBase {
+ public:
+  enum class TriggerPoint {
+    kClientBody,
+    kServerBody,
+  };
+
+  DrainMockService(TriggerPoint trigger_point, int trigger_after_n_messages)
+      : trigger_point_(trigger_point),
+        trigger_after_n_messages_(trigger_after_n_messages) {}
+
+  grpc::Status Process(
+      grpc::ServerContext* /*context*/,
+      grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
+    std::cout << "DrainMockService: Process started" << std::endl;
+    ::envoy::service::ext_proc::v3::ProcessingRequest request;
+    int message_count = 0;
+    bool drain_triggered = false;
+
+    while (stream->Read(&request)) {
+      std::cout << "DrainMockService: Received request" << std::endl;
+      ::envoy::service::ext_proc::v3::ProcessingResponse response;
+      bool should_trigger = false;
+
+      if (request.has_request_body() &&
+          trigger_point_ == TriggerPoint::kClientBody) {
+        message_count++;
+        std::cout << "DrainMockService: Request body count: " << message_count << std::endl;
+        if (message_count == trigger_after_n_messages_) {
+          should_trigger = true;
+        }
+      } else if (request.has_response_body() &&
+                 trigger_point_ == TriggerPoint::kServerBody) {
+        message_count++;
+        std::cout << "DrainMockService: Response body count: " << message_count << std::endl;
+        if (message_count == trigger_after_n_messages_) {
+          should_trigger = true;
+        }
+      }
+
+      if (should_trigger) {
+        std::cout << "DrainMockService: Triggering drain" << std::endl;
+        response.set_request_drain(true);
+      }
+
+      // Echo back
+      if (request.has_request_headers()) {
+        std::cout << "DrainMockService: Echoing request headers" << std::endl;
+        SetDefaultEmptyResponse(request, &response);
+      } else if (request.has_response_headers()) {
+        std::cout << "DrainMockService: Echoing response headers" << std::endl;
+        SetDefaultEmptyResponse(request, &response);
+      } else if (request.has_request_body()) {
+        std::cout << "DrainMockService: Echoing request body" << std::endl;
+        auto* body_mutation = response.mutable_request_body()
+                                  ->mutable_response()
+                                  ->mutable_body_mutation();
+        if (!drain_triggered) {
+          grpc::testing::EchoRequest proto_req;
+          if (proto_req.ParseFromString(request.request_body().body())) {
+            proto_req.set_message(proto_req.message() + "_modified");
+            body_mutation->mutable_streamed_response()->set_body(
+                proto_req.SerializeAsString());
+          } else {
+            body_mutation->mutable_streamed_response()->set_body(
+                request.request_body().body() + "_modified");
+          }
+        } else {
+          body_mutation->mutable_streamed_response()->set_body(
+              request.request_body().body());
+        }
+      } else if (request.has_response_body()) {
+        std::cout << "DrainMockService: Echoing response body" << std::endl;
+        auto* body_mutation = response.mutable_response_body()
+                                  ->mutable_response()
+                                  ->mutable_body_mutation();
+        if (!drain_triggered) {
+          grpc::testing::EchoResponse proto_resp;
+          if (proto_resp.ParseFromString(request.response_body().body())) {
+            proto_resp.set_message(proto_resp.message() + "_modified");
+            body_mutation->mutable_streamed_response()->set_body(
+                proto_resp.SerializeAsString());
+          } else {
+            body_mutation->mutable_streamed_response()->set_body(
+                request.response_body().body() + "_modified");
+          }
+        } else {
+          body_mutation->mutable_streamed_response()->set_body(
+              request.response_body().body());
+        }
+      } else {
+        std::cout << "DrainMockService: Echoing other" << std::endl;
+        SetDefaultEmptyResponse(request, &response);
+      }
+
+      stream->Write(response);
+      if (should_trigger) {
+        drain_triggered = true;
+      }
+    }
+    std::cout << "DrainMockService: Process exiting (Read returned false)" << std::endl;
+    return grpc::Status::OK;
+  }
+
+ private:
+  TriggerPoint trigger_point_;
+  int trigger_after_n_messages_;
+};
+
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailClosed) {
   auto mock_service = std::make_shared<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kBeforeRequestHeaders);
@@ -7160,6 +7280,103 @@ TEST_P(
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message3");
+
+  stream->WritesDone();
+  Status status = stream->Finish();
+  EXPECT_TRUE(status.ok()) << status.error_message();
+}
+
+TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
+  auto mock_service = std::make_shared<DrainMockService>(
+      DrainMockService::TriggerPoint::kClientBody, 1);
+  StartAlternativeServer(mock_service);
+  CreateAndStartBackends(1);
+
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(false)
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+
+  ClientContext context;
+  auto stream = stub_->BidiStream(&context);
+  EchoRequest request;
+  EchoResponse response;
+
+  // Send message1. It should be modified by ext_proc.
+  // The response to message1 will also trigger drain.
+  request.set_message("message1");
+  EXPECT_TRUE(stream->Write(request));
+  EXPECT_TRUE(stream->Read(&response));
+  EXPECT_EQ(response.message(), "message1_modified");
+
+  // Send message2. Since drain was triggered on message1, the ext_proc stream
+  // should be closed by now, and message2 should bypass ext_proc (not modified).
+  request.set_message("message2");
+  EXPECT_TRUE(stream->Write(request));
+  EXPECT_TRUE(stream->Read(&response));
+  EXPECT_EQ(response.message(), "message2");
+
+  stream->WritesDone();
+  Status status = stream->Finish();
+  EXPECT_TRUE(status.ok()) << status.error_message();
+}
+
+TEST_P(XdsExtProcEnd2endTest, StreamDrainServerBody) {
+  auto mock_service = std::make_shared<DrainMockService>(
+      DrainMockService::TriggerPoint::kServerBody, 1);
+  StartAlternativeServer(mock_service);
+  CreateAndStartBackends(1);
+
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(false)
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+
+  ClientContext context;
+  auto stream = stub_->BidiStream(&context);
+  EchoRequest request;
+  EchoResponse response;
+
+  // Send request1. Response1 should be modified.
+  request.set_message("message1");
+  EXPECT_TRUE(stream->Write(request));
+  EXPECT_TRUE(stream->Read(&response));
+  EXPECT_EQ(response.message(), "message1_modified");
+
+  // Send request2. Response2 should bypass ext_proc.
+  request.set_message("message2");
+  EXPECT_TRUE(stream->Write(request));
+  EXPECT_TRUE(stream->Read(&response));
+  EXPECT_EQ(response.message(), "message2");
 
   stream->WritesDone();
   Status status = stream->Finish();

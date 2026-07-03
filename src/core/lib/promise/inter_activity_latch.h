@@ -19,6 +19,7 @@
 #include <stdint.h>
 
 #include <string>
+#include <type_traits>
 
 #include "src/core/lib/debug/trace.h"
 #include "src/core/lib/promise/activity.h"
@@ -46,7 +47,11 @@ class InterActivityLatch {
       GRPC_TRACE_LOG(promise_primitives, INFO)
           << DebugTag() << "PollWait " << StateString();
       if (value_.has_value()) {
-        return std::move(*value_);
+        if constexpr (std::is_copy_constructible_v<T>) {
+          return *value_;
+        } else {
+          return std::move(*value_);
+        }
       } else {
         return waiters_.AddPending(
             GetContext<Activity>()->MakeNonOwningWaker());

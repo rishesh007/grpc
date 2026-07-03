@@ -256,25 +256,33 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
 
   bool IsClientFailOpenAllowed() {
     MutexLock lock(&mu_);
+    bool allowed = observability_mode_
+                       ? failure_mode_allow_
+                       : (failure_mode_allow_ && !c2s_first_body_message_sent_);
+    GRPC_TRACE_LOG(ext_proc_filter, INFO)
+        << "IsClientFailOpenAllowed: " << allowed
+        << " (observability_mode=" << observability_mode_
+        << ", failure_mode_allow=" << failure_mode_allow_
+        << ", c2s_first_body_message_sent=" << c2s_first_body_message_sent_
+        << ")";
+    return allowed;
+  }
+
+  bool IsServerFailOpenAllowedLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     if (observability_mode_) return failure_mode_allow_;
-    return failure_mode_allow_ && !c2s_first_body_message_sent_;
+    return failure_mode_allow_ && !s2c_first_body_message_sent_;
   }
 
   bool IsServerFailOpenAllowed() {
     MutexLock lock(&mu_);
-    if (observability_mode_) return failure_mode_allow_;
-    return failure_mode_allow_ && !s2c_first_body_message_sent_;
+    return IsServerFailOpenAllowedLocked();
   }
 
   bool IsStreamFailOpenAllowedLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     if (drain_requested_.load(std::memory_order_relaxed)) return false;
     if (observability_mode_) return failure_mode_allow_;
     if (!failure_mode_allow_) return false;
-    const bool c2s_committed =
-        c2s_first_body_message_sent_ && !c2s_half_close_initiated_;
-    const bool s2c_committed =
-        s2c_first_body_message_sent_ && !s2c_writes_done_;
-    return !(c2s_committed || s2c_committed);
+    return !(c2s_first_body_message_sent_ || s2c_first_body_message_sent_);
   }
 
   bool IsStreamFailOpenAllowed() {
@@ -685,6 +693,12 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
                                     "request headers response"));
             return;
           }
+          if (!DecrementOutstandingClientToServerMessages()) {
+            SetStreamError(absl::InternalError(
+                "Received unexpected request body response from "
+                "external processor"));
+            return;
+          }
           auto& request_body = *parsed_response.request_body;
           bool eos = false;
           if (request_body.ok()) {
@@ -739,6 +753,12 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
                 "trailers response"));
             return;
           }
+          if (!DecrementOutstandingServerToClientMessages()) {
+            SetStreamError(absl::InternalError(
+                "Received unexpected response body response from "
+                "external processor"));
+            return;
+          }
           auto& response_body = *parsed_response.response_body;
           bool eos = false;
           if (response_body.ok()) {
@@ -781,7 +801,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       if (status.ok()) {
         if (must_drain && !drain_requested_active) {
           status = absl::InternalError("Stream closed cleanly without drain");
-        } else if (has_outstanding_messages) {
+        } else if (has_outstanding_messages && !observability_mode_) {
           status = absl::InternalError(
               "Stream closed cleanly with outstanding messages");
         }
@@ -791,10 +811,8 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
 
       already_closed = stream_closed_.load(std::memory_order_relaxed);
       if (!already_closed) {
-        if (should_propagate_error) {
-          if (!stream_status_.IsSet()) {
-            stream_status_.Set(status);
-          }
+        if (!stream_status_.IsSet()) {
+          stream_status_.Set(status);
         }
         stream_closed_.store(true, std::memory_order_release);
       }
@@ -1201,14 +1219,21 @@ auto ServerToClientMessagesNonProcessingMode(CallHandler handler,
                                              CallInitiator initiator) {
   GRPC_TRACE_LOG(ext_proc_filter, INFO)
       << "ExtProc: ServerToClientMessagesNonProcessingMode started";
-  return ForEach(MessagesFrom(initiator),
-                 [handler](MessageHandle message) mutable {
-                   GRPC_TRACE_LOG(ext_proc_filter, INFO)
-                       << "ExtProc: ServerToClientMessagesNonProcessingMode "
-                          "forwarding message";
-                   handler.SpawnPushMessage(std::move(message));
-                   return absl::OkStatus();
-                 });
+  return Map(ForEach(MessagesFrom(initiator),
+                     [handler](MessageHandle message) mutable {
+                       GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                           << "ExtProc: "
+                              "ServerToClientMessagesNonProcessingMode "
+                              "forwarding message";
+                       handler.SpawnPushMessage(std::move(message));
+                       return absl::OkStatus();
+                     }),
+             [](absl::Status status) {
+               GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                   << "ServerToClientMessagesNonProcessingMode finished: "
+                   << status;
+               return status;
+             });
 }
 
 absl::AnyInvocable<Poll<absl::Status>()> SendServerToClientMessagesRequest(
@@ -1396,11 +1421,6 @@ absl::AnyInvocable<Poll<absl::Status>()> ReadServerToClientMessagesResponse(
             << "ExtProcCall " << ext_proc_call.get()
             << " SpawnPushMessage (normal mode)";
         handler.SpawnPushMessage(std::move(new_msg));
-        if (!ext_proc_call->DecrementOutstandingServerToClientMessages()) {
-          return absl::InternalError(
-              "Received unexpected response body response from "
-              "external processor");
-        }
         return absl::OkStatus();
       });
   // Wait for all messages to be processed (writes done AND
@@ -1791,7 +1811,7 @@ MaybeHandleClosedStream(CallHandler handler,
   if (ext_proc_call->IsStreamClosed() ||
       ext_proc_call->ext_proc_stream_half_closed_locked()) {
     absl::Status error = ext_proc_call->GetStreamErrorStatus();
-    if (!error.ok()) {
+    if (!error.ok() && !ext_proc_call->IsServerFailOpenAllowedLocked()) {
       return [error]() -> Poll<absl::Status> { return error; };
     }
     return ServerTrailingMetadataNonProcessingMode(
@@ -2254,12 +2274,6 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
               return absl::OkStatus();
             }
             if (ext_proc_response.request_body.has_value()) {
-              if (!ext_proc_call
-                       ->DecrementOutstandingClientToServerMessages()) {
-                return absl::InternalError(
-                    "Received unexpected request body response from "
-                    "external processor");
-              }
               const auto& request_body = *ext_proc_response.request_body;
               if (!request_body.ok()) {
                 return request_body.status();
@@ -2296,7 +2310,16 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
   return Map(TryJoin<absl::StatusOr>(std::move(client_to_sidestream),
                                      std::move(sidestream_to_server)),
              [ext_proc_call](auto result) -> absl::Status {
+               GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                   << "ClientToServerMessagesNormalMode result: "
+                   << result.status() << ", fail_open_allowed: "
+                   << ext_proc_call->IsClientFailOpenAllowed()
+                   << ", stream_error: "
+                   << ext_proc_call->GetStreamErrorStatus();
                if (!result.ok()) return result.status();
+               if (ext_proc_call->IsClientFailOpenAllowed()) {
+                 return absl::OkStatus();
+               }
                return ext_proc_call->GetStreamErrorStatus();
              });
 }
@@ -2666,11 +2689,6 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ProcessServerToClient(
                 [handler, initiator, ext_proc_call,
                  config](ServerMetadataHandle md) mutable
                     -> absl::AnyInvocable<Poll<absl::Status>()> {
-                  if (ext_proc_call->IsStreamClosed() &&
-                      !ext_proc_call->GetStreamErrorStatus().ok()) {
-                    return [error = ext_proc_call->GetStreamErrorStatus()]()
-                               -> Poll<absl::Status> { return error; };
-                  }
                   auto shared_md =
                       std::make_shared<ServerMetadataHandle>(std::move(md));
                   return ServerTrailingMetadata(
@@ -2680,11 +2698,19 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ProcessServerToClient(
 
   auto watch_error =
       Seq(ext_proc_call->stream_status().Wait(),
-          [config = config_](absl::Status status) -> Poll<absl::Status> {
+          [config = config_](absl::Status status)
+              -> absl::AnyInvocable<Poll<absl::Status>()> {
+            GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                << "watch_error stream_status: " << status
+                << ", failure_mode_allow: " << config->failure_mode_allow;
             if (!status.ok() && !config->failure_mode_allow) {
-              return status;
+              return [status]() -> Poll<absl::Status> { return status; };
             }
-            return Pending{};
+            return []() -> Poll<absl::Status> {
+              GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                  << "watch_error returning Pending";
+              return Pending{};
+            };
           });
 
   auto run_pipeline =
