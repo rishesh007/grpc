@@ -32,7 +32,6 @@
 #include <grpc/status.h>
 #include <grpc/support/alloc.h>
 
-#include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
@@ -78,14 +77,24 @@ struct MetadataStallController {
     return "grpc.test.metadata_stall_controller";
   }
   // Set to true to release the stalled metadata batch.
-  std::atomic<bool> release_initial_md{false};
+  bool release_initial_md = false;
   // Captures the call's promise waker when it stalls, allowing the test to
   // wake it up.
   Waker init_md_waker;
+  // Set to true to make filter's main promise resolve with and out-of-band
+  // immediate response (a non-OK ServerMetadata), replacing the downstream
+  // response.
+  bool trigger_immediate_response = false;
+  // Capture waker
+  Waker immediate_response_waker;
 };
 
 // A client filter that stalls server initial metadata until released and
 // appends kMutationSuffix to every inbound message.
+// If test set control->trigger_immediate_response, the filter main promise
+// also resolves with and out-of-band immediate response, (example ext_proc
+// filter that replaces server response while a message is still parked behind
+// stalled initial metadata. )
 class StallInitialMetadataMutateMessageFilter final : public ChannelFilter {
  public:
   explicit StallInitialMetadataMutateMessageFilter(
@@ -101,8 +110,7 @@ class StallInitialMetadataMutateMessageFilter final : public ChannelFilter {
         [this](ServerMetadataHandle md) {
           return [md = std::move(md),
                   this]() mutable -> Poll<ServerMetadataHandle> {
-            if (control_ != nullptr &&
-                control_->release_initial_md.load(std::memory_order_acquire)) {
+            if (control_ != nullptr && control_->release_initial_md) {
               return std::move(md);
             }
             if (control_ != nullptr) {
@@ -118,7 +126,20 @@ class StallInitialMetadataMutateMessageFilter final : public ChannelFilter {
       msg->payload()->Append(Slice::FromCopiedString(kMutationSuffix));
       return msg;
     });
-    return next(std::move(args));
+    auto inner = next(std::move(args));
+    return [inner = std::move(inner),
+            this]() mutable -> Poll<ServerMetadataHandle> {
+      if (control_ != nullptr && control_->trigger_immediate_response) {
+        // short circuit call with immediate response
+        return ServerMetadataFromStatus(GRPC_STATUS_PERMISSION_DENIED,
+                                        "Access denied by filter");
+      }
+      if (control_ != nullptr) {
+        control_->immediate_response_waker =
+            GetContext<Activity>()->MakeNonOwningWaker();
+      }
+      return inner();
+    };
   }
 
   static absl::StatusOr<
@@ -475,7 +496,7 @@ TEST(RecvMessageFilterBypassTest,
   env.RunOnCombiner(env.mock.recv_trailing_metadata_ready);
   EXPECT_FALSE(env.app.msg_ready_called);
   // 4) Release server initial metadata.
-  control.release_initial_md.store(true, std::memory_order_release);
+  control.release_initial_md = true;
   control.init_md_waker.Wakeup();
   ExecCtx::Get()->Flush();
   // Verify parked message is flushed and mutated by filter.
@@ -515,7 +536,7 @@ TEST(RecvMessageFilterBypassTest,
   env.RunOnCombiner(env.mock.recv_trailing_metadata_ready);
   EXPECT_FALSE(env.app.msg_ready_called);
   // 4) Release server initial metadata. Parked message is flushed and mutated.
-  control.release_initial_md.store(true, std::memory_order_release);
+  control.release_initial_md = true;
   control.init_md_waker.Wakeup();
   ExecCtx::Get()->Flush();
   // Verify parked message is flushed and mutated by filter.
@@ -558,7 +579,7 @@ TEST(RecvMessageFilterBypassTest,
   env.RunOnCombiner(env.mock.recv_trailing_metadata_ready);
   EXPECT_FALSE(env.app.msg_ready_called);
   // 4) Release server initial metadata.
-  control.release_initial_md.store(true, std::memory_order_release);
+  control.release_initial_md = true;
   control.init_md_waker.Wakeup();
   ExecCtx::Get()->Flush();
   // Verify parked message is flushed and mutated by both filters.
@@ -611,12 +632,52 @@ TEST(RecvMessageFilterBypassTest, StalledMessageCancelled) {
   EXPECT_TRUE(env.app.trailing_ready_called);
 }
 
+// Test Stalled message is discarded for immediate non-ok response
+TEST(RecvMessageFilterBypassTest,
+     StalledMessageImmediateResponseDiscardsParkedMessage) {
+  if (!IsRecvMessageFilterBypassFixEnabled()) {
+    GTEST_SKIP() << "Test fail without experiment";
+  }
+  ExecCtx exec_ctx;
+  // Create CallStack
+  MetadataStallController control;
+  FakeCallStack env(
+      {{&kStallFilter, nullptr}, {&MockTransportFilter::kFilter, nullptr}},
+      &control);
+  // 1) Stalled initial metadata.
+  env.mock.recv_initial_metadata->Set(HttpStatusMetadata(), 200);
+  env.RunOnCombiner(env.mock.recv_initial_metadata_ready);
+  // 2) Parked message.
+  {
+    SliceBuffer sb;
+    sb.Append(Slice::FromCopiedString("hello"));
+    *env.mock.recv_message = std::move(sb);
+  }
+  env.RunOnCombiner(env.mock.recv_message_ready);
+  // 3) Transport deliver OK trailing metadata parked
+  env.recv_trail_md.Set(GrpcStatusMetadata(), GRPC_STATUS_OK);
+  env.RunOnCombiner(env.mock.recv_trailing_metadata_ready);
+  EXPECT_FALSE(env.app.msg_ready_called);
+  // 4) The filter's promise now produces an out-of-band immediate response
+  // (non-ok) while the message is still parked.
+  control.trigger_immediate_response = true;
+  control.immediate_response_waker.Wakeup();
+  ExecCtx::Get()->Flush();
+  // The parked message must be discarded (its read callback completed with a
+  // failed status and no payload) and the
+  //  call must finish.
+  EXPECT_TRUE(env.app.msg_ready_called);
+  EXPECT_FALSE(env.app.msg_status.ok());
+  EXPECT_EQ(env.app.captured_payload, "");
+  EXPECT_TRUE(env.app.trailing_ready_called);
+}
 }  // namespace
 }  // namespace grpc_core
 
 int main(int argc, char** argv) {
   grpc::testing::TestEnvironment env(&argc, argv);
   ::testing::InitGoogleTest(&argc, argv);
+  grpc_core::ForceEnableExperiment("recv_message_filter_bypass_fix", true);
   grpc::testing::TestGrpcScope grpc_scope;
   return RUN_ALL_TESTS();
 }

@@ -1276,9 +1276,21 @@ class ClientCallData::PollContext {
             self_->send_message()->Done(*md, flusher_);
           }
           if (self_->receive_message() != nullptr) {
-            self_->receive_message()->Done(*md, flusher_);
+            if (IsRecvMessageFilterBypassFixEnabled()) {
+              // the promise produced its own terminal metadata. Any received
+              // message still in-flight is discarded, not delivered up the
+              // stack.
+              self_->receive_message()->Done(*md, flusher_, true);
+              // repoll to drain; otherwise the recv_message batch
+              // never completes and the call hang
+              if (!self_->receive_message()->IsIdle()) {
+                repoll_ = true;
+              }
+            }
           }
-          if (self_->recv_trailing_state_ == RecvTrailingState::kComplete) {
+          if (self_->recv_trailing_state_ == RecvTrailingState::kComplete ||
+              self_->recv_trailing_state_ ==
+                  RecvTrailingState::kQueuedBehindReceiveMessage) {
             if (self_->recv_trailing_metadata_ != md.get()) {
               *self_->recv_trailing_metadata_ = std::move(*md);
             }
