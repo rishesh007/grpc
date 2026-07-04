@@ -2342,21 +2342,21 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
         }
         return status;
       });
-  return Map(TryJoin<absl::StatusOr>(std::move(client_to_sidestream),
-                                     std::move(sidestream_to_server)),
-             [ext_proc_call](auto result) -> absl::Status {
-               GRPC_TRACE_LOG(ext_proc_filter, INFO)
-                   << "ClientToServerMessagesNormalMode result: "
-                   << result.status() << ", fail_open_allowed: "
-                   << ext_proc_call->IsClientFailOpenAllowed()
-                   << ", stream_error: "
-                   << ext_proc_call->GetStreamErrorStatus();
-               if (!result.ok()) return result.status();
-               if (ext_proc_call->IsClientFailOpenAllowed()) {
-                 return absl::OkStatus();
-               }
-               return ext_proc_call->GetStreamErrorStatus();
-             });
+  return Map(
+      TryJoin<absl::StatusOr>(std::move(client_to_sidestream),
+                              std::move(sidestream_to_server)),
+      [ext_proc_call](auto result) -> absl::Status {
+        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+            << "ClientToServerMessagesNormalMode result: " << result.status()
+            << ", fail_open_allowed: "
+            << ext_proc_call->IsClientFailOpenAllowed()
+            << ", stream_error: " << ext_proc_call->GetStreamErrorStatus();
+        if (!result.ok()) return result.status();
+        if (ext_proc_call->IsClientFailOpenAllowed()) {
+          return absl::OkStatus();
+        }
+        return ext_proc_call->GetStreamErrorStatus();
+      });
 }
 
 absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessages(
@@ -2733,8 +2733,8 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ProcessServerToClient(
 
   auto watch_error =
       Seq(ext_proc_call->WaitForStreamErrorStatus(),
-          [config = config_](absl::Status status)
-              -> absl::AnyInvocable<Poll<absl::Status>()> {
+          [config = config_](
+              absl::Status status) -> absl::AnyInvocable<Poll<absl::Status>()> {
             GRPC_TRACE_LOG(ext_proc_filter, INFO)
                 << "watch_error stream_status: " << status
                 << ", failure_mode_allow: " << config->failure_mode_allow;

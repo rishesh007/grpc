@@ -5012,10 +5012,10 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
   // Due to transport-level timing across HTTP/2 buffers, if the client thread
-  // reads the pushed trailing metadata before the second (illegal) write arrives
-  // from the ext_proc server, status will be OK. If the second write arrives
-  // first, status will be INTERNAL. Both are valid transport outcomes for an
-  // out-of-order post-trailer write.
+  // reads the pushed trailing metadata before the second (illegal) write
+  // arrives from the ext_proc server, status will be OK. If the second write
+  // arrives first, status will be INTERNAL. Both are valid transport outcomes
+  // for an out-of-order post-trailer write.
   if (!status.ok()) {
     EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
     EXPECT_THAT(status.error_message(),
@@ -5909,14 +5909,16 @@ class DrainMockService : public MockExternalProcessorBase {
       } else if (request.has_request_body() &&
                  trigger_point_ == TriggerPoint::kClientBody) {
         message_count++;
-        std::cout << "DrainMockService: Request body count: " << message_count << std::endl;
+        std::cout << "DrainMockService: Request body count: " << message_count
+                  << std::endl;
         if (message_count == trigger_after_n_messages_) {
           should_trigger = true;
         }
       } else if (request.has_response_body() &&
                  trigger_point_ == TriggerPoint::kServerBody) {
         message_count++;
-        std::cout << "DrainMockService: Response body count: " << message_count << std::endl;
+        std::cout << "DrainMockService: Response body count: " << message_count
+                  << std::endl;
         if (message_count == trigger_after_n_messages_) {
           should_trigger = true;
         }
@@ -5993,7 +5995,8 @@ class DrainMockService : public MockExternalProcessorBase {
         drain_triggered = true;
       }
     }
-    std::cout << "DrainMockService: Process exiting (Read returned false)" << std::endl;
+    std::cout << "DrainMockService: Process exiting (Read returned false)"
+              << std::endl;
     return grpc::Status::OK;
   }
 
@@ -6414,8 +6417,7 @@ TEST_P(XdsExtProcEnd2endTest,
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6454,8 +6456,7 @@ TEST_P(XdsExtProcEnd2endTest,
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6530,8 +6531,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyNoInFlight) {
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6614,8 +6614,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyWithInFlight) {
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6842,16 +6841,15 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
   // it receives it. Now we send request 2.
   request.set_message("message2");
   if (stream->Write(request)) {
-    // Since the stream closed cleanly but we are committed (we already processed
-    // response1), the RPC must fail.
+    // Since the stream closed cleanly but we are committed (we already
+    // processed response1), the RPC must fail.
     EXPECT_FALSE(stream->Read(&response));
   }
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6955,8 +6953,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -7057,8 +7054,7 @@ TEST_P(XdsExtProcEnd2endTest,
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -7149,8 +7145,7 @@ TEST_P(XdsExtProcEnd2endTest,
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(
@@ -7257,8 +7252,7 @@ TEST_P(XdsExtProcEnd2endTest,
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(
@@ -7360,7 +7354,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
   EXPECT_EQ(response.message(), "message1_modified");
 
   // Send message2. Since drain was triggered on message1, the ext_proc stream
-  // should be closed by now, and message2 should bypass ext_proc (not modified).
+  // should be closed by now, and message2 should bypass ext_proc (not
+  // modified).
   request.set_message("message2");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
