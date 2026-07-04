@@ -251,16 +251,24 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return failure_mode_allow_ && !c2s_first_body_message_sent_;
   }
 
-  bool IsServerFailOpenAllowed() {
-    MutexLock lock(&mu_);
+  bool IsServerFailOpenAllowedLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     if (observability_mode_) return failure_mode_allow_;
     return failure_mode_allow_ && !s2c_first_body_message_sent_;
   }
 
-  bool IsStreamFailOpenAllowed() {
+  bool IsServerFailOpenAllowed() {
     MutexLock lock(&mu_);
+    return IsServerFailOpenAllowedLocked();
+  }
+
+  bool IsStreamFailOpenAllowedLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     if (observability_mode_ || !failure_mode_allow_) return failure_mode_allow_;
     return !(c2s_first_body_message_sent_ || s2c_first_body_message_sent_);
+  }
+
+  bool IsStreamFailOpenAllowed() {
+    MutexLock lock(&mu_);
+    return IsStreamFailOpenAllowedLocked();
   }
 
   void MarkClientHalfCloseInitiatedLocked()
@@ -304,19 +312,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     outstanding_s2c_messages_++;
   }
 
-  void MarkServerToClientWritesDone() {
-    MutexLock lock(&mu_);
-    s2c_writes_done_ = true;
-    if (outstanding_s2c_messages_ == 0) {
-      all_server_to_client_responses_received_latch_.Set();
-    }
-  }
-
-  void SetIsTrailersOnly() {
-    MutexLock lock(&mu_);
-    is_trailers_only_ = true;
-  }
-
   bool DecrementOutstandingServerToClientMessages() {
     MutexLock lock(&mu_);
     if (outstanding_s2c_messages_ == 0) {
@@ -327,15 +322,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       all_server_to_client_responses_received_latch_.Set();
     }
     return true;
-  }
-
-  InterActivityLatch<void>& all_server_to_client_responses_received_latch() {
-    return all_server_to_client_responses_received_latch_;
-  }
-
-  bool IsProcessorSentHalfClose() {
-    MutexLock lock(&mu_);
-    return processor_sent_half_close_;
   }
 
   void IncrementOutstandingClientToServerMessagesLocked()
@@ -350,6 +336,28 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     }
     outstanding_c2s_messages_--;
     return true;
+  }
+
+  void SetServerToClientWritesDone() {
+    MutexLock lock(&mu_);
+    s2c_writes_done_ = true;
+    if (outstanding_s2c_messages_ == 0) {
+      all_server_to_client_responses_received_latch_.Set();
+    }
+  }
+
+  void SetIsTrailersOnly() {
+    MutexLock lock(&mu_);
+    is_trailers_only_ = true;
+  }
+
+  InterActivityLatch<void>& all_server_to_client_responses_received_latch() {
+    return all_server_to_client_responses_received_latch_;
+  }
+
+  bool IsProcessorSentHalfClose() {
+    MutexLock lock(&mu_);
+    return processor_sent_half_close_;
   }
 
   void MarkClientSendsDone() {
@@ -416,13 +424,13 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   }
 
   void CloseStream() {
-    OrphanablePtr<SerializedStreamingCall> call_to_reset;
+    OrphanablePtr<SerializedStreamingCall> streaming_call;
     {
       MutexLock lock(&mu_);
       stream_closed_.store(true, std::memory_order_release);
-      call_to_reset = std::move(streaming_call_);
+      streaming_call = std::move(streaming_call_);
     }
-    call_to_reset.reset();
+    streaming_call.reset();
     if (!request_body_pipe_.sender.IsClosed()) {
       request_body_pipe_.sender.MarkClosed();
     }
@@ -463,31 +471,30 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     WeakRefCountedPtr<ExtProcCall> call_;
   };
 
-  void CompleteAllLatchesAndPipes(
-      absl::StatusOr<ExtProcResponse> status_or_response) {
+  void CompleteAllLatchesAndPipes(absl::StatusOr<ExtProcResponse> response) {
     if (processing_mode_.send_request_headers &&
         !request_headers_latch_.IsSet()) {
-      request_headers_latch_.Set(status_or_response);
+      request_headers_latch_.Set(response);
     }
     if (processing_mode_.send_response_headers &&
         !response_headers_latch_.IsSet()) {
-      response_headers_latch_.Set(status_or_response);
+      response_headers_latch_.Set(response);
     }
     if (processing_mode_.send_response_trailers &&
         !response_trailers_latch_.IsSet()) {
-      response_trailers_latch_.Set(status_or_response);
+      response_trailers_latch_.Set(response);
     }
     if (processing_mode_.send_request_body &&
         !request_body_pipe_.sender.IsClosed()) {
-      if (!status_or_response.ok()) {
-        request_body_pipe_.sender.Push(status_or_response.status())();
+      if (!response.ok()) {
+        request_body_pipe_.sender.Push(response.status())();
       }
       request_body_pipe_.sender.MarkClosed();
     }
     if (processing_mode_.send_response_body &&
         !response_body_pipe_.sender.IsClosed()) {
-      if (!status_or_response.ok()) {
-        response_body_pipe_.sender.Push(status_or_response.status())();
+      if (!response.ok()) {
+        response_body_pipe_.sender.Push(response.status())();
       }
       response_body_pipe_.sender.MarkClosed();
     }
@@ -512,10 +519,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     processor_sent_half_close_ = true;
   }
 
-  void OnRequestSent(bool ok) {
-    GRPC_TRACE_LOG(ext_proc_filter, INFO)
-        << "ExtProcCall " << this << " request sent ok=" << ok;
-  }
+  void OnRequestSent(bool ok) {}
 
   void OnRecvMessage(absl::string_view payload) {
     const bool fail_open = IsStreamFailOpenAllowed();
@@ -777,7 +781,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
               "Stream closed cleanly with outstanding messages");
         }
       }
-      const bool fail_open_allowed = IsStreamFailOpenAllowed();
+      const bool fail_open_allowed = IsStreamFailOpenAllowedLocked();
       should_propagate_error = !status.ok() && !fail_open_allowed;
 
       already_closed = stream_closed_.load(std::memory_order_relaxed);
@@ -1311,7 +1315,7 @@ absl::AnyInvocable<Poll<absl::Status>()> SendServerToClientMessagesRequest(
       },
       // Phase 3: Mark writes done when polling finishes.
       [ext_proc_call]() {
-        ext_proc_call->MarkServerToClientWritesDone();
+        ext_proc_call->SetServerToClientWritesDone();
         return absl::OkStatus();
       });
   return [promise = std::move(promise)]() mutable { return promise(); };
@@ -1775,7 +1779,7 @@ MaybeHandleClosedStream(CallHandler handler,
   if (ext_proc_call->IsStreamClosed() ||
       ext_proc_call->ext_proc_stream_half_closed_locked()) {
     absl::Status error = ext_proc_call->GetStreamErrorStatusLocked();
-    if (!error.ok() && !ext_proc_call->IsServerFailOpenAllowed()) {
+    if (!error.ok() && !ext_proc_call->IsServerFailOpenAllowedLocked()) {
       return [error]() -> Poll<absl::Status> { return error; };
     }
     return ServerTrailingMetadataNonProcessingMode(
