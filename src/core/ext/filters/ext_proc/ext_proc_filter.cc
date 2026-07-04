@@ -225,8 +225,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         std::make_unique<StreamEventHandler>(WeakRef()),
         /*wait_for_ready=*/false);
     streaming_call_->StartRecvMessage();
-    // Take a strong ref to keep ourselves alive until the stream is closed.
-    Ref(DEBUG_LOCATION, "active_stream").release();
   }
 
   ~ExtProcCall() override { streaming_call_.reset(); }
@@ -779,7 +777,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   void OnStatusReceived(absl::Status status) {
     GRPC_TRACE_LOG(ext_proc_filter, INFO)
         << "ExtProcCall " << this << " status received: " << status;
-    bool should_unref = false;
     bool already_closed = false;
     bool should_propagate_error = false;
 
@@ -812,10 +809,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         }
         stream_closed_.store(true, std::memory_order_release);
       }
-      if (!unreffed_active_stream_) {
-        unreffed_active_stream_ = true;
-        should_unref = true;
-      }
     }
 
     // ALWAYS complete latches on status received to avoid hangs.
@@ -826,10 +819,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     }
     if (!already_closed) {
       CloseStream();
-    }
-    if (should_unref) {
-      // Release the active stream ref!
-      Unref(DEBUG_LOCATION, "active_stream");
     }
   }
 
@@ -865,7 +854,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   bool ext_proc_stream_half_closed_ ABSL_GUARDED_BY(&mu_) = false;
   InterActivityLatch<absl::Status> stream_status_;
   std::optional<absl::Status> saved_stream_status_ ABSL_GUARDED_BY(&mu_);
-  bool unreffed_active_stream_ ABSL_GUARDED_BY(&mu_) = false;
 };
 
 namespace {
