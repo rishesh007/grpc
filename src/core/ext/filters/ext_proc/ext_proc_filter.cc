@@ -189,26 +189,6 @@ ExtProcFilter::ExtProcChannel::~ExtProcChannel() {
 
 class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
  public:
-  InterActivityLatch<absl::StatusOr<ExtProcResponse>>& request_headers_latch() {
-    return request_headers_latch_;
-  }
-  InterActivityLatch<absl::StatusOr<ExtProcResponse>>&
-  response_headers_latch() {
-    return response_headers_latch_;
-  }
-  InterActivityLatch<absl::StatusOr<ExtProcResponse>>&
-  response_trailers_latch() {
-    return response_trailers_latch_;
-  }
-  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16>& request_body_pipe() {
-    return request_body_pipe_;
-  }
-  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16>& response_body_pipe() {
-    return response_body_pipe_;
-  }
-
-  InterActivityLatch<absl::Status>& stream_status() { return stream_status_; }
-
   ExtProcCall(RefCountedPtr<ExtProcChannel> channel, bool observability_mode,
               bool failure_mode_allow, bool disable_immediate_response,
               const ProcessingMode& processing_mode,
@@ -229,57 +209,58 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
 
   ~ExtProcCall() override { streaming_call_.reset(); }
 
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>>& request_headers_latch() {
+    return request_headers_latch_;
+  }
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>>&
+  response_headers_latch() {
+    return response_headers_latch_;
+  }
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>>&
+  response_trailers_latch() {
+    return response_trailers_latch_;
+  }
+  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16>& request_body_pipe() {
+    return request_body_pipe_;
+  }
+  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16>& response_body_pipe() {
+    return response_body_pipe_;
+  }
+
+  InterActivityLatch<absl::Status>& stream_status() { return stream_status_; }
+
   bool IsFirstMessageOnStream() ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     bool is_first = is_first_message_on_ext_proc_stream_;
     is_first_message_on_ext_proc_stream_ = false;
     return is_first;
   }
 
-  void MarkFirstClientBodyMessageSentLocked()
+  void SetFirstClientBodyMessageSentLocked()
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     c2s_first_body_message_sent_ = true;
   }
 
-  void MarkFirstServerBodyMessageSentLocked()
+  void SetFirstServerBodyMessageSentLocked()
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     s2c_first_body_message_sent_ = true;
   }
 
   bool IsClientFailOpenAllowed() {
     MutexLock lock(&mu_);
-    bool allowed = observability_mode_
-                       ? failure_mode_allow_
-                       : (failure_mode_allow_ && !c2s_first_body_message_sent_);
-    GRPC_TRACE_LOG(ext_proc_filter, INFO)
-        << "IsClientFailOpenAllowed: " << allowed
-        << " (observability_mode=" << observability_mode_
-        << ", failure_mode_allow=" << failure_mode_allow_
-        << ", c2s_first_body_message_sent=" << c2s_first_body_message_sent_
-        << ")";
-    return allowed;
-  }
-
-  bool IsServerFailOpenAllowedLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     if (observability_mode_) return failure_mode_allow_;
-    return failure_mode_allow_ && !s2c_first_body_message_sent_;
+    return failure_mode_allow_ && !c2s_first_body_message_sent_;
   }
 
   bool IsServerFailOpenAllowed() {
     MutexLock lock(&mu_);
-    return IsServerFailOpenAllowedLocked();
-  }
-
-  bool IsStreamFailOpenAllowedLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
-    if (drain_requested_.load(std::memory_order_relaxed)) return false;
     if (observability_mode_) return failure_mode_allow_;
-    if (!failure_mode_allow_) return false;
-    return !(c2s_first_body_message_sent_ || s2c_first_body_message_sent_);
+    return failure_mode_allow_ && !s2c_first_body_message_sent_;
   }
 
   bool IsStreamFailOpenAllowed() {
-    if (drain_requested()) return false;
     MutexLock lock(&mu_);
-    return IsStreamFailOpenAllowedLocked();
+    if (observability_mode_ || !failure_mode_allow_) return failure_mode_allow_;
+    return !(c2s_first_body_message_sent_ || s2c_first_body_message_sent_);
   }
 
   void MarkClientHalfCloseInitiatedLocked()
@@ -299,16 +280,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   bool ext_proc_stream_half_closed_locked() const
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
     return ext_proc_stream_half_closed_;
-  }
-
-  void SendHalfClose() {
-    MutexLock lock(&mu_);
-    ext_proc_stream_half_closed_ = true;
-    if (streaming_call_ != nullptr) {
-      GRPC_TRACE_LOG(ext_proc_filter, INFO)
-          << "ExtProcCall " << this << " sending half-close";
-      streaming_call_->SendHalfClose();
-    }
   }
 
   bool drain_requested() const {
@@ -580,7 +551,15 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
           GRPC_TRACE_LOG(ext_proc_filter, INFO)
               << "ExtProcCall " << this << " received request_drain=true";
           SetDrainRequested();
-          SendHalfClose();
+          {
+            MutexLock lock(&mu_);
+            ext_proc_stream_half_closed_ = true;
+            if (streaming_call_ != nullptr) {
+              GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                  << "ExtProcCall " << this << " sending half-close";
+              streaming_call_->SendHalfClose();
+            }
+          }
         }
         if (parsed_response.immediate_response.has_value() &&
             disable_immediate_response_) {
@@ -798,7 +777,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
               "Stream closed cleanly with outstanding messages");
         }
       }
-      const bool fail_open_allowed = IsStreamFailOpenAllowedLocked();
+      const bool fail_open_allowed = IsStreamFailOpenAllowed();
       should_propagate_error = !status.ok() && !fail_open_allowed;
 
       already_closed = stream_closed_.load(std::memory_order_relaxed);
@@ -1122,7 +1101,7 @@ auto SendServerMessageRequest(std::string message_bytes,
        config = std::move(config),
        message_bytes = std::move(message_bytes)]() mutable {
         ext_proc_call->mu()->AssertHeld();
-        ext_proc_call->MarkFirstServerBodyMessageSentLocked();
+        ext_proc_call->SetFirstServerBodyMessageSentLocked();
         GRPC_TRACE_LOG(ext_proc_filter, INFO)
             << "ExtProc: ServerToClientMessages body message intercepted";
         upb::Arena arena;
@@ -1796,7 +1775,7 @@ MaybeHandleClosedStream(CallHandler handler,
   if (ext_proc_call->IsStreamClosed() ||
       ext_proc_call->ext_proc_stream_half_closed_locked()) {
     absl::Status error = ext_proc_call->GetStreamErrorStatusLocked();
-    if (!error.ok() && !ext_proc_call->IsServerFailOpenAllowedLocked()) {
+    if (!error.ok() && !ext_proc_call->IsServerFailOpenAllowed()) {
       return [error]() -> Poll<absl::Status> { return error; };
     }
     return ServerTrailingMetadataNonProcessingMode(
@@ -1917,7 +1896,7 @@ auto SendClientMessageRequest(const MessageHandle& message,
         if (msg_ptr != nullptr) {
           message_bytes = msg_ptr->payload()->JoinIntoString();
         }
-        ext_proc_call->MarkFirstClientBodyMessageSentLocked();
+        ext_proc_call->SetFirstClientBodyMessageSentLocked();
         return CreateExtProcRequest(
             arena.ptr(), ExtProcRequestType::kClientMessage,
             upb_StringView_FromDataAndSize(message_bytes.data(),
@@ -1952,7 +1931,7 @@ auto SendClientMessageRequest(std::string message_bytes,
             << "ExtProc: ClientToServerMessages body message intercepted "
                "(observability mode)";
         upb::Arena arena;
-        ext_proc_call->MarkFirstClientBodyMessageSentLocked();
+        ext_proc_call->SetFirstClientBodyMessageSentLocked();
         return CreateExtProcRequest(
             arena.ptr(), ExtProcRequestType::kClientMessage,
             upb_StringView_FromDataAndSize(message_bytes.data(),
