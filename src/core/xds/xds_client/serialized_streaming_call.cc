@@ -130,7 +130,8 @@ SerializedStreamingCall::SerializedStreamingCall(
                   }
                   return Pending{};
                 },
-                [this, ok, state, has_call, is_half_close](bool write_ok) -> LoopCtl<absl::Status> {
+                [this, ok, state, has_call,
+                 is_half_close](bool write_ok) -> LoopCtl<absl::Status> {
                   if (!ok) {
                     return absl::CancelledError("Receiver closed");
                   }
@@ -173,8 +174,8 @@ SerializedStreamingCall::SerializedStreamingCall(
                       MutexLock lock(&mu_);
                       active_write_ = nullptr;
                     }
-                    return absl::InternalError(
-                        has_call ? "Write failed" : "Stream closed");
+                    return absl::InternalError(has_call ? "Write failed"
+                                                        : "Stream closed");
                   }
                   {
                     MutexLock lock(&state->mu);
@@ -321,7 +322,8 @@ void SerializedStreamingCall::Orphan() {
   }
   // Cancel the party and destroy the underlying call
   party_.reset();
-  OrphanablePtr<XdsTransportFactory::XdsTransport::StreamingCall> call_to_destroy;
+  OrphanablePtr<XdsTransportFactory::XdsTransport::StreamingCall>
+      call_to_destroy;
   {
     MutexLock lock(&mu_);
     call_to_destroy = std::move(underlying_call_);
@@ -329,8 +331,6 @@ void SerializedStreamingCall::Orphan() {
   call_to_destroy.reset();
   Unref();
 }
-
-
 
 void SerializedStreamingCall::OnRequestSent(bool ok) {
   Waker waker_to_wakeup;

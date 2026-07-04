@@ -601,20 +601,20 @@ TEST_F(SerializedStreamingCallTest, HalfCloseSerialization) {
       });
   // Call SendHalfClose. It should be queued.
   wrapper->SendHalfClose();
-  
+
   // Verify msg1 is forwarded, but not half-close
   auto msg1 = fake_stream->WaitForMessageFromClient();
   ASSERT_TRUE(msg1.has_value());
   EXPECT_EQ(*msg1, "msg1");
   EXPECT_FALSE(fake_stream->half_closed());
-  
+
   // Complete msg1
   fake_stream->CompleteSendMessageFromClient(true);
   event_engine_->TickUntilIdle();
-  
+
   EXPECT_TRUE(resolved);
   EXPECT_TRUE(status.ok());
-  
+
   // Verify half-close is now processed
   EXPECT_TRUE(fake_stream->half_closed());
 
