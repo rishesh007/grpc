@@ -413,6 +413,23 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return GetStreamErrorStatusLocked();
   }
 
+  auto WaitForStreamErrorStatus() {
+    return [this]() -> Poll<absl::Status> {
+      if (stream_status_.IsSet()) {
+        return GetStreamErrorStatus();
+      }
+      auto poll = stream_status_.Wait()();
+      if (auto* status = poll.value_if_ready()) {
+        MutexLock lock(&mu_);
+        if (!saved_stream_status_.has_value()) {
+          saved_stream_status_ = *status;
+        }
+        return *saved_stream_status_;
+      }
+      return Pending{};
+    };
+  }
+
   Mutex* mu() ABSL_LOCK_RETURNED(mu_) { return &mu_; }
 
   absl::AnyInvocable<Poll<absl::Status>()> SendMessageLocked(
@@ -1280,7 +1297,7 @@ absl::AnyInvocable<Poll<absl::Status>()> SendServerToClientMessagesRequest(
               [ext_proc_call, handler, shared_message]() mutable {
                 GRPC_TRACE_LOG(ext_proc_filter, INFO)
                     << "ExtProc: Drain active, blocking S2C Write Loop";
-                return Map(ext_proc_call->stream_status().Wait(),
+                return Map(ext_proc_call->WaitForStreamErrorStatus(),
                            [ext_proc_call, handler, shared_message](
                                absl::Status status) mutable -> absl::Status {
                              GRPC_TRACE_LOG(ext_proc_filter, INFO)
@@ -1501,8 +1518,10 @@ auto SendServerTrailingMetadataRequest(
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(ext_proc_call->mu()) {
   const bool is_first_message = ext_proc_call->IsFirstMessageOnStream();
   const bool is_stream_closed = ext_proc_call->IsStreamClosed();
+  const bool is_stream_half_closed =
+      ext_proc_call->ext_proc_stream_half_closed_locked();
   return ext_proc_call->SendMessageLocked(
-      !is_stream_closed,
+      !is_stream_closed && !is_stream_half_closed,
       [ext_proc_call = ext_proc_call->Ref(), config = std::move(config),
        metadata, is_first_message]() {
         GRPC_TRACE_LOG(ext_proc_filter, INFO)
@@ -1841,7 +1860,10 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerTrailingMetadataTrailersOnly(
           MaybeHandleClosedStream(handler, ext_proc_call, config, metadata)) {
     return std::move(*promise);
   }
-  const bool send_headers = config->processing_mode.send_response_headers;
+  const bool send_headers =
+      config->processing_mode.send_response_headers &&
+      !ext_proc_call->IsStreamClosed() &&
+      !ext_proc_call->ext_proc_stream_half_closed_locked();
   if (config->observability_mode) {
     return ServerTrailingMetadataTrailersOnlyObservabilityMode(
         handler, ext_proc_call, std::move(config), std::move(metadata),
@@ -1867,7 +1889,9 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerTrailingMetadataNormal(
     return std::move(*promise);
   }
   const bool send_trailers_to_ext_proc_stream =
-      config->processing_mode.send_response_trailers && IsStatusOk(*metadata);
+      config->processing_mode.send_response_trailers && IsStatusOk(*metadata) &&
+      !ext_proc_call->IsStreamClosed() &&
+      !ext_proc_call->ext_proc_stream_half_closed_locked();
   if (send_trailers_to_ext_proc_stream) {
     if (config->observability_mode) {
       return ServerTrailingMetadataObservabilityMode(
@@ -2098,7 +2122,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
                 [ext_proc_call, initiator, shared_message]() mutable {
                   GRPC_TRACE_LOG(ext_proc_filter, INFO)
                       << "ExtProc: Drain active, blocking data plane read";
-                  return Map(ext_proc_call->stream_status().Wait(),
+                  return Map(ext_proc_call->WaitForStreamErrorStatus(),
                              [ext_proc_call, initiator, shared_message](
                                  absl::Status status) mutable -> absl::Status {
                                GRPC_TRACE_LOG(ext_proc_filter, INFO)
@@ -2708,7 +2732,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ProcessServerToClient(
       });
 
   auto watch_error =
-      Seq(ext_proc_call->stream_status().Wait(),
+      Seq(ext_proc_call->WaitForStreamErrorStatus(),
           [config = config_](absl::Status status)
               -> absl::AnyInvocable<Poll<absl::Status>()> {
             GRPC_TRACE_LOG(ext_proc_filter, INFO)
