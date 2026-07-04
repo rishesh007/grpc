@@ -47,11 +47,7 @@ class InterActivityLatch {
       GRPC_TRACE_LOG(promise_primitives, INFO)
           << DebugTag() << "PollWait " << StateString();
       if (value_.has_value()) {
-        if constexpr (std::is_copy_constructible_v<T>) {
-          return *value_;
-        } else {
-          return std::move(*value_);
-        }
+        return std::move(*value_);
       } else {
         return waiters_.AddPending(
             GetContext<Activity>()->MakeNonOwningWaker());

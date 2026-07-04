@@ -400,9 +400,17 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return c2s_writes_done_;
   }
 
-  absl::Status GetStreamErrorStatus() const {
-    auto status = stream_status_.Get();
-    return status.has_value() ? *status : absl::OkStatus();
+  absl::Status GetStreamErrorStatusLocked() const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
+    if (stream_status_.IsSet() && saved_stream_status_.has_value()) {
+      return *saved_stream_status_;
+    }
+    return absl::OkStatus();
+  }
+
+  absl::Status GetStreamErrorStatus() const ABSL_LOCKS_EXCLUDED(&mu_) {
+    MutexLock lock(&mu_);
+    return GetStreamErrorStatusLocked();
   }
 
   Mutex* mu() ABSL_LOCK_RETURNED(mu_) { return &mu_; }
@@ -533,6 +541,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   void SetStreamErrorStatus(absl::Status status) {
     MutexLock lock(&mu_);
     if (!stream_status_.IsSet()) {
+      saved_stream_status_ = status;
       stream_status_.Set(status);
     }
     stream_closed_.store(true, std::memory_order_release);
@@ -812,6 +821,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       already_closed = stream_closed_.load(std::memory_order_relaxed);
       if (!already_closed) {
         if (!stream_status_.IsSet()) {
+          saved_stream_status_ = status;
           stream_status_.Set(status);
         }
         stream_closed_.store(true, std::memory_order_release);
@@ -852,7 +862,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   ProcessingMode processing_mode_;
   Duration deferred_close_timeout_;
   OrphanablePtr<SerializedStreamingCall> streaming_call_;
-  Mutex mu_;
+  mutable Mutex mu_;
   std::atomic<bool> stream_closed_{false};
   std::atomic<bool> drain_requested_{false};
   bool is_first_message_on_ext_proc_stream_ ABSL_GUARDED_BY(&mu_) = true;
@@ -870,6 +880,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       ABSL_GUARDED_BY(&mu_);
   bool ext_proc_stream_half_closed_ ABSL_GUARDED_BY(&mu_) = false;
   InterActivityLatch<absl::Status> stream_status_;
+  std::optional<absl::Status> saved_stream_status_ ABSL_GUARDED_BY(&mu_);
   bool unreffed_active_stream_ ABSL_GUARDED_BY(&mu_) = false;
 };
 
@@ -1810,7 +1821,7 @@ MaybeHandleClosedStream(CallHandler handler,
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(ext_proc_call->mu()) {
   if (ext_proc_call->IsStreamClosed() ||
       ext_proc_call->ext_proc_stream_half_closed_locked()) {
-    absl::Status error = ext_proc_call->GetStreamErrorStatus();
+    absl::Status error = ext_proc_call->GetStreamErrorStatusLocked();
     if (!error.ok() && !ext_proc_call->IsServerFailOpenAllowedLocked()) {
       return [error]() -> Poll<absl::Status> { return error; };
     }
