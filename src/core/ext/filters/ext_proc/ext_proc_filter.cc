@@ -538,218 +538,209 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         CloseStream();
       }
       return;
-    } else {
-      auto parsed_response_or =
-          ParseExtProcResponse(response, observability_mode_);
-      if (!parsed_response_or.ok()) {
-        if (!fail_open) {
-          SetStreamError(parsed_response_or.status());
-        } else {
-          CompleteAllLatchesAndPipes(ExtProcResponse{});
-          CloseStream();
-        }
-        return;
+    }
+    auto parsed_response_or =
+        ParseExtProcResponse(response, observability_mode_);
+    if (!parsed_response_or.ok()) {
+      if (!fail_open) {
+        SetStreamError(parsed_response_or.status());
       } else {
-        auto parsed_response = std::move(*parsed_response_or);
-        if (parsed_response.request_drain) {
+        CompleteAllLatchesAndPipes(ExtProcResponse{});
+        CloseStream();
+      }
+      return;
+    }
+    auto parsed_response = std::move(*parsed_response_or);
+    if (parsed_response.request_drain) {
+      GRPC_TRACE_LOG(ext_proc_filter, INFO)
+          << "ExtProcCall " << this << " received request_drain=true";
+      SetDrainRequested();
+      {
+        MutexLock lock(&mu_);
+        ext_proc_stream_half_closed_ = true;
+        if (streaming_call_ != nullptr) {
           GRPC_TRACE_LOG(ext_proc_filter, INFO)
-              << "ExtProcCall " << this << " received request_drain=true";
-          SetDrainRequested();
-          {
-            MutexLock lock(&mu_);
-            ext_proc_stream_half_closed_ = true;
-            if (streaming_call_ != nullptr) {
-              GRPC_TRACE_LOG(ext_proc_filter, INFO)
-                  << "ExtProcCall " << this << " sending half-close";
-              streaming_call_->SendHalfClose();
-            }
-          }
-        }
-        if (parsed_response.immediate_response.has_value() &&
-            disable_immediate_response_) {
-          auto error = absl::PermissionDeniedError(
-              "unhandled immediate response due to config disabled it");
-          if (!fail_open) {
-            SetStreamErrorStatus(error);
-          }
-          if (!fail_open) {
-            CompleteAllLatchesAndPipes(error);
-          } else {
-            CompleteAllLatchesAndPipes(ExtProcResponse{});
-          }
-          CloseStream();
-          return;
-        }
-        if (parsed_response.immediate_response.has_value()) {
-          if (processing_mode_.send_request_headers &&
-              !request_headers_latch_.IsSet()) {
-            request_headers_latch_.Set(std::move(parsed_response));
-          } else if (processing_mode_.send_request_body &&
-                     !request_body_pipe_.sender.IsClosed()) {
-            request_body_pipe_.sender.Push(std::move(parsed_response))();
-          } else if (processing_mode_.send_response_headers &&
-                     !response_headers_latch_.IsSet()) {
-            response_headers_latch_.Set(std::move(parsed_response));
-          } else if (processing_mode_.send_response_body &&
-                     !response_body_pipe_.sender.IsClosed()) {
-            response_body_pipe_.sender.Push(std::move(parsed_response))();
-          } else if (processing_mode_.send_response_trailers &&
-                     !response_trailers_latch_.IsSet()) {
-            response_trailers_latch_.Set(std::move(parsed_response));
-          }
-        } else if (parsed_response.request_headers.has_value()) {
-          if (!processing_mode_.send_request_headers) {
-            SetStreamError(
-                absl::InternalError("Received request headers response but "
-                                    "request headers are disabled"));
-            return;
-          }
-          if (processing_mode_.send_request_headers &&
-              !request_headers_latch_.IsSet()) {
-            request_headers_latch_.Set(std::move(parsed_response));
-          }
-        } else if (parsed_response.response_headers.has_value()) {
-          if (!processing_mode_.send_response_headers) {
-            SetStreamError(
-                absl::InternalError("Received response headers response but "
-                                    "response headers are disabled"));
-            return;
-          }
-          if (processing_mode_.send_response_headers &&
-              !response_headers_latch_.IsSet()) {
-            response_headers_latch_.Set(std::move(parsed_response));
-          }
-        } else if (parsed_response.response_trailers.has_value()) {
-          if (!processing_mode_.send_response_trailers) {
-            SetStreamError(
-                absl::InternalError("Received response trailers response but "
-                                    "response trailers are disabled"));
-            return;
-          }
-          if (IsTrailersOnly()) {
-            SetStreamError(absl::InternalError(
-                "Received response trailers response in a Trailers-Only call"));
-            return;
-          }
-          if (processing_mode_.send_response_headers &&
-              !response_headers_latch_.IsSet()) {
-            SetStreamError(absl::InternalError(
-                "Received response trailers response before "
-                "response headers response"));
-            return;
-          }
-          bool s2c_body_outstanding = false;
-          {
-            MutexLock lock(&mu_);
-            if (processing_mode_.send_response_body &&
-                outstanding_s2c_messages_ > 0) {
-              s2c_body_outstanding = true;
-            }
-          }
-          if (s2c_body_outstanding) {
-            SetStreamError(absl::InternalError(
-                "Received response trailers response before all "
-                "outstanding response body responses were received"));
-            return;
-          }
-          if (processing_mode_.send_response_trailers &&
-              !response_trailers_latch_.IsSet()) {
-            response_trailers_latch_.Set(std::move(parsed_response));
-          }
-        } else if (parsed_response.request_body.has_value()) {
-          if (!processing_mode_.send_request_body) {
-            SetStreamError(absl::InternalError(
-                "Received request body response but request body is disabled"));
-            return;
-          }
-          if (processing_mode_.send_request_headers &&
-              !request_headers_latch_.IsSet()) {
-            SetStreamError(
-                absl::InternalError("Received request body response before "
-                                    "request headers response"));
-            return;
-          }
-          if (!DecrementOutstandingClientToServerMessages()) {
-            SetStreamError(absl::InternalError(
-                "Received unexpected request body response from "
-                "external processor"));
-            return;
-          }
-          auto& request_body = *parsed_response.request_body;
-          bool eos = false;
-          if (request_body.ok()) {
-            GRPC_TRACE_LOG(ext_proc_filter, INFO)
-                << "ExtProc: Parsed request body response, eos: "
-                << request_body->end_of_stream << ", eos_without_msg: "
-                << request_body->end_of_stream_without_message;
-            if (request_body->end_of_stream_without_message) {
-              if (!IsClientSendsDone()) {
-                SetStreamError(absl::InternalError(
-                    "Client sends closed by external processor"));
-                return;
-              }
-              SetProcessorSentHalfClose();
-              if (!request_body_pipe_.sender.IsClosed()) {
-                request_body_pipe_.sender.MarkClosed();
-              }
-              return;
-            }
-            eos = request_body->end_of_stream;
-          }
-          request_body_pipe_.sender.Push(std::move(parsed_response))();
-          if (eos) {
-            SetProcessorSentHalfClose();
-            if (!request_body_pipe_.sender.IsClosed()) {
-              request_body_pipe_.sender.MarkClosed();
-            }
-          }
-        } else if (parsed_response.response_body.has_value()) {
-          if (!processing_mode_.send_response_body) {
-            SetStreamError(
-                absl::InternalError("Received response body response but "
-                                    "response body is disabled"));
-            return;
-          }
-          if (IsTrailersOnly()) {
-            SetStreamError(absl::InternalError(
-                "Received response body response in a Trailers-Only call"));
-            return;
-          }
-          if (processing_mode_.send_response_headers &&
-              !response_headers_latch_.IsSet()) {
-            SetStreamError(
-                absl::InternalError("Received response body response before "
-                                    "response headers response"));
-            return;
-          }
-          if (processing_mode_.send_response_trailers &&
-              response_trailers_latch_.IsSet()) {
-            SetStreamError(absl::InternalError(
-                "Received response body response after response "
-                "trailers response"));
-            return;
-          }
-          if (!DecrementOutstandingServerToClientMessages()) {
-            SetStreamError(absl::InternalError(
-                "Received unexpected response body response from "
-                "external processor"));
-            return;
-          }
-          auto& response_body = *parsed_response.response_body;
-          bool eos = false;
-          if (response_body.ok()) {
-            eos = response_body->end_of_stream ||
-                  response_body->end_of_stream_without_message;
-          }
-          if (eos) {
-            auto error = absl::InternalError(
-                "Processor sent end_of_stream in response_body");
-            SetStreamError(error);
-            return;
-          }
-          response_body_pipe_.sender.Push(std::move(parsed_response))();
+              << "ExtProcCall " << this << " sending half-close";
+          streaming_call_->SendHalfClose();
         }
       }
+    }
+    if (parsed_response.immediate_response.has_value() &&
+        disable_immediate_response_) {
+      auto error = absl::PermissionDeniedError(
+          "unhandled immediate response due to config disabled it");
+      if (!fail_open) {
+        SetStreamErrorStatus(error);
+        CompleteAllLatchesAndPipes(error);
+      } else {
+        CompleteAllLatchesAndPipes(ExtProcResponse{});
+      }
+      CloseStream();
+      return;
+    }
+    if (parsed_response.immediate_response.has_value()) {
+      if (processing_mode_.send_request_headers &&
+          !request_headers_latch_.IsSet()) {
+        request_headers_latch_.Set(std::move(parsed_response));
+      } else if (processing_mode_.send_request_body &&
+                 !request_body_pipe_.sender.IsClosed()) {
+        request_body_pipe_.sender.Push(std::move(parsed_response))();
+      } else if (processing_mode_.send_response_headers &&
+                 !response_headers_latch_.IsSet()) {
+        response_headers_latch_.Set(std::move(parsed_response));
+      } else if (processing_mode_.send_response_body &&
+                 !response_body_pipe_.sender.IsClosed()) {
+        response_body_pipe_.sender.Push(std::move(parsed_response))();
+      } else if (processing_mode_.send_response_trailers &&
+                 !response_trailers_latch_.IsSet()) {
+        response_trailers_latch_.Set(std::move(parsed_response));
+      }
+    } else if (parsed_response.request_headers.has_value()) {
+      if (!processing_mode_.send_request_headers) {
+        SetStreamError(
+            absl::InternalError("Received request headers response but "
+                                "request headers are disabled"));
+        return;
+      }
+      if (processing_mode_.send_request_headers &&
+          !request_headers_latch_.IsSet()) {
+        request_headers_latch_.Set(std::move(parsed_response));
+      }
+    } else if (parsed_response.response_headers.has_value()) {
+      if (!processing_mode_.send_response_headers) {
+        SetStreamError(
+            absl::InternalError("Received response headers response but "
+                                "response headers are disabled"));
+        return;
+      }
+      if (processing_mode_.send_response_headers &&
+          !response_headers_latch_.IsSet()) {
+        response_headers_latch_.Set(std::move(parsed_response));
+      }
+    } else if (parsed_response.response_trailers.has_value()) {
+      if (!processing_mode_.send_response_trailers) {
+        SetStreamError(
+            absl::InternalError("Received response trailers response but "
+                                "response trailers are disabled"));
+        return;
+      }
+      if (IsTrailersOnly()) {
+        SetStreamError(absl::InternalError(
+            "Received response trailers response in a Trailers-Only call"));
+        return;
+      }
+      if (processing_mode_.send_response_headers &&
+          !response_headers_latch_.IsSet()) {
+        SetStreamError(
+            absl::InternalError("Received response trailers response before "
+                                "response headers response"));
+        return;
+      }
+      bool s2c_body_outstanding = false;
+      {
+        MutexLock lock(&mu_);
+        if (processing_mode_.send_response_body &&
+            outstanding_s2c_messages_ > 0) {
+          s2c_body_outstanding = true;
+        }
+      }
+      if (s2c_body_outstanding) {
+        SetStreamError(absl::InternalError(
+            "Received response trailers response before all "
+            "outstanding response body responses were received"));
+        return;
+      }
+      if (processing_mode_.send_response_trailers &&
+          !response_trailers_latch_.IsSet()) {
+        response_trailers_latch_.Set(std::move(parsed_response));
+      }
+    } else if (parsed_response.request_body.has_value()) {
+      if (!processing_mode_.send_request_body) {
+        SetStreamError(absl::InternalError(
+            "Received request body response but request body is disabled"));
+        return;
+      }
+      if (processing_mode_.send_request_headers &&
+          !request_headers_latch_.IsSet()) {
+        SetStreamError(
+            absl::InternalError("Received request body response before "
+                                "request headers response"));
+        return;
+      }
+      if (!DecrementOutstandingClientToServerMessages()) {
+        SetStreamError(absl::InternalError(
+            "Received unexpected request body response from "
+            "external processor"));
+        return;
+      }
+      auto& request_body = *parsed_response.request_body;
+      if (request_body.ok()) {
+        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+            << "ExtProc: Parsed request body response, eos: "
+            << request_body->end_of_stream << ", eos_without_msg: "
+            << request_body->end_of_stream_without_message;
+        if (request_body->end_of_stream_without_message) {
+          if (!IsClientSendsDone()) {
+            SetStreamError(absl::InternalError(
+                "Client sends closed by external processor"));
+            return;
+          }
+          SetProcessorSentHalfClose();
+          if (!request_body_pipe_.sender.IsClosed()) {
+            request_body_pipe_.sender.MarkClosed();
+          }
+          return;
+        }
+      }
+      request_body_pipe_.sender.Push(std::move(parsed_response))();
+      if (request_body->end_of_stream) {
+        SetProcessorSentHalfClose();
+        if (!request_body_pipe_.sender.IsClosed()) {
+          request_body_pipe_.sender.MarkClosed();
+        }
+      }
+    } else if (parsed_response.response_body.has_value()) {
+      if (!processing_mode_.send_response_body) {
+        SetStreamError(
+            absl::InternalError("Received response body response but "
+                                "response body is disabled"));
+        return;
+      }
+      if (IsTrailersOnly()) {
+        SetStreamError(absl::InternalError(
+            "Received response body response in a Trailers-Only call"));
+        return;
+      }
+      if (processing_mode_.send_response_headers &&
+          !response_headers_latch_.IsSet()) {
+        SetStreamError(
+            absl::InternalError("Received response body response before "
+                                "response headers response"));
+        return;
+      }
+      if (processing_mode_.send_response_trailers &&
+          response_trailers_latch_.IsSet()) {
+        SetStreamError(absl::InternalError(
+            "Received response body response after response "
+            "trailers response"));
+        return;
+      }
+      if (!DecrementOutstandingServerToClientMessages()) {
+        SetStreamError(absl::InternalError(
+            "Received unexpected response body response from "
+            "external processor"));
+        return;
+      }
+      auto& response_body = *parsed_response.response_body;
+      if (response_body.ok() &&
+          (response_body->end_of_stream ||
+           response_body->end_of_stream_without_message)) {
+        auto error = absl::InternalError(
+            "Processor sent end_of_stream in response_body");
+        SetStreamError(error);
+        return;
+      }
+      response_body_pipe_.sender.Push(std::move(parsed_response))();
     }
     MutexLock lock(&mu_);
     if (streaming_call_ != nullptr) {
