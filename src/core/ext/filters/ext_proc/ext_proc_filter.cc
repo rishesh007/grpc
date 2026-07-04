@@ -222,16 +222,9 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     const char* method = "/envoy.service.ext_proc.v3.ExternalProcessor/Process";
     streaming_call_ = MakeOrphanable<SerializedStreamingCall>(
         channel_->transport(), method,
-        std::make_unique<StreamEventHandler>(WeakRef()));
+        std::make_unique<StreamEventHandler>(WeakRef()),
+        /*wait_for_ready=*/false);
     streaming_call_->StartRecvMessage();
-    // Start connectivity failure watch!
-    RefCountedPtr<ConnectivityWatcher> watcher;
-    {
-      MutexLock lock(&mu_);
-      connectivity_watcher_ = MakeRefCounted<ConnectivityWatcher>(WeakRef());
-      watcher = connectivity_watcher_;
-    }
-    channel_->transport()->StartConnectivityFailureWatch(watcher);
     // Take a strong ref to keep ourselves alive until the stream is closed.
     Ref(DEBUG_LOCATION, "active_stream").release();
   }
@@ -455,17 +448,12 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
 
   void CloseStream() {
     OrphanablePtr<SerializedStreamingCall> call_to_reset;
-    RefCountedPtr<ConnectivityWatcher> watcher_to_stop;
     {
       MutexLock lock(&mu_);
       stream_closed_.store(true, std::memory_order_release);
       call_to_reset = std::move(streaming_call_);
-      watcher_to_stop = std::move(connectivity_watcher_);
     }
     call_to_reset.reset();
-    if (watcher_to_stop != nullptr) {
-      channel_->transport()->StopConnectivityFailureWatch(watcher_to_stop);
-    }
     if (!request_body_pipe_.sender.IsClosed()) {
       request_body_pipe_.sender.MarkClosed();
     }
@@ -499,25 +487,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     void OnStatusReceived(absl::Status status) override {
       if (auto call = call_->RefIfNonZero(); call != nullptr) {
         call->OnStatusReceived(std::move(status));
-      }
-    }
-
-   private:
-    WeakRefCountedPtr<ExtProcCall> call_;
-  };
-
-  class ConnectivityWatcher final
-      : public XdsTransportFactory::XdsTransport::ConnectivityFailureWatcher {
-   public:
-    explicit ConnectivityWatcher(WeakRefCountedPtr<ExtProcCall> call)
-        : call_(std::move(call)) {}
-
-    void OnConnectivityFailure(absl::Status status) override {
-      if (call_ != nullptr) {
-        auto call = call_->RefIfNonZero();
-        if (call != nullptr) {
-          call->OnStatusReceived(std::move(status));
-        }
       }
     }
 
@@ -893,8 +862,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   bool c2s_writes_done_ ABSL_GUARDED_BY(&mu_) = false;
   bool c2s_half_close_initiated_ ABSL_GUARDED_BY(&mu_) = false;
   InterActivityLatch<void> all_server_to_client_responses_received_latch_;
-  RefCountedPtr<ConnectivityWatcher> connectivity_watcher_
-      ABSL_GUARDED_BY(&mu_);
   bool ext_proc_stream_half_closed_ ABSL_GUARDED_BY(&mu_) = false;
   InterActivityLatch<absl::Status> stream_status_;
   std::optional<absl::Status> saved_stream_status_ ABSL_GUARDED_BY(&mu_);
@@ -2342,21 +2309,21 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
         }
         return status;
       });
-  return Map(TryJoin<absl::StatusOr>(std::move(client_to_sidestream),
-                                     std::move(sidestream_to_server)),
-             [ext_proc_call](auto result) -> absl::Status {
-               GRPC_TRACE_LOG(ext_proc_filter, INFO)
-                   << "ClientToServerMessagesNormalMode result: "
-                   << result.status() << ", fail_open_allowed: "
-                   << ext_proc_call->IsClientFailOpenAllowed()
-                   << ", stream_error: "
-                   << ext_proc_call->GetStreamErrorStatus();
-               if (!result.ok()) return result.status();
-               if (ext_proc_call->IsClientFailOpenAllowed()) {
-                 return absl::OkStatus();
-               }
-               return ext_proc_call->GetStreamErrorStatus();
-             });
+  return Map(
+      TryJoin<absl::StatusOr>(std::move(client_to_sidestream),
+                              std::move(sidestream_to_server)),
+      [ext_proc_call](auto result) -> absl::Status {
+        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+            << "ClientToServerMessagesNormalMode result: " << result.status()
+            << ", fail_open_allowed: "
+            << ext_proc_call->IsClientFailOpenAllowed()
+            << ", stream_error: " << ext_proc_call->GetStreamErrorStatus();
+        if (!result.ok()) return result.status();
+        if (ext_proc_call->IsClientFailOpenAllowed()) {
+          return absl::OkStatus();
+        }
+        return ext_proc_call->GetStreamErrorStatus();
+      });
 }
 
 absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessages(
@@ -2733,8 +2700,8 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ProcessServerToClient(
 
   auto watch_error =
       Seq(ext_proc_call->WaitForStreamErrorStatus(),
-          [config = config_](absl::Status status)
-              -> absl::AnyInvocable<Poll<absl::Status>()> {
+          [config = config_](
+              absl::Status status) -> absl::AnyInvocable<Poll<absl::Status>()> {
             GRPC_TRACE_LOG(ext_proc_filter, INFO)
                 << "watch_error stream_status: " << status
                 << ", failure_mode_allow: " << config->failure_mode_allow;

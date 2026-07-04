@@ -71,7 +71,8 @@ namespace grpc_core {
 GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall::GrpcStreamingCall(
     WeakRefCountedPtr<GrpcXdsTransportFactory> factory, Channel* channel,
     const char* method,
-    std::unique_ptr<StreamingCall::EventHandler> event_handler)
+    std::unique_ptr<StreamingCall::EventHandler> event_handler,
+    bool wait_for_ready)
     : factory_(std::move(factory)), event_handler_(std::move(event_handler)) {
   // Create call.
   call_ = channel->CreateCall(
@@ -94,8 +95,10 @@ GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall::GrpcStreamingCall(
   grpc_op* op = ops;
   op->op = GRPC_OP_SEND_INITIAL_METADATA;
   op->data.send_initial_metadata.count = 0;
-  op->flags = GRPC_INITIAL_METADATA_WAIT_FOR_READY |
-              GRPC_INITIAL_METADATA_WAIT_FOR_READY_EXPLICITLY_SET;
+  op->flags = wait_for_ready
+                  ? (GRPC_INITIAL_METADATA_WAIT_FOR_READY |
+                     GRPC_INITIAL_METADATA_WAIT_FOR_READY_EXPLICITLY_SET)
+                  : 0;
   op->reserved = nullptr;
   ++op;
   op->op = GRPC_OP_RECV_INITIAL_METADATA;
@@ -373,10 +376,11 @@ void GrpcXdsTransportFactory::GrpcXdsTransport::StopConnectivityFailureWatch(
 OrphanablePtr<XdsTransportFactory::XdsTransport::StreamingCall>
 GrpcXdsTransportFactory::GrpcXdsTransport::CreateStreamingCall(
     const char* method,
-    std::unique_ptr<StreamingCall::EventHandler> event_handler) {
+    std::unique_ptr<StreamingCall::EventHandler> event_handler,
+    bool wait_for_ready) {
   return MakeOrphanable<GrpcStreamingCall>(
       factory_.WeakRef(DEBUG_LOCATION, "StreamingCall"), channel_.get(), method,
-      std::move(event_handler));
+      std::move(event_handler), wait_for_ready);
 }
 
 void GrpcXdsTransportFactory::GrpcXdsTransport::ResetBackoff() {

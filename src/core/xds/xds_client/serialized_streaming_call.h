@@ -59,7 +59,8 @@ class SerializedStreamingCall
       const char* method,
       std::unique_ptr<
           XdsTransportFactory::XdsTransport::StreamingCall::EventHandler>
-          user_event_handler);
+          user_event_handler,
+      bool wait_for_ready = true);
 
   ~SerializedStreamingCall() override;
 

@@ -88,7 +88,8 @@ class GrpcXdsTransportFactory::GrpcXdsTransport final
 
   OrphanablePtr<StreamingCall> CreateStreamingCall(
       const char* method,
-      std::unique_ptr<StreamingCall::EventHandler> event_handler) override;
+      std::unique_ptr<StreamingCall::EventHandler> event_handler,
+      bool wait_for_ready = true) override;
 
   void ResetBackoff() override;
 
@@ -109,7 +110,8 @@ class GrpcXdsTransportFactory::GrpcXdsTransport::GrpcStreamingCall final
  public:
   GrpcStreamingCall(WeakRefCountedPtr<GrpcXdsTransportFactory> factory,
                     Channel* channel, const char* method,
-                    std::unique_ptr<StreamingCall::EventHandler> event_handler);
+                    std::unique_ptr<StreamingCall::EventHandler> event_handler,
+                    bool wait_for_ready);
   ~GrpcStreamingCall() override;
 
   void Orphan() override;
