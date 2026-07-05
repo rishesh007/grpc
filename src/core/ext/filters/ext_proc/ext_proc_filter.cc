@@ -988,55 +988,6 @@ absl::Status ApplyHeaderMutations(
   return absl::OkStatus();
 }
 
-auto ServerInitialMetadataResponseFromExtProcServer(
-    CallHandler handler, CallInitiator initiator,
-    RefCountedPtr<ExtProcFilter::ExtProcCall> ext_proc_call,
-    RefCountedPtr<const ExtProcFilter::Config> config,
-    std::shared_ptr<ServerMetadataHandle> metadata) {
-  return Seq(
-      TrySeq(
-          ext_proc_call->response_headers_latch().Wait(),
-          [config = std::move(config), metadata, handler, initiator,
-           ext_proc_call](ExtProcResponse response) mutable -> absl::Status {
-            GRPC_TRACE_LOG(ext_proc_filter, INFO)
-                << "ExtProc: ServerInitialMetadata response received. "
-                   "has_headers: "
-                << response.response_headers.has_value();
-            // Handle Immediate response
-            if (response.immediate_response.has_value() &&
-                !config->disable_immediate_response) {
-              auto& immediate_response = *response.immediate_response;
-              return absl::Status(
-                  static_cast<absl::StatusCode>(immediate_response.status),
-                  immediate_response.details);
-            }
-            if (response.response_headers.has_value()) {
-              const auto& response_headers = *response.response_headers;
-              if (!response_headers.ok()) {
-                return response_headers.status();
-              }
-              const auto* rules = config->mutation_rules.has_value()
-                                      ? &config->mutation_rules.value()
-                                      : nullptr;
-              auto status =
-                  ApplyHeaderMutations(*response_headers, rules, **metadata);
-              if (!status.ok()) {
-                return status;
-              }
-            }
-            return absl::OkStatus();
-          }),
-      [handler, metadata, ext_proc_call](absl::Status result) mutable {
-        GRPC_TRACE_LOG(ext_proc_filter, INFO)
-            << "ExtProcCall " << ext_proc_call.get()
-            << " SpawnPushServerInitialMetadata. result=" << result;
-        if (result.ok()) {
-          handler.SpawnPushServerInitialMetadata(std::move(*metadata));
-        }
-        return result;
-      });
-}
-
 auto ServerInitialMetadataNormalMode(
     CallHandler handler, CallInitiator initiator,
     ExtProcFilter::ExtProcCall* ext_proc_call,
@@ -1048,11 +999,41 @@ auto ServerInitialMetadataNormalMode(
   return TrySeq(
       ext_proc_call->SendServerInitialMetadataRequest(config, metadata,
                                                       /*condition=*/true),
-      [handler, initiator, ext_proc_call = ext_proc_call->Ref(),
-       config = std::move(config), metadata]() mutable {
-        return ServerInitialMetadataResponseFromExtProcServer(
-            handler, initiator, std::move(ext_proc_call), std::move(config),
-            metadata);
+      ext_proc_call->response_headers_latch().Wait(),
+      [config = std::move(config), metadata, handler, initiator,
+       ext_proc_call = ext_proc_call->Ref()](
+          ExtProcResponse response) mutable -> absl::Status {
+        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+            << "ExtProc: ServerInitialMetadata response received. "
+               "has_headers: "
+            << response.response_headers.has_value();
+        // Handle Immediate response
+        if (response.immediate_response.has_value() &&
+            !config->disable_immediate_response) {
+          auto& immediate_response = *response.immediate_response;
+          return absl::Status(
+              static_cast<absl::StatusCode>(immediate_response.status),
+              immediate_response.details);
+        }
+        if (response.response_headers.has_value()) {
+          const auto& response_headers = *response.response_headers;
+          if (!response_headers.ok()) {
+            return response_headers.status();
+          }
+          const auto* rules = config->mutation_rules.has_value()
+                                  ? &config->mutation_rules.value()
+                                  : nullptr;
+          auto status =
+              ApplyHeaderMutations(*response_headers, rules, **metadata);
+          if (!status.ok()) {
+            return status;
+          }
+        }
+        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+            << "ExtProcCall " << ext_proc_call.get()
+            << " SpawnPushServerInitialMetadata.";
+        handler.SpawnPushServerInitialMetadata(std::move(*metadata));
+        return absl::OkStatus();
       });
 }
 
