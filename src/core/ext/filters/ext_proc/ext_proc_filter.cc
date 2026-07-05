@@ -261,7 +261,8 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return IsServerFailOpenAllowedLocked();
   }
 
-  bool IsStreamFailOpenAllowedLocked() ABSL_EXCLUSIVE_LOCKS_REQUIRED(&mu_) {
+  bool IsStreamFailOpenAllowedLocked() {
+    MutexLock lock(&mu_);
     if (observability_mode_ || !failure_mode_allow_) return failure_mode_allow_;
     return !(c2s_first_body_message_sent_ || s2c_first_body_message_sent_);
   }
@@ -751,41 +752,39 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   void OnStatusReceived(absl::Status status) {
     GRPC_TRACE_LOG(ext_proc_filter, INFO)
         << "ExtProcCall " << this << " status received: " << status;
-    bool already_closed = false;
-    bool should_propagate_error = false;
-
+    bool has_outstanding_messages = false;
     {
       MutexLock lock(&mu_);
-      const bool has_outstanding_messages =
+      has_outstanding_messages =
           outstanding_c2s_messages_ > 0 || outstanding_s2c_messages_ > 0;
-
-      const bool must_drain =
-          !observability_mode_ && (processing_mode_.send_request_body ||
-                                   processing_mode_.send_response_body);
-      const bool drain_requested_active =
-          drain_requested_.load(std::memory_order_relaxed);
-      if (status.ok()) {
-        if (must_drain && !drain_requested_active) {
-          status = absl::InternalError("Stream closed cleanly without drain");
-        } else if (has_outstanding_messages && !observability_mode_) {
-          status = absl::InternalError(
-              "Stream closed cleanly with outstanding messages");
-        }
-      }
-      const bool fail_open_allowed = IsStreamFailOpenAllowedLocked();
-      should_propagate_error = !status.ok() && !fail_open_allowed;
-
-      already_closed = stream_closed_.load(std::memory_order_relaxed);
-      if (!already_closed) {
-        if (!stream_status_.IsSet()) {
-          saved_stream_status_ = status;
-          stream_status_.Set(status);
-        }
-        stream_closed_.store(true, std::memory_order_release);
+    }
+    const bool must_drain =
+        !observability_mode_ && (processing_mode_.send_request_body ||
+                                 processing_mode_.send_response_body);
+    const bool drain_requested_active =
+        drain_requested_.load(std::memory_order_relaxed);
+    if (status.ok()) {
+      if (must_drain && !drain_requested_active) {
+        status = absl::InternalError("Stream closed cleanly without drain");
+      } else if (has_outstanding_messages && !observability_mode_) {
+        status = absl::InternalError(
+            "Stream closed cleanly with outstanding messages");
       }
     }
-
-    // ALWAYS complete latches on status received to avoid hangs.
+    const bool fail_open_allowed = IsStreamFailOpenAllowedLocked();
+    const bool should_propagate_error = !status.ok() && !fail_open_allowed;
+    const bool already_closed = stream_closed_.load(std::memory_order_relaxed);
+    if (!already_closed) {
+      if (!stream_status_.IsSet()) {
+        {
+          MutexLock lock(&mu_);
+          saved_stream_status_ = status;
+        }
+        stream_status_.Set(status);
+      }
+      stream_closed_.store(true, std::memory_order_release);
+    }
+    // Always complete latches on status received to avoid hangs.
     if (should_propagate_error) {
       CompleteAllLatchesAndPipes(status);
     } else {
@@ -803,31 +802,39 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   InterActivityLatch<absl::StatusOr<ExtProcResponse>> response_trailers_latch_;
   InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16> request_body_pipe_;
   InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16> response_body_pipe_;
+  InterActivityLatch<void> all_server_to_client_responses_received_latch_;
 
-  RefCountedPtr<ExtProcChannel> channel_;
   bool observability_mode_;
   bool failure_mode_allow_;
   bool disable_immediate_response_;
   ProcessingMode processing_mode_;
   Duration deferred_close_timeout_;
-  OrphanablePtr<SerializedStreamingCall> streaming_call_;
-  mutable Mutex mu_;
-  std::atomic<bool> stream_closed_{false};
   std::atomic<bool> drain_requested_{false};
+  
   bool is_first_message_on_ext_proc_stream_ ABSL_GUARDED_BY(&mu_) = true;
+  
   bool c2s_first_body_message_sent_ ABSL_GUARDED_BY(&mu_) = false;
   bool s2c_first_body_message_sent_ ABSL_GUARDED_BY(&mu_) = false;
+  
   size_t outstanding_s2c_messages_ ABSL_GUARDED_BY(&mu_) = 0;
-  bool s2c_writes_done_ ABSL_GUARDED_BY(&mu_) = false;
-  bool is_trailers_only_ ABSL_GUARDED_BY(&mu_) = false;
-  bool processor_sent_half_close_ ABSL_GUARDED_BY(&mu_) = false;
   size_t outstanding_c2s_messages_ ABSL_GUARDED_BY(&mu_) = 0;
+  
   bool c2s_writes_done_ ABSL_GUARDED_BY(&mu_) = false;
+  bool s2c_writes_done_ ABSL_GUARDED_BY(&mu_) = false;
   bool c2s_half_close_initiated_ ABSL_GUARDED_BY(&mu_) = false;
-  InterActivityLatch<void> all_server_to_client_responses_received_latch_;
+  bool is_trailers_only_ ABSL_GUARDED_BY(&mu_) = false;
+  
+  bool processor_sent_half_close_ ABSL_GUARDED_BY(&mu_) = false;
   bool ext_proc_stream_half_closed_ ABSL_GUARDED_BY(&mu_) = false;
+  
+  std::atomic<bool> stream_closed_{false};
   InterActivityLatch<absl::Status> stream_status_;
   std::optional<absl::Status> saved_stream_status_ ABSL_GUARDED_BY(&mu_);
+  
+  mutable Mutex mu_;
+  
+  RefCountedPtr<ExtProcChannel> channel_;
+  OrphanablePtr<SerializedStreamingCall> streaming_call_;
 };
 
 namespace {
