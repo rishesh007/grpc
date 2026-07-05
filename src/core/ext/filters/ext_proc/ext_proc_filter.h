@@ -167,13 +167,13 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
  private:
   void Orphaned() override {}
 
-  absl::AnyInvocable<Poll<absl::Status>()> ProcessCallObservabilityMode(
+  absl::AnyInvocable<Poll<absl::Status>()> ClientToServerObservabilityMode(
       CallHandler handler, RefCountedPtr<ExtProcCall> ext_proc_call);
 
-  absl::AnyInvocable<Poll<absl::Status>()> ProcessCallNormalMode(
+  absl::AnyInvocable<Poll<absl::Status>()> ClientToServerCallNormalMode(
       CallHandler handler, RefCountedPtr<ExtProcCall> ext_proc_call);
 
-  absl::AnyInvocable<Poll<absl::Status>()> ProcessServerToClient(
+  absl::AnyInvocable<Poll<absl::Status>()> ServerToClientCall(
       CallHandler handler, CallInitiator initiator,
       RefCountedPtr<ExtProcCall> ext_proc_call);
 
