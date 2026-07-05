@@ -187,6 +187,10 @@ ExtProcFilter::ExtProcChannel::~ExtProcChannel() {
       << server_->server_uri();
 }
 
+//
+// ExtProcFilter::ExtProcCall
+//
+
 class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
  public:
   ExtProcCall(RefCountedPtr<ExtProcChannel> channel, bool observability_mode,
