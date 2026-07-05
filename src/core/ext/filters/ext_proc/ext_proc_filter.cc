@@ -1094,23 +1094,6 @@ auto ServerInitialMetadataObservabilityMode(
       });
 }
 
-auto ServerInitialMetadataNonProcessingMode(
-    CallHandler handler, ExtProcFilter::ExtProcCall* ext_proc_call,
-    std::shared_ptr<ServerMetadataHandle> metadata) {
-  GRPC_TRACE_LOG(ext_proc_filter, INFO)
-      << "ExtProc: ServerInitialMetadataNonProcessingMode pulled. metadata: "
-      << (*metadata)->DebugString();
-  // If we are not sending headers, we must unblock the concurrent message
-  // loop which might be waiting for this latch.
-  if (ext_proc_call != nullptr &&
-      !ext_proc_call->response_headers_latch().IsSet()) {
-    ext_proc_call->response_headers_latch().Set(ExtProcResponse{});
-  }
-  // Push metadata to client immediately
-  handler.SpawnPushServerInitialMetadata(std::move(*metadata));
-  return absl::OkStatus();
-}
-
 absl::AnyInvocable<Poll<absl::Status>()> ServerInitialMetadata(
     CallHandler handler, CallInitiator initiator,
     RefCountedPtr<ExtProcFilter::ExtProcCall> ext_proc_call,
@@ -1141,8 +1124,11 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerInitialMetadata(
           !ext_proc_call->IsStreamFailOpenAllowed()) {
         return ext_proc_call->GetStreamErrorStatus();
       }
-      return ServerInitialMetadataNonProcessingMode(
-          handler, ext_proc_call.get(), metadata);
+      GRPC_TRACE_LOG(ext_proc_filter, INFO)
+          << "ExtProc: ServerInitialMetadataNonProcessingMode metadata: "
+          << (*metadata)->DebugString();
+      handler.SpawnPushServerInitialMetadata(std::move(*metadata));
+      return absl::OkStatus();
     };
   }
   return promise;
