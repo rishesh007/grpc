@@ -392,6 +392,18 @@ absl::StatusOr<ExtProcResponse> ExtProcResponse::Parse(
 
 namespace {
 
+// An encoder class used with grpc_metadata_batch::Encode() to iterate over all
+// metadata entries in a batch and populate a upb envoy.config.core.v3.HeaderMap
+// message.
+//
+// Filters metadata entries against allowed and disallowed StringMatcher lists:
+// - If disallowed matchers are specified and a header key matches, it is
+// skipped.
+// - If allowed matchers are specified, only matching header keys are included.
+// - In accordance with gRFC A102, for each forwarded header, the raw_value
+// field is
+//   populated instead of the value field to preserve exact binary/raw header
+//   bytes.
 class UpbHeaderMapEncoder {
  public:
   UpbHeaderMapEncoder(envoy_config_core_v3_HeaderMap* header_map,
@@ -575,6 +587,13 @@ envoy_service_ext_proc_v3_ProcessingRequest* CreateCommonRequest(
   return request;
 }
 
+// An encoder class used with grpc_metadata_batch::Encode() to iterate over all
+// metadata entries in a batch and insert them as key-value pairs into a upb
+// google.protobuf.Struct message.
+//
+// For each metadata entry encountered, it converts the key and value to string
+// views and creates a google.protobuf.Value string field in the target Struct
+// message on the arena.
 class UpbStructHeadersEncoder {
  public:
   UpbStructHeadersEncoder(::google_protobuf_Struct* struct_msg,

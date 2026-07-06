@@ -71,19 +71,58 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
     std::string ToString() const override;
 
+    // The gRPC service configuration (target URI, credentials, timeout)
+    // used to establish the side-channel connection to the external processor
+    // server as described in gRFC A102.
     std::shared_ptr<XdsGrpcService> grpc_service;
+    // If true, when an ext_proc stream fails or terminates with a non-OK
+    // status, the data plane RPC is allowed to continue without error if the
+    // filter is in observability mode or has not yet sent message bodies (body
+    // send mode is NONE). Defaults to false (failing the RPC with INTERNAL).
     bool failure_mode_allow;
+    // Specifies which data plane events (request/response headers, body chunks,
+    // and trailers) should be forwarded to the external processing server. In
+    // gRPC, body chunks are sent in GRPC mode.
     ProcessingMode processing_mode;
+    // List of connection and request attribute names (e.g., "request.path",
+    // "request.method", "request.host") to extract from metadata and include in
+    // client request header events.
     std::vector<std::string> request_attributes;
+    // List of connection and response attribute names to extract from metadata
+    // and include in server response header events.
     std::vector<std::string> response_attributes;
+    // Configuration specifying rules and restrictions for header mutations
+    // performed by the external processor (such as disallowed headers or rules
+    // for adding/removing headers).
     std::optional<HeaderMutationRules> mutation_rules;
+    // List of string matchers defining the set of request/response headers and
+    // trailers allowed to be forwarded to the external processing server.
     std::vector<StringMatcher> forwarding_allowed_headers;
+    // List of string matchers defining the set of request/response headers and
+    // trailers that must be excluded when sending events to the external
+    // processing server.
     std::vector<StringMatcher> forwarding_disallowed_headers;
+    // If true, prevents the external processing server from sending an
+    // ImmediateResponse message to reject or terminate the data plane RPC
+    // prematurely.
     bool disable_immediate_response;
+    // If true (observability mode as defined in gRFC A93), events are sent
+    // asynchronously without blocking data plane RPC traffic or waiting for
+    // response mutations from the external processor.
     bool observability_mode;
+    // The maximum duration to wait for the external processor to close or drain
+    // its stream before forcibly closing the side-channel stream.
     Duration deferred_close_timeout;
+    // Factory used to create and manage underlying transport connections for
+    // the side-channel gRPC client talking to the external processing server.
     RefCountedPtr<XdsTransportFactory> transport_factory;
+    // The unique identifier or instance name of the xDS client/ext_proc filter
+    // configuration, used for logging, metrics, or resource retention across
+    // xDS updates.
     std::string instance_name;
+    // Ref-counted handle to the persistent gRPC side-channel (ExtProcChannel)
+    // used to communicate with the external processing server across multiple
+    // data plane RPCs.
     RefCountedPtr<ExtProcChannel> channel;
   };
 
@@ -105,7 +144,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     static UniqueTypeName Type() {
       return GRPC_UNIQUE_TYPE_NAME_HERE("ext_proc_channel");
     }
-    explicit ExtProcChannel(
+    ExtProcChannel(
         std::shared_ptr<const XdsBootstrap::XdsServerTarget> server,
         RefCountedPtr<XdsTransportFactory> transport_factory);
     ~ExtProcChannel() override;
