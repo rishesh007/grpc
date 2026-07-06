@@ -1074,19 +1074,19 @@ auto ServerInitialMetadataObservabilityMode(
       std::move(send_promise),
       [handler, metadata, ext_proc_call = std::move(ext_proc_call),
        config =
-           std::move(config)](absl::Status result) mutable -> absl::Status {
-        if (!result.ok() && !config->failure_mode_allow) {
+           std::move(config)](absl::Status status) mutable -> absl::Status {
+        if (!status.ok() && !config->failure_mode_allow) {
           if (ext_proc_call->IsStreamClosedCleanly()) {
             GRPC_TRACE_LOG(ext_proc_filter, INFO)
                 << "ExtProc: Ignored server initial metadata send failure "
                    "in observability mode due to clean close: "
-                << result;
+                << status;
           } else {
             if (ext_proc_call->IsStreamClosed() &&
                 !ext_proc_call->GetStreamStatus().ok()) {
               return ext_proc_call->GetStreamStatus();
             }
-            return result;
+            return status;
           }
         }
         handler.SpawnPushServerInitialMetadata(std::move(*metadata));
@@ -1277,9 +1277,7 @@ SendServerToClientMessagesToExtProcServer(
                         GRPC_TRACE_LOG(ext_proc_filter, INFO)
                             << "ExtProc: ServerToClient S2C Write Loop "
                                "bypassing ext_proc";
-                        if (message != nullptr) {
-                          handler.SpawnPushMessage(std::move(message));
-                        }
+                        handler.SpawnPushMessage(std::move(message));
                         return absl::OkStatus();
                       });
                 });
