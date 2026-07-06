@@ -1173,7 +1173,8 @@ auto ServerToClientMessagesObservabilityMode(
   });
 }
 
-absl::AnyInvocable<Poll<absl::Status>()> SendServerToClientMessagesToExtProcServer(
+absl::AnyInvocable<Poll<absl::Status>()>
+SendServerToClientMessagesToExtProcServer(
     CallHandler handler, CallInitiator initiator,
     RefCountedPtr<ExtProcFilter::ExtProcCall> ext_proc_call,
     RefCountedPtr<const ExtProcFilter::Config> config) {
@@ -1388,8 +1389,8 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerToClientMessagesNormalMode(
       << "ExtProc: ServerToClientMessagesNormalMode started";
   auto promise = Map(
       TryJoin<absl::StatusOr>(
-          SendServerToClientMessagesToExtProcServer(handler, initiator, ext_proc_call,
-                                            config),
+          SendServerToClientMessagesToExtProcServer(handler, initiator,
+                                                    ext_proc_call, config),
           ReadServerToClientMessagesResponse(
               handler, initiator, std::move(ext_proc_call), std::move(config))),
       [](auto result) -> absl::Status { return result.status(); });
