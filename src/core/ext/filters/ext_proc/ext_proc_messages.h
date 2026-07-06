@@ -19,6 +19,7 @@
 
 #include <grpc/status.h>
 
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -56,33 +57,32 @@ absl::StatusOr<std::string> CreateExtProcClientHeadersRequest(
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    bool is_first_message, const ExtProcProcessingMode& processing_mode);
+    std::optional<ExtProcProcessingMode> processing_mode);
 
 absl::StatusOr<std::string> CreateExtProcServerHeadersRequest(
     upb_Arena* arena, grpc_metadata_batch* metadata,
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    bool is_first_message, const ExtProcProcessingMode& processing_mode,
-    bool end_of_stream);
+    std::optional<ExtProcProcessingMode> processing_mode, bool end_of_stream);
 
 absl::StatusOr<std::string> CreateExtProcClientBodyRequest(
     upb_Arena* arena, absl::string_view body,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    bool is_first_message, const ExtProcProcessingMode& processing_mode,
-    bool end_of_stream, bool end_of_stream_without_message);
+    std::optional<ExtProcProcessingMode> processing_mode, bool end_of_stream,
+    bool end_of_stream_without_message);
 
 absl::StatusOr<std::string> CreateExtProcServerBodyRequest(
     upb_Arena* arena, absl::string_view body,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    bool is_first_message, const ExtProcProcessingMode& processing_mode);
+    std::optional<ExtProcProcessingMode> processing_mode);
 
 absl::StatusOr<std::string> CreateExtProcServerTrailersRequest(
     upb_Arena* arena, grpc_metadata_batch* trailers,
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    bool is_first_message, const ExtProcProcessingMode& processing_mode);
+    std::optional<ExtProcProcessingMode> processing_mode);
 
 struct ExtProcResponse {
   struct HeaderMutation {
