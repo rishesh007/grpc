@@ -51,14 +51,14 @@ struct ExtProcProcessingMode {
   std::string ToString() const;
 };
 
-absl::StatusOr<std::string> CreateClientHeadersRequest(
+absl::StatusOr<std::string> CreateExtProcClientHeadersRequest(
     upb_Arena* arena, grpc_metadata_batch* metadata,
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
     bool is_first_message, const ExtProcProcessingMode& processing_mode);
 
-absl::StatusOr<std::string> CreateServerHeadersRequest(
+absl::StatusOr<std::string> CreateExtProcServerHeadersRequest(
     upb_Arena* arena, grpc_metadata_batch* metadata,
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
@@ -66,18 +66,18 @@ absl::StatusOr<std::string> CreateServerHeadersRequest(
     bool is_first_message, const ExtProcProcessingMode& processing_mode,
     bool end_of_stream);
 
-absl::StatusOr<std::string> CreateClientBodyRequest(
+absl::StatusOr<std::string> CreateExtProcClientBodyRequest(
     upb_Arena* arena, absl::string_view body,
     ::google_protobuf_Struct* attributes, bool observability_mode,
     bool is_first_message, const ExtProcProcessingMode& processing_mode,
     bool end_of_stream, bool end_of_stream_without_message);
 
-absl::StatusOr<std::string> CreateServerBodyRequest(
+absl::StatusOr<std::string> CreateExtProcServerBodyRequest(
     upb_Arena* arena, absl::string_view body,
     ::google_protobuf_Struct* attributes, bool observability_mode,
     bool is_first_message, const ExtProcProcessingMode& processing_mode);
 
-absl::StatusOr<std::string> CreateServerTrailersRequest(
+absl::StatusOr<std::string> CreateExtProcServerTrailersRequest(
     upb_Arena* arena, grpc_metadata_batch* trailers,
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
@@ -148,7 +148,7 @@ struct ExtProcResponse {
       absl::string_view serialized_response);
 };
 
-::google_protobuf_Struct* CreateAttributesStructProto(
+::google_protobuf_Struct* CreateExtProcAttributesProtoStruct(
     upb_Arena* arena, const std::vector<std::string>& requested_attributes,
     const grpc_metadata_batch& metadata);
 
