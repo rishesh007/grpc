@@ -1578,7 +1578,7 @@ ServerTrailingMetadataObservabilityMode(
   auto promise = Seq(
       std::move(send_promise),
       [handler, metadata, ext_proc_call = ext_proc_call->Ref(),
-       config = std::move(config)](absl::Status result) mutable {
+       config = std::move(config)](absl::Status status) mutable {
         // Ensure the response body pipe sender is marked closed when trailing
         // metadata arrives, cleanly terminating any ongoing asynchronous read
         // loops.
@@ -1592,9 +1592,9 @@ ServerTrailingMetadataObservabilityMode(
         // configuration. Unless failure_mode_allow is enabled (which allows
         // proceeding despite observability failures), replace the trailing
         // metadata with a cancelled status corresponding to the error.
-        if ((!result.ok() || ext_proc_call->IsStreamClosed()) &&
+        if ((!status.ok() || ext_proc_call->IsStreamClosed()) &&
             !config->failure_mode_allow) {
-          absl::Status error_status = result;
+          absl::Status error_status = status;
           if (ext_proc_call->IsStreamClosed() &&
               !ext_proc_call->GetStreamStatus().ok()) {
             error_status = ext_proc_call->GetStreamStatus();
