@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "src/core/ext/filters/ext_proc/ext_proc_messages.h"
+#include "src/core/filter/filter_args.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/promise_based_filter.h"
 #include "src/core/util/matchers.h"
@@ -30,6 +31,7 @@
 #include "src/core/util/unique_type_name.h"
 #include "src/core/xds/grpc/blackboard.h"
 #include "src/core/xds/grpc/xds_common_types.h"
+#include "src/core/xds/grpc/xds_server_grpc.h"
 #include "src/core/xds/xds_client/xds_transport.h"
 
 namespace grpc_core {
@@ -68,7 +70,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     // The gRPC service configuration (target URI, credentials, timeout)
     // used to establish the side-channel connection to the external processor
     // server as described in gRFC A102.
-    XdsGrpcService grpc_service;
+    std::optional<GrpcXdsServerTarget> grpc_service;
     // If true, when an ext_proc stream fails or terminates with a non-OK
     // status, the data plane RPC is allowed to continue without error if the
     // filter is in observability mode or has not yet sent message bodies (body
@@ -78,12 +80,12 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     // and trailers) should be forwarded to the external processing server. In
     // gRPC, body chunks are sent in GRPC mode.
     ProcessingMode processing_mode;
-    // List of connection and request attribute names (e.g., "request.path",
-    // "request.method", "request.host") to extract from metadata and include in
-    // client request header events.
+    // List of request attribute names (e.g., "request.path", "request.method",
+    // "request.host") to extract from metadata and include in client request
+    // header events.
     std::vector<std::string> request_attributes;
-    // List of connection and response attribute names to extract from metadata
-    // and include in server response header events.
+    // List of response attribute names to extract from metadata and include in
+    // server response header events.
     std::vector<std::string> response_attributes;
     // Configuration specifying rules and restrictions for header mutations
     // performed by the external processor (such as disallowed headers or rules

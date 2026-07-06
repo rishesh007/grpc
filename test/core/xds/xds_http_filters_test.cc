@@ -2308,8 +2308,8 @@ TEST_F(XdsExtProcFilterTest, ParseMinimumConfig) {
   ASSERT_NE(config, nullptr);
   ASSERT_EQ(config->type(), ExtProcFilter::Config::Type());
   EXPECT_EQ(config->ToString(),
-            "{grpc_service={server_target={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}}, "
+            "{grpc_service={server_uri=localhost:1234, "
+            "channel_creds={type=google_default, config={}}}, "
             "processing_mode={send_request_headers=true, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
@@ -2345,8 +2345,8 @@ TEST_F(XdsExtProcFilterTest, ParseFullConfig) {
   ASSERT_NE(config, nullptr);
   ASSERT_EQ(config->type(), ExtProcFilter::Config::Type());
   EXPECT_EQ(config->ToString(),
-            "{grpc_service={server_target={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}}, "
+            "{grpc_service={server_uri=localhost:1234, "
+            "channel_creds={type=google_default, config={}}}, "
             "failure_mode_allow=true, "
             "processing_mode={send_request_headers=false, "
             "send_response_headers=true, send_response_trailers=true, "
@@ -2379,8 +2379,8 @@ TEST_F(XdsExtProcFilterTest, ParseOverrideConfig) {
             "{processing_mode={send_request_headers=false, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
-            "grpc_service={server_target={server_uri=localhost:5678, "
-            "channel_creds={type=google_default, config={}}}}, "
+            "grpc_service={server_uri=localhost:5678, "
+            "channel_creds={type=google_default, config={}}}, "
             "request_attributes=[override_req_attr], "
             "response_attributes=[override_resp_attr], "
             "failure_mode_allow=true}");
@@ -2936,8 +2936,8 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsWithVirtualHostOverride) {
                                       nullptr, *blackboard);
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
-            "{grpc_service={server_target={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}}, "
+            "{grpc_service={server_uri=localhost:1234, "
+            "channel_creds={type=google_default, config={}}}, "
             "processing_mode={send_request_headers=false, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
@@ -2982,8 +2982,8 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsWithRouteOverride) {
                                       route_config, nullptr, *blackboard);
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
-            "{grpc_service={server_target={server_uri=localhost:5678, "
-            "channel_creds={type=google_default, config={}}}}, "
+            "{grpc_service={server_uri=localhost:5678, "
+            "channel_creds={type=google_default, config={}}}, "
             "processing_mode={send_request_headers=true, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
