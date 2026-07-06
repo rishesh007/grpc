@@ -58,6 +58,7 @@
 #include "src/core/ext/filters/stateful_session/stateful_session_filter.h"
 #include "src/core/filter/composite/composite_filter.h"
 #include "src/core/lib/iomgr/error.h"
+#include "src/core/lib/iomgr/timer_manager.h"
 #include "src/core/util/crash.h"
 #include "src/core/util/grpc_check.h"
 #include "src/core/util/json/json_writer.h"
@@ -102,6 +103,7 @@ using ::envoy::extensions::filters::http::stateful_session::v3::
 using ::envoy::extensions::http::stateful_session::cookie::v3::
     CookieBasedSessionState;
 using ::envoy::type::matcher::v3::HttpRequestHeaderMatchInput;
+using grpc_event_engine::experimental::FuzzingEventEngine;
 
 //
 // base class for filter tests
@@ -110,11 +112,14 @@ using ::envoy::type::matcher::v3::HttpRequestHeaderMatchInput;
 class XdsHttpFilterTest : public ::testing::Test {
  protected:
   XdsHttpFilterTest()
-      : xds_client_(MakeXdsClient()),
+      : event_engine_(std::make_shared<FuzzingEventEngine>(
+            FuzzingEventEngine::Options(), fuzzing_event_engine::Actions())),
+        xds_client_(MakeXdsClient(event_engine_)),
         decode_context_{xds_client_.get(), xds_server_, upb_def_pool_.ptr(),
                         upb_arena_.ptr()} {}
 
-  static RefCountedPtr<XdsClient> MakeXdsClient() {
+  static RefCountedPtr<XdsClient> MakeXdsClient(
+      std::shared_ptr<FuzzingEventEngine> event_engine) {
     grpc_error_handle error;
     auto bootstrap = GrpcXdsBootstrap::Create(
         "{\n"
@@ -143,16 +148,12 @@ class XdsHttpFilterTest : public ::testing::Test {
       Crash(absl::StrFormat("Error parsing bootstrap: %s",
                             bootstrap.status().ToString().c_str()));
     }
-    auto event_engine =
-        std::make_shared<grpc_event_engine::experimental::FuzzingEventEngine>(
-            grpc_event_engine::experimental::FuzzingEventEngine::Options(),
-            fuzzing_event_engine::Actions());
     auto transport_factory = MakeRefCounted<FakeXdsTransportFactory>(
         []() { FAIL() << "Multiple concurrent reads"; }, event_engine);
     return MakeRefCounted<XdsClient>(
         std::move(*bootstrap), std::move(transport_factory),
-        std::move(event_engine),
-        /*metrics_reporter=*/nullptr, "foo agent", "foo version");
+        std::move(event_engine), /*metrics_reporter=*/nullptr, "foo agent",
+        "foo version");
   }
 
   XdsExtension MakeXdsExtension(const grpc::protobuf::Message& message) {
@@ -175,6 +176,7 @@ class XdsHttpFilterTest : public ::testing::Test {
         absl::StripPrefix(type, "type.googleapis.com/"));
   }
 
+  std::shared_ptr<FuzzingEventEngine> event_engine_;
   GrpcXdsServer xds_server_;
   RefCountedPtr<XdsClient> xds_client_;
   upb::DefPool upb_def_pool_;
@@ -3110,6 +3112,7 @@ TEST_F(XdsExtProcFilterTest,
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   grpc::testing::TestEnvironment env(&argc, argv);
+  grpc_timer_manager_set_start_threaded(false);
   grpc_init();
   auto result = RUN_ALL_TESTS();
   grpc_shutdown();
