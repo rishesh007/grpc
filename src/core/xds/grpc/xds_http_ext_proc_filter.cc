@@ -340,6 +340,9 @@ struct OverrideConfig final : public FilterConfig {
   }
 
   std::optional<ExtProcFilter::ProcessingMode> processing_mode;
+  // Wrapped in std::optional because GrpcXdsServerTarget lacks a default
+  // constructor, and std::nullopt indicates that the gRPC service target is not
+  // overridden at this route/vhost level (inheriting from top-level config).
   std::optional<GrpcXdsServerTarget> grpc_service;
   std::vector<std::string> request_attributes;
   std::vector<std::string> response_attributes;

@@ -70,6 +70,9 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     // The gRPC service configuration (target URI, credentials, timeout)
     // used to establish the side-channel connection to the external processor
     // server as described in gRFC A102.
+    // Wrapped in std::optional because GrpcXdsServerTarget lacks a default
+    // constructor (requiring explicit URI and credentials arguments), allowing
+    // ExtProcFilter::Config to be default-constructed when instantiated.
     std::optional<GrpcXdsServerTarget> grpc_service;
     // If true, when an ext_proc stream fails or terminates with a non-OK
     // status, the data plane RPC is allowed to continue without error if the
