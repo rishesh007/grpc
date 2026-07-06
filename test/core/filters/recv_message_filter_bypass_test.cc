@@ -329,6 +329,7 @@ class FakeCallStack {
  public:
   explicit FakeCallStack(std::vector<FilterAndConfig> filters,
                          MetadataStallController* control = nullptr) {
+    control_ = control;
     mock.call_combiner = &call_combiner;
     auto channel_args = CoreConfiguration::Get()
                             .channel_args_preconditioning()
@@ -416,6 +417,11 @@ class FakeCallStack {
   }
 
   ~FakeCallStack() {
+    // Reset wakers to prevent call stack from outliving the arena.
+    if (control_ != nullptr) {
+      control_->init_md_waker = Waker();
+      control_->immediate_response_waker = Waker();
+    }
     GRPC_CALL_STACK_UNREF(call_stack, "done");
     ExecCtx::Get()->Flush();
     GRPC_CHANNEL_STACK_UNREF(channel_stack, "done");
@@ -428,6 +434,7 @@ class FakeCallStack {
 
   CallCombiner call_combiner;
   RefCountedPtr<Arena> arena;
+  MetadataStallController* control_ = nullptr;
   MockTransportFilter::State mock;
   AppCallbacks::State app;
 

@@ -1282,7 +1282,7 @@ class ClientCallData::PollContext {
               // stack.
               self_->receive_message()->Done(*md, flusher_, true);
               // repoll to drain; otherwise the recv_message batch
-              // never completes and the call hang
+              // never completes and the call stalled
               if (!self_->receive_message()->IsIdle()) {
                 repoll_ = true;
               }
