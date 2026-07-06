@@ -1311,27 +1311,9 @@ absl::AnyInvocable<Poll<absl::Status>()> ReadServerToClientMessagesResponse(
         if (ext_proc_response.immediate_response.has_value() &&
             !config->disable_immediate_response) {
           auto& immediate_response = *ext_proc_response.immediate_response;
-          auto error_md = CancelledServerMetadataFromStatus(
-              static_cast<grpc_status_code>(immediate_response.status),
+          return absl::Status(
+              static_cast<absl::StatusCode>(immediate_response.status),
               immediate_response.details);
-          if (immediate_response.header_mutation.ok()) {
-            const auto* rules = config->mutation_rules.has_value()
-                                    ? &config->mutation_rules.value()
-                                    : nullptr;
-            auto status = ApplyHeaderMutations(
-                *immediate_response.header_mutation, rules, *error_md);
-            if (!status.ok()) {
-              GRPC_TRACE_LOG(ext_proc_filter, ERROR)
-                  << "Failed to apply immediate response header mutations: "
-                  << status;
-            }
-          }
-          GRPC_TRACE_LOG(ext_proc_filter, INFO)
-              << "ExtProc: Immediate response error_md: "
-              << error_md->DebugString();
-          handler.SpawnPushServerTrailingMetadata(std::move(error_md));
-          ext_proc_call->CloseStream();
-          return absl::OkStatus();
         }
         if (!ext_proc_response.response_body.has_value()) {
           return absl::InternalError("Missing response_body in response");
@@ -1358,8 +1340,13 @@ absl::AnyInvocable<Poll<absl::Status>()> ReadServerToClientMessagesResponse(
         handler.SpawnPushMessage(std::move(new_msg));
         return absl::OkStatus();
       });
-  // Wait for all messages to be processed (writes done AND
-  // outstanding is 0).
+  // Wait on `all_server_to_client_responses_received_latch`, which is set
+  // when all outgoing server body messages have been sent to the external
+  // processor AND all corresponding responses have been received and processed
+  // (i.e., writes_done is true and outstanding in-flight message count is 0).
+  // When this latch resolves, no further body responses are expected from the
+  // external processor, so we explicitly close the response_body_pipe sender to
+  // cleanly terminate the asynchronous read_loop below.
   auto close_pipe_promise =
       Map(ext_proc_call->all_server_to_client_responses_received_latch().Wait(),
           [ext_proc_call](Empty) {
@@ -1371,7 +1358,10 @@ absl::AnyInvocable<Poll<absl::Status>()> ReadServerToClientMessagesResponse(
             }
             return absl::OkStatus();
           });
-  // Combine them concurrently
+  // Execute both the read_loop (pulling body responses from the receiver
+  // pipe) and the close_pipe_promise concurrently using TryJoin. When
+  // close_pipe_promise closes the pipe sender upon completion of all messages,
+  // read_loop terminates its ForEach iteration cleanly without hanging.
   auto promise =
       Map(TryJoin<absl::StatusOr>(std::move(close_pipe_promise),
                                   std::move(read_loop)),
