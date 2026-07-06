@@ -1074,8 +1074,7 @@ auto ServerInitialMetadataObservabilityMode(
       [handler, metadata, ext_proc_call = std::move(ext_proc_call),
        config =
            std::move(config)](absl::Status result) mutable -> absl::Status {
-        const bool failure_mode_allow = config->failure_mode_allow;
-        if (!result.ok() && !failure_mode_allow) {
+        if (!result.ok() && !config->failure_mode_allow) {
           if (ext_proc_call->IsStreamClosedCleanly()) {
             GRPC_TRACE_LOG(ext_proc_filter, INFO)
                 << "ExtProc: Ignored server initial metadata send failure "
