@@ -26,9 +26,7 @@
 #include "src/core/call/metadata_batch.h"
 #include "src/core/util/json/json.h"
 #include "src/core/util/matchers.h"
-#include "src/core/util/time.h"
 #include "src/core/util/validation_errors.h"
-#include "src/core/xds/grpc/xds_server_grpc.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 
@@ -90,48 +88,6 @@ struct XdsExtension {
   // processing the extension.
   std::vector<ValidationErrors::ScopedField> validation_fields;
 };
-
-struct XdsGrpcService {
-  XdsGrpcService() = default;
-  XdsGrpcService(const XdsGrpcService& other)
-      : timeout(other.timeout), initial_metadata(other.initial_metadata) {
-    if (other.server_target != nullptr) {
-      server_target =
-          std::make_unique<GrpcXdsServerTarget>(*other.server_target);
-    }
-  }
-  XdsGrpcService& operator=(const XdsGrpcService& other) {
-    if (this == &other) return *this;
-    timeout = other.timeout;
-    initial_metadata = other.initial_metadata;
-    if (other.server_target != nullptr) {
-      server_target =
-          std::make_unique<GrpcXdsServerTarget>(*other.server_target);
-    } else {
-      server_target.reset();
-    }
-    return *this;
-  }
-  XdsGrpcService(XdsGrpcService&&) noexcept = default;
-  XdsGrpcService& operator=(XdsGrpcService&&) noexcept = default;
-
-  std::unique_ptr<GrpcXdsServerTarget> server_target;
-  Duration timeout;
-  std::vector<std::pair<std::string, std::string>> initial_metadata;
-
-  bool Empty() const { return server_target == nullptr; }
-
-  bool operator==(const XdsGrpcService& other) const {
-    if (timeout != other.timeout) return false;
-    if (initial_metadata != other.initial_metadata) return false;
-    if (server_target == nullptr) return other.server_target == nullptr;
-    if (other.server_target == nullptr) return false;
-    return server_target->Equals(*other.server_target);
-  }
-
-  std::string ToString() const;
-};
-
 struct HeaderMutationRules {
   bool disallow_all = false;
   bool disallow_is_error = false;
