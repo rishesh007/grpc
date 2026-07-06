@@ -92,9 +92,34 @@ struct XdsExtension {
 };
 
 struct XdsGrpcService {
-  std::shared_ptr<GrpcXdsServerTarget> server_target;
+  XdsGrpcService() = default;
+  XdsGrpcService(const XdsGrpcService& other)
+      : timeout(other.timeout), initial_metadata(other.initial_metadata) {
+    if (other.server_target != nullptr) {
+      server_target =
+          std::make_unique<GrpcXdsServerTarget>(*other.server_target);
+    }
+  }
+  XdsGrpcService& operator=(const XdsGrpcService& other) {
+    if (this == &other) return *this;
+    timeout = other.timeout;
+    initial_metadata = other.initial_metadata;
+    if (other.server_target != nullptr) {
+      server_target =
+          std::make_unique<GrpcXdsServerTarget>(*other.server_target);
+    } else {
+      server_target.reset();
+    }
+    return *this;
+  }
+  XdsGrpcService(XdsGrpcService&&) noexcept = default;
+  XdsGrpcService& operator=(XdsGrpcService&&) noexcept = default;
+
+  std::unique_ptr<GrpcXdsServerTarget> server_target;
   Duration timeout;
   std::vector<std::pair<std::string, std::string>> initial_metadata;
+
+  bool Empty() const { return server_target == nullptr; }
 
   bool operator==(const XdsGrpcService& other) const {
     if (timeout != other.timeout) return false;

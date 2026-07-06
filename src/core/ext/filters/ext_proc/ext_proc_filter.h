@@ -48,13 +48,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
     bool Equals(const FilterConfig& other) const override {
       const auto& o = DownCast<const Config&>(other);
-      auto grpc_service_equals = [](const std::shared_ptr<XdsGrpcService>& a,
-                                    const std::shared_ptr<XdsGrpcService>& b) {
-        if (a == nullptr && b == nullptr) return true;
-        if (a == nullptr || b == nullptr) return false;
-        return *a == *b;
-      };
-      return grpc_service_equals(grpc_service, o.grpc_service) &&
+      return grpc_service == o.grpc_service &&
              failure_mode_allow == o.failure_mode_allow &&
              processing_mode == o.processing_mode &&
              request_attributes == o.request_attributes &&
@@ -74,7 +68,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     // The gRPC service configuration (target URI, credentials, timeout)
     // used to establish the side-channel connection to the external processor
     // server as described in gRFC A102.
-    std::shared_ptr<XdsGrpcService> grpc_service;
+    XdsGrpcService grpc_service;
     // If true, when an ext_proc stream fails or terminates with a non-OK
     // status, the data plane RPC is allowed to continue without error if the
     // filter is in observability mode or has not yet sent message bodies (body
@@ -144,9 +138,8 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     static UniqueTypeName Type() {
       return GRPC_UNIQUE_TYPE_NAME_HERE("ext_proc_channel");
     }
-    ExtProcChannel(
-        std::shared_ptr<const XdsBootstrap::XdsServerTarget> server,
-        RefCountedPtr<XdsTransportFactory> transport_factory);
+    ExtProcChannel(std::shared_ptr<const XdsBootstrap::XdsServerTarget> server,
+                   RefCountedPtr<XdsTransportFactory> transport_factory);
     ~ExtProcChannel() override;
     std::shared_ptr<const XdsBootstrap::XdsServerTarget> server() const {
       return server_;

@@ -36,9 +36,9 @@ namespace grpc_core {
 std::string ExtProcFilter::Config::ToString() const {
   std::string result = "{";
   bool is_first = true;
-  if (grpc_service != nullptr) {
+  if (!grpc_service.Empty()) {
     StrAppend(result, "grpc_service=");
-    StrAppend(result, grpc_service->ToString());
+    StrAppend(result, grpc_service.ToString());
     is_first = false;
   }
   if (failure_mode_allow) {
