@@ -1148,13 +1148,11 @@ auto ServerToClientMessagesObservabilityMode(
            "processing message, stream_closed="
         << stream_closed;
     std::string message_bytes;
-    const bool send = !stream_closed;
-    if (send && message != nullptr) {
+    if (!stream_closed && message != nullptr) {
       message_bytes = message->payload()->JoinIntoString();
     }
-    auto send_promise = ext_proc_call->SendServerMessageRequest(
-        std::move(message_bytes), config, send);
-    return Map(std::move(send_promise),
+    return Map(ext_proc_call->SendServerMessageRequest(std::move(message_bytes),
+                                                       config, !stream_closed),
                [handler, message = std::move(message), ext_proc_call,
                 config](absl::Status status) mutable -> absl::Status {
                  const bool failure_mode_allow = config->failure_mode_allow;
