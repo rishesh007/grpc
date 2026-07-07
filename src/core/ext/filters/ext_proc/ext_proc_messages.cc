@@ -335,8 +335,7 @@ absl::StatusOr<ExtProcResponse> ExtProcResponse::Parse(
       if (!mutation.ok()) return mutation.status();
       if (mutation->end_of_stream || mutation->end_of_stream_without_message) {
         return absl::InternalError(
-            "end_of_stream / end_of_stream_without_message is not supported "
-            "for response_body");
+            "Processor sent end_of_stream in response_body");
       }
       ext_proc_response.response = ResponseBody{std::move(*mutation)};
       break;
@@ -512,7 +511,7 @@ void SetExtProcRequestBody(
     envoy_service_ext_proc_v3_HttpBody_set_end_of_stream_without_message(body,
                                                                          true);
   }
-  return body;
+  envoy_service_ext_proc_v3_ProcessingRequest_set_request_body(request, body);
 }
 
 void SetExtProcResponseBody(
@@ -587,6 +586,8 @@ envoy_service_ext_proc_v3_ProcessingRequest* CreateCommonRequest(
   }
   return request;
 }
+
+namespace {
 
 // An encoder class used with grpc_metadata_batch::Encode() to iterate over all
 // metadata entries in a batch and insert them as key-value pairs into a upb

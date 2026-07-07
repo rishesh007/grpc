@@ -1486,8 +1486,7 @@ class V3InterceptorToV2Bridge : public ChannelFilter, public Interceptor {
                         call_args.client_initial_metadata = std::move(metadata);
                         return Seq(
                             next_promise_factory(std::move(call_args)),
-                            [handler](ServerMetadataHandle metadata) mutable
-                                -> Poll<ServerMetadataHandle> {
+                            [handler](ServerMetadataHandle metadata) mutable {
                               handler.SpawnPushServerTrailingMetadata(
                                   std::move(metadata));
                               // We return a lambda (promise) here instead of

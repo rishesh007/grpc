@@ -412,7 +412,9 @@ class ImmediateResponseMockService : public MockExternalProcessorBase {
         } else {
           response.mutable_request_body()
               ->mutable_response()
-              ->mutable_body_mutation();
+              ->mutable_body_mutation()
+              ->mutable_streamed_response()
+              ->set_body(request.request_body().body());
         }
       } else if (request.has_response_body()) {
         if (trigger_phase == "response_body") {
@@ -428,7 +430,9 @@ class ImmediateResponseMockService : public MockExternalProcessorBase {
         } else {
           response.mutable_response_body()
               ->mutable_response()
-              ->mutable_body_mutation();
+              ->mutable_body_mutation()
+              ->mutable_streamed_response()
+              ->set_body(request.response_body().body());
         }
       } else if (request.has_request_trailers()) {
         response.mutable_request_trailers()->mutable_header_mutation();
@@ -466,13 +470,21 @@ void SetDefaultEmptyResponse(
         ->mutable_response()
         ->mutable_header_mutation();
   } else if (request.has_request_body()) {
-    response->mutable_request_body()
-        ->mutable_response()
-        ->mutable_body_mutation();
+    auto* body_mutation = response->mutable_request_body()
+                               ->mutable_response()
+                               ->mutable_body_mutation();
+    body_mutation->mutable_streamed_response()->set_body(
+        request.request_body().body());
+    body_mutation->mutable_streamed_response()->set_end_of_stream(
+        request.request_body().end_of_stream());
   } else if (request.has_response_body()) {
-    response->mutable_response_body()
-        ->mutable_response()
-        ->mutable_body_mutation();
+    auto* body_mutation = response->mutable_response_body()
+                               ->mutable_response()
+                               ->mutable_body_mutation();
+    body_mutation->mutable_streamed_response()->set_body(
+        request.response_body().body());
+    body_mutation->mutable_streamed_response()->set_end_of_stream(
+        request.response_body().end_of_stream());
   } else if (request.has_request_trailers()) {
     response->mutable_request_trailers()->mutable_header_mutation();
   } else if (request.has_response_trailers()) {
@@ -1297,6 +1309,7 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseBodyAllow) {
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
   EXPECT_TRUE(status.ok()) << "Expected OK, got: " << status.error_message();
+  EXPECT_EQ(response.message(), kRequestMessage);
 }
 
 TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseBodyBlock) {
@@ -1835,7 +1848,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersInvalidHeaderMutationFails) {
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("validation failed: [field:header.key "
+              ::testing::HasSubstr("Failed to parse XdsHeaderValueOption: [field:header.key "
                                    "error:header \"host\" not allowed]"));
 }
 
@@ -2031,7 +2044,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersInvalidHeaderMutationFails) {
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("validation failed: [field:header.key "
+              ::testing::HasSubstr("Failed to parse XdsHeaderValueOption: [field:header.key "
                                    "error:header \"host\" not allowed]"));
 }
 
@@ -2249,7 +2262,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseTrailersInvalidHeaderMutationFails) {
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("validation failed: [field:header.key "
+              ::testing::HasSubstr("Failed to parse XdsHeaderValueOption: [field:header.key "
                                    "error:header \"host\" not allowed]"));
 }
 
@@ -3439,11 +3452,7 @@ TEST_P(XdsExtProcEnd2endTest,
           absl::MutexLock lock(&mu);
           path_received = GetExtProcAttribute(request, "request.path");
           method_received = GetExtProcAttribute(request, "request.method");
-          // CRITICAL FIX: Must initialize body_mutation to avoid internal
-          // parser errors
-          response->mutable_request_body()
-              ->mutable_response()
-              ->mutable_body_mutation();
+          SetDefaultEmptyResponse(request, response);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -4703,7 +4712,9 @@ TEST_P(XdsExtProcEnd2endTest,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_headers()) {
           // Respond with request_body instead of request_headers!
-          response->mutable_request_body();
+          auto* body_response = response->mutable_request_body();
+          auto* common_response = body_response->mutable_response();
+          common_response->mutable_body_mutation()->mutable_streamed_response();
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -4751,7 +4762,7 @@ TEST_P(XdsExtProcEnd2endTest,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
           // Respond with request_headers instead of request_body!
-          response->mutable_request_headers();
+          response->mutable_request_headers()->mutable_response();
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -4799,7 +4810,9 @@ TEST_P(XdsExtProcEnd2endTest,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_headers()) {
           // Respond with response_body instead of response_headers!
-          response->mutable_response_body();
+          auto* body_response = response->mutable_response_body();
+          auto* common_response = body_response->mutable_response();
+          common_response->mutable_body_mutation()->mutable_streamed_response();
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -4959,7 +4972,9 @@ class ResponseBodyAfterTrailersMockService : public MockExternalProcessorBase {
         stream->Write(response);
         // 2. Send response_body (out of order!)
         response.Clear();
-        response.mutable_response_body();
+        auto* body_response = response.mutable_response_body();
+        auto* common_response = body_response->mutable_response();
+        common_response->mutable_body_mutation()->mutable_streamed_response();
         stream->Write(response);
       } else {
         SetDefaultEmptyResponse(request, &response);
@@ -5031,7 +5046,7 @@ TEST_P(XdsExtProcEnd2endTest,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
           // Respond with response_headers instead of response_body!
-          response->mutable_response_headers();
+          response->mutable_response_headers()->mutable_response();
         } else {
           SetDefaultEmptyResponse(request, response);
         }

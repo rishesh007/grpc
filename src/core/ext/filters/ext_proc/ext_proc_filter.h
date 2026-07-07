@@ -184,7 +184,8 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   RefCountedPtr<ExtProcChannel> channel_;
 
   Slice default_authority_;
-
 };
+
+}  // namespace grpc_core
 
 #endif  // GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_FILTER_H
