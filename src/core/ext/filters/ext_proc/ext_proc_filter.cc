@@ -2425,7 +2425,7 @@ ExtProcFilter::ClientToServerObservabilityMode(
           attributes = ParseAttributes(
               attributes_arena->ptr(), self->config_->request_attributes,
               *metadata, self->default_authority_.as_string_view());
-        }     
+        }
         // Send client initial metadata to ext_proc.
         const bool is_first_message = ext_proc_call->IsFirstMessageOnStream();
         auto client_headers_write_promise = ext_proc_call->SendMessage(
@@ -2445,7 +2445,7 @@ ExtProcFilter::ClientToServerObservabilityMode(
                   self->config()->processing_mode.send_request_body,
                   self->config()->processing_mode.send_response_body);
             });
-        // Handle write failure. In observability mode, if write fails and 
+        // Handle write failure. In observability mode, if write fails and
         // failure_mode_allow is true, we fail-open and continue the call.
         auto write_promise = Map(
             std::move(client_headers_write_promise),
@@ -2468,7 +2468,7 @@ ExtProcFilter::ClientToServerObservabilityMode(
               return status;
             });
         // After the write attempt (successful or failed-open), we immediately
-        // start the child call to the backend server. We do NOT wait for 
+        // start the child call to the backend server. We do NOT wait for
         // responses from ext_proc.
         return TrySeq(
             std::move(write_promise),
@@ -2477,7 +2477,8 @@ ExtProcFilter::ClientToServerObservabilityMode(
               CallInitiator initiator = self->MakeChildCall(
                   std::move(metadata), handler.arena()->Ref());
               handler.AddChildCall(initiator);
-              // Spawn background task to handle server-to-client path (responses).
+              // Spawn background task to handle server-to-client path
+              // (responses).
               initiator.SpawnInfallible(
                   "server_to_client",
                   [self, handler, initiator,
@@ -2540,8 +2541,8 @@ ExtProcFilter::ClientToServerCallNormalMode(
       },
       [self = RefAsSubclass<ExtProcFilter>(), handler,
        ext_proc_call](ClientMetadataHandle metadata) mutable {
-        // Wait for the response headers from ext_proc if configured to send headers
-        // and we are NOT in observability mode.
+        // Wait for the response headers from ext_proc if configured to send
+        // headers and we are NOT in observability mode.
         absl::AnyInvocable<Poll<absl::StatusOr<ExtProcResponse>>()>
             headers_promise;
         if (self->config()->processing_mode.send_request_headers &&
@@ -2587,11 +2588,12 @@ ExtProcFilter::ClientToServerCallNormalMode(
             [self, handler,
              ext_proc_call](std::variant<ClientMetadataHandle,
                                          ExtProcResponse::ImmediateResponse>
-                                 result) mutable
+                                result) mutable
                 -> absl::AnyInvocable<Poll<absl::Status>()> {
               if (std::holds_alternative<ExtProcResponse::ImmediateResponse>(
                       result)) {
-                // Abort path: Send immediate response to client and close stream.
+                // Abort path: Send immediate response to client and close
+                // stream.
                 auto& immediate_response =
                     std::get<ExtProcResponse::ImmediateResponse>(result);
                 auto error_md = CancelledServerMetadataFromStatus(
@@ -2625,7 +2627,8 @@ ExtProcFilter::ClientToServerCallNormalMode(
               if (!self->config()->processing_mode.send_request_headers &&
                   self->config()->processing_mode.send_request_body &&
                   !self->config()->request_attributes.empty()) {
-                // If we didn't send headers but are sending body, parse attributes here.
+                // If we didn't send headers but are sending body, parse
+                // attributes here.
                 auto* attributes_arena = handler.arena()->New<upb::Arena>();
                 attributes = ParseAttributes(
                     attributes_arena->ptr(), self->config()->request_attributes,
@@ -2653,15 +2656,23 @@ ExtProcFilter::ClientToServerCallNormalMode(
   return [promise = std::move(promise)]() mutable { return promise(); };
 }
 
+// Handles the response path (Server to Client).
+// This function sets up a pipeline to process server initial metadata,
+// response messages, and server trailing metadata, potentially intercepting
+// and mutating them via the ext_proc server.
+//
+// It also watches for ext_proc stream errors and aborts the call if a failure
+// occurs and fail-open is not allowed.
 absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ServerToClientCall(
     CallHandler handler, CallInitiator initiator,
     RefCountedPtr<ExtProcCall> ext_proc_call) {
   GRPC_TRACE_LOG(ext_proc_filter, INFO)
       << "ExtProcCall " << ext_proc_call.get() << " ServerToClientCall started";
+  // Pipeline for normal response processing.
   auto response_pipeline = Seq(
-      // Phase 1: Headers and Messages (short-circuiting!)
+      // Phase 1: Process initial metadata and response messages.
       TrySeq(
-          // Step A: Pull Server Initial Metadata.
+          // Step A: Pull Server Initial Metadata from the backend server.
           initiator.PullServerInitialMetadata(),
           [handler, initiator, ext_proc_call,
            config = config_](std::optional<ServerMetadataHandle> md) mutable {
@@ -2673,32 +2684,34 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ServerToClientCall(
                   auto shared_md =
                       std::make_shared<ServerMetadataHandle>(std::move(*md));
                   return TrySeq(
-                      // 1. Intercept and push Server Initial Metadata.
+                      // Step 1: Intercept, send to ext_proc, and apply
+                      // mutations to Server Initial Metadata.
                       ServerInitialMetadata(handler, initiator, ext_proc_call,
                                             config, shared_md),
-                      // 2. Intercept and push Server-to-Client Messages.
+                      // Step 2: Intercept and process Server-to-Client Messages
+                      // (body).
                       [handler, initiator, ext_proc_call, config]() mutable {
                         return ServerToClientMessages(handler, initiator,
                                                       ext_proc_call, config);
                       });
                 },
                 []() {
-                  // Trailers-Only: Bypasses both headers and messages!
+                  // Trailers-Only response: Bypasses both headers and messages!
                   return absl::OkStatus();
                 });
           }),
-      // Handle Phase 1 result and conditionally run Phase 2
+      // Phase 2: Process trailing metadata.
+      // This runs after Phase 1 (headers and messages) is complete.
       [handler, initiator, ext_proc_call,
        config = config_](absl::Status phase1_result) mutable {
         if (!phase1_result.ok()) {
-          // Just return the error, outer wrapper will handle cleanup
+          // If Phase 1 failed, we propagate the error.
           return absl::AnyInvocable<Poll<absl::Status>()>(
               [phase1_result]() -> Poll<absl::Status> {
                 return phase1_result;
               });
         }
-        // Phase 1 succeeded! Proceed to Phase 2: Pull, intercept, and push
-        // Server Trailing Metadata.
+        // Phase 1 succeeded. Pull and process trailing metadata.
         return absl::AnyInvocable<Poll<absl::Status>()>(
             Seq(initiator.PullServerTrailingMetadata(),
                 [handler, initiator, ext_proc_call,
@@ -2706,11 +2719,15 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ServerToClientCall(
                     -> absl::AnyInvocable<Poll<absl::Status>()> {
                   auto shared_md =
                       std::make_shared<ServerMetadataHandle>(std::move(md));
+                  // Intercept, send to ext_proc, and apply mutations to
+                  // Trailing Metadata.
                   return ServerTrailingMetadata(
                       handler, initiator, ext_proc_call, config, shared_md);
                 }));
       });
-
+  // Monitor the ext_proc stream for errors.
+  // If the ext_proc stream fails and fail-open is NOT allowed, we abort the
+  // call.
   auto watch_error =
       Seq(ext_proc_call->WaitForStreamStatus(),
           [config = config_](
@@ -2727,10 +2744,11 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ServerToClientCall(
               return Pending{};
             };
           });
-
+  // Race the response pipeline against the error watcher.
+  // If watch_error returns an error, it will win the race and abort the
+  // pipeline.
   auto run_pipeline =
       PrioritizedRace(std::move(watch_error), std::move(response_pipeline));
-
   return [handler, initiator, ext_proc_call,
           promise = std::move(run_pipeline)]() mutable -> Poll<absl::Status> {
     auto p = promise();
@@ -2738,19 +2756,21 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ServerToClientCall(
       GRPC_TRACE_LOG(ext_proc_filter, INFO)
           << "ExtProcCall " << ext_proc_call.get()
           << " ServerToClientCall finished. status=" << *status;
+      // Handle failures in the pipeline (either from the response path or the
+      // error watcher).
       if (!status->ok()) {
         GRPC_TRACE_LOG(ext_proc_filter, INFO)
             << "ExtProcCall " << ext_proc_call.get()
             << " ServerToClientCall failed: " << *status;
-        // Push error trailers to parent call
+        // Push error trailers to the parent call (client).
         auto error_md = CancelledServerMetadataFromStatus(*status);
         GRPC_TRACE_LOG(ext_proc_filter, INFO)
             << "ExtProcCall " << ext_proc_call.get()
             << " SpawnPushServerTrailingMetadata (error)";
         handler.SpawnPushServerTrailingMetadata(std::move(error_md));
-        // Cancel child call
+        // Cancel the child call to the backend server.
         initiator.Cancel();
-        // Close ext_proc stream
+        // Close the ext_proc stream.
         ext_proc_call->CloseStream();
       }
       return *status;
