@@ -2703,13 +2703,11 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ServerToClientCall(
       // Phase 2: Process trailing metadata.
       // This runs after Phase 1 (headers and messages) is complete.
       [handler, initiator, ext_proc_call,
-       config = config_](absl::Status phase1_result) mutable {
-        if (!phase1_result.ok()) {
+       config = config_](absl::Status status) mutable {
+        if (!status.ok()) {
           // If Phase 1 failed, we propagate the error.
           return absl::AnyInvocable<Poll<absl::Status>()>(
-              [phase1_result]() -> Poll<absl::Status> {
-                return phase1_result;
-              });
+              [status]() -> Poll<absl::Status> { return status; });
         }
         // Phase 1 succeeded. Pull and process trailing metadata.
         return absl::AnyInvocable<Poll<absl::Status>()>(
