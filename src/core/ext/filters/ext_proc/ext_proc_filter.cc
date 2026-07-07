@@ -2398,6 +2398,7 @@ ExtProcFilter::ClientToServerObservabilityMode(
             << "ExtProc: Client initial metadata received "
                "(observability):\n"
             << metadata->DebugString();
+        // Prepare headers and attributes to send to ext_proc if configured.
         const bool send_headers =
             self->config_->processing_mode.send_request_headers;
         std::shared_ptr<upb::Arena> serialization_arena;
@@ -2418,11 +2419,14 @@ ExtProcFilter::ClientToServerObservabilityMode(
               *metadata, self->default_authority_.as_string_view());
         } else if (self->config_->processing_mode.send_request_body &&
                    !self->config_->request_attributes.empty()) {
+          // If we are not sending headers but sending body, we might still need
+          // to send attributes with the first body message.
           attributes_arena = handler.arena()->New<upb::Arena>();
           attributes = ParseAttributes(
               attributes_arena->ptr(), self->config_->request_attributes,
               *metadata, self->default_authority_.as_string_view());
-        }
+        }     
+        // Send client initial metadata to ext_proc.
         const bool is_first_message = ext_proc_call->IsFirstMessageOnStream();
         auto client_headers_write_promise = ext_proc_call->SendMessage(
             send_headers,
@@ -2441,6 +2445,8 @@ ExtProcFilter::ClientToServerObservabilityMode(
                   self->config()->processing_mode.send_request_body,
                   self->config()->processing_mode.send_response_body);
             });
+        // Handle write failure. In observability mode, if write fails and 
+        // failure_mode_allow is true, we fail-open and continue the call.
         auto write_promise = Map(
             std::move(client_headers_write_promise),
             [failure_mode_allow = self->config()->failure_mode_allow,
@@ -2461,6 +2467,9 @@ ExtProcFilter::ClientToServerObservabilityMode(
               }
               return status;
             });
+        // After the write attempt (successful or failed-open), we immediately
+        // start the child call to the backend server. We do NOT wait for 
+        // responses from ext_proc.
         return TrySeq(
             std::move(write_promise),
             [self, handler, metadata = std::move(metadata),
@@ -2468,7 +2477,7 @@ ExtProcFilter::ClientToServerObservabilityMode(
               CallInitiator initiator = self->MakeChildCall(
                   std::move(metadata), handler.arena()->Ref());
               handler.AddChildCall(initiator);
-              // Spawn server_to_client task
+              // Spawn background task to handle server-to-client path (responses).
               initiator.SpawnInfallible(
                   "server_to_client",
                   [self, handler, initiator,
@@ -2478,6 +2487,7 @@ ExtProcFilter::ClientToServerObservabilityMode(
                     return initiator.CancelIfFails(self->ServerToClientCall(
                         handler, initiator, std::move(ext_proc_call)));
                   });
+              // Continue with forwarding client messages (request body).
               return ClientToServerMessages(handler, initiator,
                                             std::move(ext_proc_call),
                                             self->config(), attributes);
@@ -2498,6 +2508,7 @@ ExtProcFilter::ClientToServerCallNormalMode(
             << metadata->DebugString();
         auto shared_metadata =
             std::make_shared<ClientMetadataHandle>(std::move(metadata));
+        // Send client initial metadata to ext_proc.
         const bool send_headers =
             self->config_->processing_mode.send_request_headers;
         const bool is_first_message = ext_proc_call->IsFirstMessageOnStream();
@@ -2520,6 +2531,7 @@ ExtProcFilter::ClientToServerCallNormalMode(
                   self->config()->processing_mode.send_request_body,
                   self->config()->processing_mode.send_response_body);
             });
+        // Pass the metadata to the next step in the TrySeq.
         return Seq(std::move(send_promise),
                    [shared_metadata](absl::Status) mutable
                        -> absl::StatusOr<ClientMetadataHandle> {
@@ -2528,28 +2540,34 @@ ExtProcFilter::ClientToServerCallNormalMode(
       },
       [self = RefAsSubclass<ExtProcFilter>(), handler,
        ext_proc_call](ClientMetadataHandle metadata) mutable {
-        // Type-erase the conditional headers wait using standard C++ if-else
-        // to completely prevent any complex template type mismatches.
+        // Wait for the response headers from ext_proc if configured to send headers
+        // and we are NOT in observability mode.
         absl::AnyInvocable<Poll<absl::StatusOr<ExtProcResponse>>()>
             headers_promise;
         if (self->config()->processing_mode.send_request_headers &&
             !self->config()->observability_mode) {
+          // The response reader task will fill this latch when it receives
+          // the response from ext_proc.
           headers_promise = ext_proc_call->request_headers_latch().Wait();
         } else {
+          // If we didn't send headers, we don't wait for a response.
           headers_promise = []() -> Poll<absl::StatusOr<ExtProcResponse>> {
             return ExtProcResponse{};
           };
         }
         return TrySeq(
             std::move(headers_promise),
+            // Process the response from ext_proc.
             [self,
              metadata = std::move(metadata)](ExtProcResponse response) mutable
                 -> absl::StatusOr<std::variant<
                     ClientMetadataHandle, ExtProcResponse::ImmediateResponse>> {
+              // Check for immediate response (e.g. access denied).
               if (response.immediate_response.has_value() &&
                   !self->config()->disable_immediate_response) {
                 return response.immediate_response.value();
               }
+              // Apply header mutations if returned by ext_proc.
               if (response.request_headers.has_value()) {
                 const auto& request_headers = *response.request_headers;
                 if (!request_headers.ok()) {
@@ -2565,13 +2583,15 @@ ExtProcFilter::ClientToServerCallNormalMode(
               }
               return std::move(metadata);
             },
+            // Handle the result of response processing.
             [self, handler,
              ext_proc_call](std::variant<ClientMetadataHandle,
                                          ExtProcResponse::ImmediateResponse>
-                                result) mutable
+                                 result) mutable
                 -> absl::AnyInvocable<Poll<absl::Status>()> {
               if (std::holds_alternative<ExtProcResponse::ImmediateResponse>(
                       result)) {
+                // Abort path: Send immediate response to client and close stream.
                 auto& immediate_response =
                     std::get<ExtProcResponse::ImmediateResponse>(result);
                 auto error_md = CancelledServerMetadataFromStatus(
@@ -2599,11 +2619,13 @@ ExtProcFilter::ClientToServerCallNormalMode(
                 return absl::AnyInvocable<Poll<absl::Status>()>(
                     []() -> Poll<absl::Status> { return absl::OkStatus(); });
               }
+              // Normal path: Start child call to backend server.
               auto metadata = std::move(std::get<ClientMetadataHandle>(result));
               ::google_protobuf_Struct* attributes = nullptr;
               if (!self->config()->processing_mode.send_request_headers &&
                   self->config()->processing_mode.send_request_body &&
                   !self->config()->request_attributes.empty()) {
+                // If we didn't send headers but are sending body, parse attributes here.
                 auto* attributes_arena = handler.arena()->New<upb::Arena>();
                 attributes = ParseAttributes(
                     attributes_arena->ptr(), self->config()->request_attributes,
@@ -2612,6 +2634,7 @@ ExtProcFilter::ClientToServerCallNormalMode(
               CallInitiator initiator = self->MakeChildCall(
                   std::move(metadata), handler.arena()->Ref());
               handler.AddChildCall(initiator);
+              // Spawn background task to handle server-to-client path.
               initiator.SpawnInfallible(
                   "server_to_client",
                   [self, handler, initiator, ext_proc_call]() mutable {
