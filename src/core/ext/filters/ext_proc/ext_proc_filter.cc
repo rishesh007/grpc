@@ -35,7 +35,7 @@
 #include "src/core/lib/promise/latch.h"
 #include "src/core/lib/promise/map.h"
 #include "src/core/lib/promise/pipe.h"
-#include "src/core/lib/promise/race.h"
+#include "src/core/lib/promise/prioritized_race.h"
 #include "src/core/lib/promise/seq.h"
 #include "src/core/lib/promise/try_join.h"
 #include "src/core/lib/promise/try_seq.h"
@@ -345,9 +345,9 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return all_server_to_client_responses_received_latch_;
   }
 
-  bool processor_sent_half_close() const {
+  bool ext_proc_set_eos() const {
     MutexLock lock(&mu_);
-    return processor_sent_half_close_;
+    return ext_proc_set_eos_;
   }
 
   void SetClientSendsDone() {
@@ -499,9 +499,9 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return is_trailers_only_;
   }
 
-  void SetProcessorSentHalfClose() {
+  void SetExtProcSetEos() {
     MutexLock lock(&mu_);
-    processor_sent_half_close_ = true;
+    ext_proc_set_eos_ = true;
   }
 
   void OnRequestSent(bool ok) {}
@@ -670,7 +670,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
                 "Client sends closed by external processor"));
             return;
           }
-          SetProcessorSentHalfClose();
+          SetExtProcSetEos();
           if (!request_body_pipe_.sender.IsClosed()) {
             request_body_pipe_.sender.MarkClosed();
           }
@@ -679,7 +679,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       }
       request_body_pipe_.sender.Push(std::move(parsed_response))();
       if (request_body.ok() && request_body->end_of_stream) {
-        SetProcessorSentHalfClose();
+        SetExtProcSetEos();
         if (!request_body_pipe_.sender.IsClosed()) {
           request_body_pipe_.sender.MarkClosed();
         }
@@ -947,7 +947,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   bool c2s_half_close_initiated_ ABSL_GUARDED_BY(&mu_) = false;
   bool is_trailers_only_ ABSL_GUARDED_BY(&mu_) = false;
 
-  bool processor_sent_half_close_ ABSL_GUARDED_BY(&mu_) = false;
+  bool ext_proc_set_eos_ ABSL_GUARDED_BY(&mu_) = false;
   bool ext_proc_stream_half_closed_ ABSL_GUARDED_BY(&mu_) = false;
 
   std::atomic<bool> stream_closed_{false};
@@ -1910,6 +1910,14 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerTrailingMetadata(
   return promise;
 }
 
+// Intercepts and processes client-to-server messages.
+// This is used for both Observability Mode (asynchronous mirroring) and Normal
+// Mode (when body processing is disabled, acting as a pass-through).
+//
+// - `send_message`: Controls whether the message payload is actually sent to
+// the external processor.
+// - `attributes`: Optional request attributes to attach to the ext_proc
+// request.
 absl::AnyInvocable<Poll<absl::Status>()>
 ClientToServerMessagesMaybeObservabilityMode(
     CallHandler handler, CallInitiator initiator,
@@ -1917,6 +1925,7 @@ ClientToServerMessagesMaybeObservabilityMode(
     RefCountedPtr<const ExtProcFilter::Config> config, bool send_message,
     ::google_protobuf_Struct* attributes) {
   return TrySeq(
+      // Iterate over all messages received from the client.
       ForEach(
           MessagesFrom(handler),
           [config, initiator, ext_proc_call, send_message,
@@ -1926,8 +1935,11 @@ ClientToServerMessagesMaybeObservabilityMode(
                    "got message: "
                 << (message != nullptr ? message->payload()->JoinIntoString()
                                        : "null");
+            // If the external processor has already signaled end-of-stream
+            // (EOS) for the client-to-server direction, we must fail the call
+            // because the client is attempting to send more data.
             return If(
-                ext_proc_call->processor_sent_half_close(),
+                ext_proc_call->ext_proc_set_eos(),
                 []() -> absl::Status {
                   return absl::InternalError(
                       "Client sends closed by external processor");
@@ -1937,16 +1949,16 @@ ClientToServerMessagesMaybeObservabilityMode(
                   std::string message_bytes;
                   const bool send =
                       send_message && !ext_proc_call->IsStreamClosed();
-                  if (send && message != nullptr) {
+                  if (send) {
                     message_bytes = message->payload()->JoinIntoString();
                   }
-                  auto promise = ext_proc_call->SendClientMessageRequest(
-                      std::move(message_bytes), config,
-                      /*end_of_stream=*/false,
-                      /*end_of_stream_without_message=*/false, send,
-                      attributes);
+                  // Send the message payload to the external processor.
                   return Map(
-                      std::move(promise),
+                      ext_proc_call->SendClientMessageRequest(
+                          std::move(message_bytes), config,
+                          /*end_of_stream=*/false,
+                          /*end_of_stream_without_message=*/false, send,
+                          attributes),
                       [initiator, message = std::move(message), ext_proc_call,
                        config](absl::Status status) mutable -> absl::Status {
                         GRPC_TRACE_LOG(ext_proc_filter, INFO)
@@ -1954,9 +1966,11 @@ ClientToServerMessagesMaybeObservabilityMode(
                                "ClientToServerMessagesMaybeObservabilityMode "
                                "send completed: "
                             << status;
-                        const bool failure_mode_allow =
-                            config->failure_mode_allow;
-                        if (!status.ok() && !failure_mode_allow) {
+                        // If the send failed and fail-closed is configured, we
+                        // fail the call. However, if the stream was closed
+                        // cleanly by the server (e.g. trailers received), we
+                        // ignore the failure to allow the call to complete.
+                        if (!status.ok() && !config->failure_mode_allow) {
                           if (ext_proc_call->IsStreamClosedCleanly()) {
                             GRPC_TRACE_LOG(ext_proc_filter, INFO)
                                 << "ExtProc: Ignored client message send "
@@ -1967,40 +1981,45 @@ ClientToServerMessagesMaybeObservabilityMode(
                             return status;
                           }
                         }
+                        // Forward the message to the backend.
                         initiator.SpawnPushMessage(std::move(message));
                         return absl::OkStatus();
                       });
                 });
           }),
+      // After client finishes sending all messages (WritesDone).
       [config, initiator, ext_proc_call, send_message, attributes]() mutable {
         GRPC_TRACE_LOG(ext_proc_filter, INFO)
             << "ExtProc: ClientToServerMessages finished sends";
         std::string message_bytes;
         const bool send = send_message && !ext_proc_call->IsStreamClosed();
-        auto promise = ext_proc_call->SendClientMessageRequest(
-            std::move(message_bytes), config,
-            /*end_of_stream=*/false,
-            /*end_of_stream_without_message=*/true, send, attributes);
-        return Map(std::move(promise),
-                   [initiator](absl::Status status) mutable {
-                     if (!status.ok()) {
-                       GRPC_TRACE_LOG(ext_proc_filter, INFO)
-                           << "ExtProc: Failed to send client half-close in "
-                              "observability mode: "
-                           << status;
-                     }
-                     initiator.SpawnFinishSends();
-                     return absl::OkStatus();
-                   });
+        // Send a half-close signal (end-of-stream without message) to the
+        // external processor.
+        return Map(
+            ext_proc_call->SendClientMessageRequest(
+                std::move(message_bytes), config,
+                /*end_of_stream=*/false,
+                /*end_of_stream_without_message=*/true, send, attributes),
+            [initiator](absl::Status status) mutable {
+              if (!status.ok()) {
+                GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                    << "ExtProc: Failed to send client half-close in "
+                       "observability mode: "
+                    << status;
+              }
+              // Signal half-close to the backend.
+              initiator.SpawnFinishSends();
+              return absl::OkStatus();
+            });
       });
 }
 
-absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
+absl::AnyInvocable<Poll<absl::Status>()> ClientToSidestreamNormalMode(
     CallHandler handler, CallInitiator initiator,
     RefCountedPtr<ExtProcFilter::ExtProcCall> ext_proc_call,
     RefCountedPtr<const ExtProcFilter::Config> config,
     ::google_protobuf_Struct* attributes) {
-  auto client_to_sidestream = TrySeq(
+  return TrySeq(
       ForEach(
           MessagesFrom(handler),
           [config, initiator, ext_proc_call,
@@ -2025,14 +2044,13 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
                                    << "ExtProc: Drain complete (stream "
                                       "closed), resuming data plane. Status: "
                                    << status;
-                               // 1. Guard clause: If stream did not close
-                               // cleanly and fail-open is not allowed, return
-                               // error status.
+                               // If stream did not close cleanly and fail-open
+                               // is not allowed, return error status.
                                if (!ext_proc_call->IsStreamClosedCleanly() &&
                                    !ext_proc_call->IsClientFailOpenAllowed()) {
                                  return ext_proc_call->GetStreamStatus();
                                }
-                               // 2. Otherwise, resume data plane bypass and
+                               // Otherwise, resume data plane bypass and
                                // push message.
                                if (*shared_message != nullptr) {
                                  initiator.SpawnPushMessage(
@@ -2044,7 +2062,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
                 [config, initiator, ext_proc_call, attributes,
                  shared_message]() mutable {
                   return If(
-                      ext_proc_call->processor_sent_half_close(),
+                      ext_proc_call->ext_proc_set_eos(),
                       []() {
                         // TODO(rishesh): Once PH2 work is done, we should make
                         // this pass (discard or handle cleanly). Currently we
@@ -2058,30 +2076,26 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
                         const bool send_message =
                             !ext_proc_call->IsStreamClosed() &&
                             !ext_proc_call->ext_proc_stream_half_closed();
-                        auto send_promise =
+                        return Map(
                             ext_proc_call->SendClientMessageRequest(
                                 *shared_message, config,
                                 /*end_of_stream=*/false,
                                 /*end_of_stream_without_message=*/false,
-                                send_message, attributes);
-                        return Map(
-                            std::move(send_promise),
+                                send_message, attributes),
                             [ext_proc_call, initiator, config, send_message,
                              shared_message](
                                 absl::Status status) mutable -> absl::Status {
                               if (!send_message) {
-                                // 1. Guard clause: Stream closed before we
-                                // could send. If not cleanly closed and
-                                // fail-open is not allowed, return error
-                                // status immediately.
+                                // Stream closed before we could send. If not
+                                // cleanly closed and fail-open is not allowed,
+                                // return error status immediately.
                                 if (!ext_proc_call->IsStreamClosedCleanly() &&
                                     !ext_proc_call->IsClientFailOpenAllowed()) {
                                   return ext_proc_call->IsStreamClosed()
                                              ? ext_proc_call->GetStreamStatus()
                                              : status;
                                 }
-                                // 2. Otherwise, bypass ext_proc and push
-                                // message.
+                                // Otherwise, bypass ext_proc and push message.
                                 if (*shared_message != nullptr) {
                                   initiator.SpawnPushMessage(
                                       std::move(*shared_message));
@@ -2092,37 +2106,39 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
                               // sidestream_to_server loop.
                               if (!status.ok() ||
                                   ext_proc_call->IsStreamClosed()) {
-                                // 1. Guard clause: If not cleanly closed and
-                                // fail-open is not allowed, return error
-                                // status immediately.
+                                // If not cleanly closed and fail-open is not
+                                // allowed, return error status immediately.
                                 if (!ext_proc_call->IsStreamClosedCleanly() &&
                                     !ext_proc_call->IsClientFailOpenAllowed()) {
                                   return ext_proc_call->IsStreamClosed()
                                              ? ext_proc_call->GetStreamStatus()
                                              : status;
                                 }
-                                // 2. Otherwise, bypass ext_proc and push
-                                // message.
+                                // Otherwise, bypass ext_proc and push message.
                                 if (*shared_message != nullptr) {
                                   initiator.SpawnPushMessage(
                                       std::move(*shared_message));
                                 }
                               }
-                              // 3. Single unified return for success/bypass
-                              // paths.
                               return absl::OkStatus();
                             });
                       });
                 });
           }),
       [config, initiator, ext_proc_call, attributes]() mutable {
+        // This promise runs when the client has finished sending all messages (WritesDone).
+        // We must transition the client-to-server direction to half-closed.
         return If(
-            ext_proc_call->processor_sent_half_close(),
+            ext_proc_call->ext_proc_set_eos(),
+            // If the external processor already closed the stream (EOS),
+            // we don't need to notify it. Just mark client sends as done.
             [ext_proc_call]() {
               ext_proc_call->SetClientSendsDone();
               return absl::OkStatus();
             },
             [config, initiator, ext_proc_call, attributes]() mutable {
+              // Prepare an empty message with end_of_stream_without_message=true
+              // to signal half-close to the external processor.
               MessageHandle null_msg = nullptr;
               const bool send_message =
                   !ext_proc_call->IsStreamClosed() &&
@@ -2136,14 +2152,20 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
                   std::move(send_promise),
                   [ext_proc_call, initiator, send_message,
                    config](absl::Status status) mutable -> absl::Status {
+                    // If we did not attempt to send the half-close (because the stream
+                    // was already closed), or if the send failed/stream closed during send:
+                    // we must decide whether to fail the call or bypass the error.
                     if (!send_message) {
                       if (ext_proc_call->drain_requested() ||
                           ext_proc_call->IsStreamClosedCleanly() ||
                           ext_proc_call->IsClientFailOpenAllowed()) {
+                        // Bypass error: signal half-close to backend immediately
+                        // since we won't get a response from ext_proc.
                         initiator.SpawnFinishSends();
                         ext_proc_call->SetClientSendsDone();
                         return absl::OkStatus();
                       } else {
+                        // Fail-closed: propagate the stream error.
                         return ext_proc_call->IsStreamClosed()
                                    ? ext_proc_call->GetStreamStatus()
                                    : status;
@@ -2152,21 +2174,34 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
                     if (!status.ok() || ext_proc_call->IsStreamClosed()) {
                       if (ext_proc_call->IsStreamClosedCleanly() ||
                           ext_proc_call->IsClientFailOpenAllowed()) {
+                        // Bypass error: signal half-close to backend immediately.
                         initiator.SpawnFinishSends();
                         ext_proc_call->SetClientSendsDone();
                         return absl::OkStatus();
                       } else {
+                        // Fail-closed: propagate the stream error.
                         return ext_proc_call->IsStreamClosed()
                                    ? ext_proc_call->GetStreamStatus()
                                    : status;
                       }
                     }
+                    // Success: The half-close request was sent to ext_proc.
+                    // We do NOT call initiator.SpawnFinishSends() here because we
+                    // must wait for the ext_proc server to respond and close the
+                    // receiver pipe. The `sidestream_to_server` promise will handle
+                    // calling SpawnFinishSends() when that happens.
                     ext_proc_call->SetClientSendsDone();
                     return absl::OkStatus();
                   });
             });
       });
-  auto sidestream_to_server = Seq(
+}
+
+absl::AnyInvocable<Poll<absl::Status>()> SidestreamToServerNormalMode(
+    CallHandler handler, CallInitiator initiator,
+    RefCountedPtr<ExtProcFilter::ExtProcCall> ext_proc_call,
+    RefCountedPtr<const ExtProcFilter::Config> config) {
+  return Seq(
       ForEach(
           std::move(ext_proc_call->request_body_pipe().receiver),
           [handler, initiator, ext_proc_call,
@@ -2240,9 +2275,21 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
         }
         return status;
       });
-  return Map(TryJoin<absl::StatusOr>(std::move(client_to_sidestream),
-                                     std::move(sidestream_to_server)),
-             [ext_proc_call](auto result) -> absl::Status {
+}
+
+absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
+    CallHandler handler, CallInitiator initiator,
+    RefCountedPtr<ExtProcFilter::ExtProcCall> ext_proc_call,
+    RefCountedPtr<const ExtProcFilter::Config> config,
+    ::google_protobuf_Struct* attributes) {
+  // auto client_to_sidestream = ClientToSidestreamNormalMode(
+  //     handler, initiator, ext_proc_call, config, attributes);
+  // auto sidestream_to_server =
+  //     SidestreamToServerNormalMode(handler, initiator, ext_proc_call, config);
+  return Map(TryJoin<absl::StatusOr>(ClientToSidestreamNormalMode(
+      handler, initiator, ext_proc_call, config, attributes),
+                                     SidestreamToServerNormalMode(handler, initiator, ext_proc_call, config)),
+             [ext_proc_call = std::move(ext_proc_call)](auto result) -> absl::Status {
                GRPC_TRACE_LOG(ext_proc_filter, INFO)
                    << "ClientToServerMessagesNormalMode result: "
                    << result.status() << ", fail_open_allowed: "
@@ -2638,7 +2685,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ExtProcFilter::ServerToClientCall(
           });
 
   auto run_pipeline =
-      Race(std::move(response_pipeline), std::move(watch_error));
+      PrioritizedRace(std::move(watch_error), std::move(response_pipeline));
 
   return [handler, initiator, ext_proc_call,
           promise = std::move(run_pipeline)]() mutable -> Poll<absl::Status> {

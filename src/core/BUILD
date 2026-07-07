@@ -5730,7 +5730,7 @@ grpc_cc_library(
         "metadata",
         "metadata_batch",
         "pipe",
-        "race",
+        "prioritized_race",
         "seq",
         "sync",
         "try_join",
