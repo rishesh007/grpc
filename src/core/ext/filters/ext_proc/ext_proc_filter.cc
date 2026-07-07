@@ -1637,6 +1637,11 @@ ServerTrailingMetadataNonProcessingMode(
   return []() -> Poll<absl::Status> { return absl::OkStatus(); };
 }
 
+// Handles server trailing metadata in observability mode for "trailers-only"
+// responses (when an RPC terminates immediately without sending initial
+// metadata or response body). Asynchronously sends the trailers as a
+// ServerHeaders request (if send_headers is true) for observation and
+// immediately pushes the metadata downstream.
 absl::AnyInvocable<Poll<absl::Status>()>
 ServerTrailingMetadataTrailersOnlyObservabilityMode(
     CallHandler handler, ExtProcFilter::ExtProcCall* ext_proc_call,
@@ -1644,6 +1649,8 @@ ServerTrailingMetadataTrailersOnlyObservabilityMode(
     std::shared_ptr<ServerMetadataHandle> metadata, bool send_headers) {
   GRPC_TRACE_LOG(ext_proc_filter, INFO)
       << "ExtProc: ServerTrailingMetadataTrailersOnlyObservabilityMode started";
+  // If send_headers is enabled, allocate a upb::Arena on the heap and populate
+  // the upb_headers protobuf structure with the trailing metadata.
   std::shared_ptr<upb::Arena> serialization_arena;
   envoy_config_core_v3_HeaderMap* upb_headers = nullptr;
   if (send_headers) {
@@ -1656,6 +1663,11 @@ ServerTrailingMetadataTrailersOnlyObservabilityMode(
                                      serialization_arena->ptr(), upb_headers);
   }
   const bool is_first_message = ext_proc_call->IsFirstMessageOnStream();
+  // Asynchronously send the trailers-only response as an ExtProcRequest of type
+  // kServerHeaders with end_of_stream=true.
+  // Note: We capture serialization_arena by value (std::shared_ptr) to ensure
+  // the upb::Arena and its contained upb_headers stay alive in memory until
+  // this asynchronous lambda is executed, preventing heap-use-after-free.
   auto send_promise = ext_proc_call->SendMessage(
       send_headers,
       [ext_proc_call = ext_proc_call->Ref(), config, serialization_arena,
@@ -1674,6 +1686,8 @@ ServerTrailingMetadataTrailersOnlyObservabilityMode(
             config->processing_mode.send_response_body,
             /*end_of_stream=*/true);
       });
+  // Once the send attempt completes (or is skipped if send_headers is false),
+  // immediately push the unmutated trailing metadata downstream.
   auto promise =
       Seq(std::move(send_promise),
           [handler, metadata](absl::Status result) mutable {
