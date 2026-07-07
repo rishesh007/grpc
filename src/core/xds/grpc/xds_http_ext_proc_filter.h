@@ -19,11 +19,13 @@
 
 #include <optional>
 
+#include "src/core/filter/filter_args.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/channel_fwd.h"
 #include "src/core/util/validation_errors.h"
 #include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/grpc/xds_http_filter.h"
+#include "src/core/xds/grpc/xds_server_grpc.h"
 #include "src/core/xds/xds_client/xds_resource_type.h"
 #include "upb/reflection/def.h"
 #include "absl/status/statusor.h"
@@ -80,6 +82,7 @@ class XdsHttpExtProcFilter final : public XdsHttpFilterImpl {
       Blackboard& blackboard) const override;
   bool IsSupportedOnClients() const override { return true; }
   bool IsSupportedOnServers() const override { return false; }
+  bool IsSupportedDisablingOnLdsRds() const override { return true; }
 };
 
 }  // namespace grpc_core

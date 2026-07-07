@@ -218,6 +218,8 @@
     <file baseinstalldir="/" name="src/core/config/config_vars_non_generated.cc" role="src" />
     <file baseinstalldir="/" name="src/core/config/core_configuration.cc" role="src" />
     <file baseinstalldir="/" name="src/core/config/core_configuration.h" role="src" />
+    <file baseinstalldir="/" name="src/core/config/experiment_env_var.cc" role="src" />
+    <file baseinstalldir="/" name="src/core/config/experiment_env_var.h" role="src" />
     <file baseinstalldir="/" name="src/core/config/load_config.cc" role="src" />
     <file baseinstalldir="/" name="src/core/config/load_config.h" role="src" />
     <file baseinstalldir="/" name="src/core/credentials/call/call_credentials.h" role="src" />
@@ -307,6 +309,8 @@
     <file baseinstalldir="/" name="src/core/credentials/transport/tls/grpc_tls_certificate_match.cc" role="src" />
     <file baseinstalldir="/" name="src/core/credentials/transport/tls/grpc_tls_certificate_provider.cc" role="src" />
     <file baseinstalldir="/" name="src/core/credentials/transport/tls/grpc_tls_certificate_provider.h" role="src" />
+    <file baseinstalldir="/" name="src/core/credentials/transport/tls/grpc_tls_certificate_selector.cc" role="src" />
+    <file baseinstalldir="/" name="src/core/credentials/transport/tls/grpc_tls_certificate_selector.h" role="src" />
     <file baseinstalldir="/" name="src/core/credentials/transport/tls/grpc_tls_certificate_verifier.cc" role="src" />
     <file baseinstalldir="/" name="src/core/credentials/transport/tls/grpc_tls_certificate_verifier.h" role="src" />
     <file baseinstalldir="/" name="src/core/credentials/transport/tls/grpc_tls_credentials_options.cc" role="src" />
@@ -1883,7 +1887,9 @@
     <file baseinstalldir="/" name="src/core/load_balancing/xds/xds_override_host.cc" role="src" />
     <file baseinstalldir="/" name="src/core/load_balancing/xds/xds_override_host.h" role="src" />
     <file baseinstalldir="/" name="src/core/load_balancing/xds/xds_wrr_locality.cc" role="src" />
+    <file baseinstalldir="/" name="src/core/mitigation_engine/mitigation.h" role="src" />
     <file baseinstalldir="/" name="src/core/mitigation_engine/mitigation_engine.h" role="src" />
+    <file baseinstalldir="/" name="src/core/mitigation_engine/mitigation_provider.h" role="src" />
     <file baseinstalldir="/" name="src/core/net/socket_mutator.cc" role="src" />
     <file baseinstalldir="/" name="src/core/net/socket_mutator.h" role="src" />
     <file baseinstalldir="/" name="src/core/plugin_registry/grpc_plugin_registry.cc" role="src" />

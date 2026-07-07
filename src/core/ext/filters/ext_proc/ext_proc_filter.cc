@@ -16,6 +16,8 @@
 
 #include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
 
+#include <grpc/impl/channel_arg_names.h>
+
 #include <atomic>
 #include <string>
 
@@ -45,28 +47,9 @@
 #include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/xds_client/serialized_streaming_call.h"
 #include "absl/log/log.h"
+#include "absl/strings/str_join.h"
 
 namespace grpc_core {
-
-//
-// ExtProcFilter::ProcessingMode
-//
-
-std::string ExtProcFilter::ProcessingMode::ToString() const {
-  std::string result = "{";
-  StrAppend(result, "send_request_headers=");
-  StrAppend(result, send_request_headers ? "true" : "false");
-  StrAppend(result, ", send_response_headers=");
-  StrAppend(result, send_response_headers ? "true" : "false");
-  StrAppend(result, ", send_response_trailers=");
-  StrAppend(result, send_response_trailers ? "true" : "false");
-  StrAppend(result, ", send_request_body=");
-  StrAppend(result, send_request_body ? "true" : "false");
-  StrAppend(result, ", send_response_body=");
-  StrAppend(result, send_response_body ? "true" : "false");
-  StrAppend(result, "}");
-  return result;
-}
 
 //
 // ExtProcFilter::Config
@@ -75,9 +58,9 @@ std::string ExtProcFilter::ProcessingMode::ToString() const {
 std::string ExtProcFilter::Config::ToString() const {
   std::string result = "{";
   bool is_first = true;
-  if (grpc_service != nullptr) {
+  if (grpc_service.has_value()) {
     StrAppend(result, "grpc_service=");
-    StrAppend(result, grpc_service->ToString());
+    StrAppend(result, grpc_service->Key());
     is_first = false;
   }
   if (failure_mode_allow) {
@@ -92,24 +75,14 @@ std::string ExtProcFilter::Config::ToString() const {
   if (!request_attributes.empty()) {
     if (!is_first) StrAppend(result, ", ");
     StrAppend(result, "request_attributes=[");
-    bool first_attr = true;
-    for (const auto& attr : request_attributes) {
-      if (!first_attr) StrAppend(result, ", ");
-      StrAppend(result, attr);
-      first_attr = false;
-    }
+    StrAppend(result, absl::StrJoin(request_attributes, ", "));
     StrAppend(result, "]");
     is_first = false;
   }
   if (!response_attributes.empty()) {
     if (!is_first) StrAppend(result, ", ");
     StrAppend(result, "response_attributes=[");
-    bool first_attr = true;
-    for (const auto& attr : response_attributes) {
-      if (!first_attr) StrAppend(result, ", ");
-      StrAppend(result, attr);
-      first_attr = false;
-    }
+    StrAppend(result, absl::StrJoin(response_attributes, ", "));
     StrAppend(result, "]");
     is_first = false;
   }
@@ -160,6 +133,50 @@ std::string ExtProcFilter::Config::ToString() const {
   }
   StrAppend(result, "}");
   return result;
+}
+
+//
+// ExtProcFilter
+//
+
+const grpc_channel_filter ExtProcFilter::kFilterVtable = MakePromiseBasedFilter<
+    ExtProcFilter, FilterEndpoint::kClient,
+    kFilterExaminesServerInitialMetadata | kFilterExaminesOutboundMessages |
+        kFilterExaminesInboundMessages | kFilterExaminesCallContext>();
+
+absl::StatusOr<RefCountedPtr<ExtProcFilter>> ExtProcFilter::Create(
+    const ChannelArgs& args, ChannelFilter::Args filter_args) {
+  if (filter_args.config()->type() != Config::Type()) {
+    return absl::InternalError("ext_proc filter config has wrong type");
+  }
+  auto config = filter_args.config().TakeAsSubclass<const Config>();
+  return MakeRefCounted<ExtProcFilter>(args, std::move(config),
+                                       std::move(filter_args));
+}
+
+ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
+                             RefCountedPtr<const Config> config,
+                             ChannelFilter::Args /*filter_args*/)
+    : transport_factory_(config->transport_factory),
+      config_(std::move(config)),
+      channel_(config_->channel) {}
+
+void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {
+  CallHandler handler = Consume(std::move(unstarted_call_handler));
+  handler.SpawnGuarded(
+      "ext_proc_bypass",
+      [self = RefAsSubclass<ExtProcFilter>(), handler]() mutable {
+        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+            << "ExtProc: Bypassing filter (stub implementation)";
+        return TrySeq(handler.PullClientInitialMetadata(),
+                      [self, handler](ClientMetadataHandle metadata) mutable {
+                        CallInitiator initiator = self->MakeChildCall(
+                            std::move(metadata), handler.arena()->Ref());
+                        handler.AddChildCall(initiator);
+                        ForwardCall(handler, initiator);
+                        return absl::OkStatus();
+                      });
+      });
 }
 
 //

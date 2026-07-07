@@ -27,6 +27,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "src/core/util/orphanable.h"
 #include "src/core/util/ref_counted.h"
@@ -73,6 +74,8 @@ class FakeXdsTransportFactory : public XdsTransportFactory {
     void StartRecvMessage() override;
     void SendHalfClose() override;
 
+    void SendHalfClose() override;
+
     using StreamingCall::Ref;  // Make it public.
 
     bool HaveMessageFromClient();
@@ -93,6 +96,11 @@ class FakeXdsTransportFactory : public XdsTransportFactory {
     void MaybeSendStatusToClient(absl::Status status);
 
     bool WaitForReadsStarted(size_t expected);
+
+    bool half_closed() const {
+      MutexLock lock(&mu_);
+      return half_closed_;
+    }
 
    private:
     class RefCountedEventHandler : public RefCounted<RefCountedEventHandler> {

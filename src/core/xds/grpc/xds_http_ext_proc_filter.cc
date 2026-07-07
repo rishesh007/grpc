@@ -41,6 +41,7 @@
 #include "src/core/xds/grpc/xds_common_types_parser.h"
 #include "src/core/xds/grpc/xds_http_filter.h"
 #include "src/core/xds/grpc/xds_http_filter_registry.h"
+#include "src/core/xds/grpc/xds_server_grpc.h"
 #include "src/core/xds/xds_client/xds_client.h"
 #include "src/core/xds/xds_client/xds_resource_type.h"
 #include "absl/strings/str_cat.h"
@@ -203,11 +204,11 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
   // grpc_service
   {
     ValidationErrors::ScopedField field(errors, ".grpc_service");
-    config->grpc_service = std::make_shared<XdsGrpcService>(ParseXdsGrpcService(
+    config->grpc_service = ParseXdsGrpcService(
         context,
         envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_grpc_service(
             ext_proc),
-        errors));
+        errors);
   }
   // failure_mode_allow
   config->failure_mode_allow =
@@ -318,8 +319,8 @@ struct OverrideConfig final : public FilterConfig {
       parts.push_back(
           absl::StrCat("processing_mode=", processing_mode->ToString()));
     }
-    if (grpc_service != nullptr) {
-      parts.push_back(absl::StrCat("grpc_service=", grpc_service->ToString()));
+    if (grpc_service.has_value()) {
+      parts.push_back(absl::StrCat("grpc_service=", grpc_service->Key()));
     }
     if (!request_attributes.empty()) {
       parts.push_back(absl::StrCat("request_attributes=[",
@@ -339,7 +340,10 @@ struct OverrideConfig final : public FilterConfig {
   }
 
   std::optional<ExtProcFilter::ProcessingMode> processing_mode;
-  std::shared_ptr<XdsGrpcService> grpc_service;
+  // Wrapped in std::optional because GrpcXdsServerTarget lacks a default
+  // constructor, and std::nullopt indicates that the gRPC service target is not
+  // overridden at this route/vhost level (inheriting from top-level config).
+  std::optional<GrpcXdsServerTarget> grpc_service;
   std::vector<std::string> request_attributes;
   std::vector<std::string> response_attributes;
   std::optional<bool> failure_mode_allow;
@@ -385,8 +389,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
               overrides);
       grpc_service != nullptr) {
     ValidationErrors::ScopedField field(errors, ".grpc_service");
-    config->grpc_service = std::make_shared<XdsGrpcService>(
-        ParseXdsGrpcService(context, grpc_service, errors));
+    config->grpc_service = ParseXdsGrpcService(context, grpc_service, errors);
   }
   // request_attributes
   size_t size;
@@ -466,7 +469,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
     if (o.processing_mode.has_value()) {
       config->processing_mode = *o.processing_mode;
     }
-    if (o.grpc_service != nullptr) config->grpc_service = o.grpc_service;
+    if (o.grpc_service.has_value()) config->grpc_service = o.grpc_service;
     if (!o.request_attributes.empty()) {
       config->request_attributes = o.request_attributes;
     }
@@ -478,14 +481,13 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
     }
   }
   // Blackboard handling
-  if (config->grpc_service != nullptr &&
-      config->grpc_service->server_target != nullptr &&
+  if (config->grpc_service.has_value() &&
       config->transport_factory != nullptr) {
-    std::string key = config->grpc_service->server_target->Key();
+    std::string key = config->grpc_service->Key();
     config->channel =
         blackboard.GetOrSet<ExtProcFilter::ExtProcChannel>(key, [&]() {
           std::shared_ptr<const XdsBootstrap::XdsServerTarget> target_shared =
-              config->grpc_service->server_target;
+              std::make_shared<GrpcXdsServerTarget>(*config->grpc_service);
           return MakeRefCounted<ExtProcFilter::ExtProcChannel>(
               std::move(target_shared), config->transport_factory);
         });
