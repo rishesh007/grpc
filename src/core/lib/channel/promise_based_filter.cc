@@ -2001,7 +2001,7 @@ void ClientCallData::RecvTrailingMetadataReady(grpc_error_handle error) {
   }
   if (receive_message() != nullptr) {
     receive_message()->Done(*recv_trailing_metadata_, &flusher,
-                            /*is_cancellation=*/!error.ok());
+                            /*discard_buffered_message=*/!error.ok());
   }
   if (send_message() != nullptr) {
     send_message()->Done(*recv_trailing_metadata_, &flusher);
