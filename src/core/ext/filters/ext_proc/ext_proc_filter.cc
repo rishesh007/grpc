@@ -1700,8 +1700,9 @@ ServerTrailingMetadataTrailersOnlyObservabilityMode(
 // responses (when an RPC terminates immediately without sending initial
 // metadata or response body).
 // Since it is trailers-only, it sends a ServerHeaders request to the external
-// processor (with end_of_stream=true), waits for the response, applies mutations
-// or handles immediate responses, and pushes the final metadata downstream.
+// processor (with end_of_stream=true), waits for the response, applies
+// mutations or handles immediate responses, and pushes the final metadata
+// downstream.
 absl::AnyInvocable<Poll<absl::Status>()>
 ServerTrailingMetadataTrailersOnlyNormalMode(
     CallHandler handler, CallInitiator initiator,
@@ -1711,7 +1712,8 @@ ServerTrailingMetadataTrailersOnlyNormalMode(
   GRPC_TRACE_LOG(ext_proc_filter, INFO)
       << "ExtProc: ServerTrailingMetadataTrailersOnlyNormalMode started";
   auto promise = TrySeq(
-      // Send the trailers-only metadata as ServerHeaders (with end_of_stream=true).
+      // Send the trailers-only metadata as ServerHeaders (with
+      // end_of_stream=true).
       ext_proc_call->SendServerInitialMetadataRequest(config, metadata,
                                                       /*condition=*/true,
                                                       /*end_of_stream=*/true),
@@ -1721,11 +1723,11 @@ ServerTrailingMetadataTrailersOnlyNormalMode(
                                 ? &config->mutation_rules.value()
                                 : nullptr;
         return Map(
-            // Wait for response headers (which will contain the external processor's
-            // decision on our ServerHeaders request).
+            // Wait for response headers (which will contain the external
+            // processor's decision on our ServerHeaders request).
             ext_proc_call->response_headers_latch().Wait(),
-            [rules, metadata, config, ext_proc_call, initiator, handler](
-                absl::StatusOr<ExtProcResponse> response) mutable
+            [rules, metadata, config, ext_proc_call, initiator,
+             handler](absl::StatusOr<ExtProcResponse> response) mutable
                 -> absl::Status {
               absl::Status status = absl::OkStatus();
               if (!response.ok()) {
@@ -1733,19 +1735,17 @@ ServerTrailingMetadataTrailersOnlyNormalMode(
               } else {
                 // Handle immediate response from the external processor.
                 // If requested and not disabled in config, construct cancelled
-                // server metadata, apply any specified header mutations, cancel the
-                // call, and close the ext_proc stream.
+                // server metadata, apply any specified header mutations, cancel
+                // the call, and close the ext_proc stream.
                 if (response->immediate_response.has_value() &&
                     !config->disable_immediate_response) {
                   auto& immediate_response = *response->immediate_response;
                   auto error_md = CancelledServerMetadataFromStatus(
-                      static_cast<grpc_status_code>(
-                          immediate_response.status),
+                      static_cast<grpc_status_code>(immediate_response.status),
                       immediate_response.details);
                   if (immediate_response.header_mutation.ok()) {
                     auto mut_status = ApplyHeaderMutations(
-                        *immediate_response.header_mutation, rules,
-                        *error_md);
+                        *immediate_response.header_mutation, rules, *error_md);
                     if (!mut_status.ok()) {
                       GRPC_TRACE_LOG(ext_proc_filter, ERROR)
                           << "Failed to apply immediate response header "
@@ -1757,8 +1757,8 @@ ServerTrailingMetadataTrailersOnlyNormalMode(
                   ext_proc_call->CloseStream();
                   status = absl::OkStatus();
                 } else if (response->response_headers.has_value()) {
-                  // Apply header mutations from the external processor's response
-                  // to our trailing metadata.
+                  // Apply header mutations from the external processor's
+                  // response to our trailing metadata.
                   const auto& response_headers = *response->response_headers;
                   if (!response_headers.ok()) {
                     status = response_headers.status();
@@ -1768,15 +1768,16 @@ ServerTrailingMetadataTrailersOnlyNormalMode(
                   }
                 }
               }
-              // If an error occurred while waiting for or processing the response,
-              // check failure mode configuration. Unless failure_mode_allow is
-              // enabled (which allows proceeding with unmutated metadata), replace
-              // the trailing metadata with a cancelled status corresponding to the
-              // error.
+              // If an error occurred while waiting for or processing the
+              // response, check failure mode configuration. Unless
+              // failure_mode_allow is enabled (which allows proceeding with
+              // unmutated metadata), replace the trailing metadata with a
+              // cancelled status corresponding to the error.
               if (!status.ok() && !config->failure_mode_allow) {
                 *metadata = CancelledServerMetadataFromStatus(status);
               }
-              // Push the final (mutated or error) server trailing metadata downstream.
+              // Push the final (mutated or error) server trailing metadata
+              // downstream.
               handler.SpawnPushServerTrailingMetadata(std::move(*metadata));
               return status;
             });
@@ -1808,9 +1809,9 @@ MaybeHandleClosedStream(CallHandler handler,
   return std::nullopt;
 }
 
-// Orchestrates the server trailing metadata step when the RPC is "trailers-only".
-// (i.e. backend immediately sent trailing metadata without any preceding body or
-// initial metadata).
+// Orchestrates the server trailing metadata step when the RPC is
+// "trailers-only". (i.e. backend immediately sent trailing metadata without any
+// preceding body or initial metadata).
 absl::AnyInvocable<Poll<absl::Status>()> ServerTrailingMetadataTrailersOnly(
     CallHandler handler, CallInitiator initiator,
     ExtProcFilter::ExtProcCall* ext_proc_call,
@@ -1822,8 +1823,8 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerTrailingMetadataTrailersOnly(
           MaybeHandleClosedStream(handler, ext_proc_call, config, metadata)) {
     return std::move(*promise);
   }
-  // Determine if we should attempt to send trailers-only headers to the processor,
-  // which requires the config setting and an active ext_proc stream.
+  // Determine if we should attempt to send trailers-only headers to the
+  // processor, which requires the config setting and an active ext_proc stream.
   const bool send_headers = config->processing_mode.send_response_headers &&
                             !ext_proc_call->IsStreamClosed() &&
                             !ext_proc_call->ext_proc_stream_half_closed();
@@ -1879,8 +1880,9 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerTrailingMetadataNormal(
   }
 }
 
-// Main dispatcher function for the ServerTrailingMetadata filter interceptor step.
-// Distinguishes between "trailers-only" RPCs and normal RPCs and routes accordingly.
+// Main dispatcher function for the ServerTrailingMetadata filter interceptor
+// step. Distinguishes between "trailers-only" RPCs and normal RPCs and routes
+// accordingly.
 absl::AnyInvocable<Poll<absl::Status>()> ServerTrailingMetadata(
     CallHandler handler, CallInitiator initiator,
     RefCountedPtr<ExtProcFilter::ExtProcCall> ext_proc_call,
@@ -1894,7 +1896,8 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerTrailingMetadata(
     ext_proc_call->SetIsTrailersOnly();
   }
   absl::AnyInvocable<Poll<absl::Status>()> promise;
-  // Dispatch to the appropriate handler based on whether the response is trailers-only.
+  // Dispatch to the appropriate handler based on whether the response is
+  // trailers-only.
   if (is_trailers_only) {
     promise = ServerTrailingMetadataTrailersOnly(
         handler, initiator, ext_proc_call.get(), std::move(config),
