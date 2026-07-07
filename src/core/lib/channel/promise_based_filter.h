@@ -1843,9 +1843,13 @@ class BaseCallData : public Activity,
     // work.
     void WakeInsideCombiner(Flusher* flusher, bool allow_push_to_pipe);
     // Call is completed, we have trailing metadata. Close things out.
-    // is_cancelled distinguishes an out-of-band cancellation.
+    // discard_buffered_message: the call is being torn down (the promise
+    // produced its own terminal metadata, an out-of-band cancellation, or a
+    // server-initiated non-OK termination) and the receiver has stopped
+    // reading, so drop any message buffered here instead of delivering it up
+    // the stack.
     void Done(const ServerMetadata& metadata, Flusher* flusher,
-              bool is_cancelled = false);
+              bool discard_buffered_message = false);
     bool IsIdle() const;
 
     channelz::PropertyList ChannelzProperties() {
@@ -2007,7 +2011,7 @@ class ClientCallData : public BaseCallData {
     kForwarded,
     // Trailing metadata is received, but we queue it until the in-progress
     // receive message operation finishes.
-    kQueuedBehindReceiveMessage,
+    kCompletedQueuedBehindReceiveMessage,
     // The op has completed from below, but we haven't yet forwarded it up
     // (the promise gets to interject and mutate it).
     kComplete,
