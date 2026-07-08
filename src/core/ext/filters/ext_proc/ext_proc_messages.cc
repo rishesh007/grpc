@@ -504,8 +504,8 @@ void SetExtProcRequestBody(
   envoy_service_ext_proc_v3_HttpBody* body =
       envoy_service_ext_proc_v3_HttpBody_new(arena);
   envoy_service_ext_proc_v3_HttpBody_set_body(body, buf);
-  if (end_of_stream) {
-    envoy_service_ext_proc_v3_HttpBody_set_end_of_stream(body, end_of_stream);
+  if (end_of_stream || end_of_stream_without_message) {
+    envoy_service_ext_proc_v3_HttpBody_set_end_of_stream(body, true);
   }
   if (end_of_stream_without_message) {
     envoy_service_ext_proc_v3_HttpBody_set_end_of_stream_without_message(body,

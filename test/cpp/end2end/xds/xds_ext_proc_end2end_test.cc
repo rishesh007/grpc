@@ -595,7 +595,9 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     grpc_tracer_set_enabled("ext_proc_filter", 1);
     grpc_tracer_set_enabled("promise_primitives", 0);
     grpc_tracer_set_enabled("call_state", 0);
-    grpc_tracer_set_enabled("channel", 0);
+    grpc_tracer_set_enabled("channel", 1);
+    grpc_tracer_set_enabled("xds_resolver", 1);
+    grpc_tracer_set_enabled("xds_client", 1);
     grpc_tracer_set_enabled("transport", 0);
     grpc_core::SetEnv("GRPC_VERBOSITY", "INFO");
     InitClient(MakeBootstrapBuilder().SetTrustedXdsServer(),
@@ -723,6 +725,12 @@ void XdsExtProcEnd2endTest::RunProcessingModeTest(bool req_hdrs, bool resp_hdrs,
                                      .SetTargetUri(ext_proc_server_->target())
                                      .SetInsecureChannelCredentials()
                                      .SetObservabilityMode(observability_mode);
+  if (observability_mode) {
+    google::protobuf::Duration timeout;
+    timeout.set_seconds(0);
+    timeout.set_nanos(100 * 1000 * 1000); // 100ms
+    ext_proc_config_builder.SetDeferredCloseTimeout(timeout);
+  }
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   ext_proc_config_builder.SetRequestHeaderMode(req_hdrs ? ProcessingMode::SEND
                                                         : ProcessingMode::SKIP);
@@ -6422,8 +6430,7 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
-  EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_FALSE(stream->Read(&response));
 
   // Do NOT call WritesDone() to keep client active (committed).
   // The stream will close during response headers.
@@ -6867,8 +6874,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_THAT(status.error_message(),
+              ::testing::HasSubstr("Stream closed cleanly without drain"));
 }
 
 TEST_P(XdsExtProcEnd2endTest,

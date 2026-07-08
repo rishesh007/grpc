@@ -17,6 +17,7 @@
 #include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
 
 #include <grpc/impl/channel_arg_names.h>
+#include <grpc/event_engine/event_engine.h>
 
 #include <atomic>
 #include <string>
@@ -186,7 +187,19 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     streaming_call_->StartRecvMessage();
   }
 
-  ~ExtProcCall() override { streaming_call_.reset(); }
+  ~ExtProcCall() override {
+    if (deferred_close_timeout_ != Duration::Zero() && observability_mode_) {
+      auto ee = grpc_event_engine::experimental::GetDefaultEventEngine();
+      ee->RunAfter(deferred_close_timeout_,
+                   [call = std::move(streaming_call_),
+                    channel = std::move(channel_)]() mutable {
+                     call.reset();
+                     channel.reset();
+                   });
+    } else {
+      streaming_call_.reset();
+    }
+  }
 
   InterActivityLatch<absl::StatusOr<ExtProcResponse>>& request_headers_latch() {
     return request_headers_latch_;
@@ -1221,12 +1234,19 @@ SendServerToClientMessagesToExtProcServer(
                       [handler, ext_proc_call, config,
                        shared_message]() mutable {
                         auto message = std::move(*shared_message);
+                        bool is_closed = ext_proc_call->IsStreamClosed();
+                        bool is_clean = ext_proc_call->IsStreamClosedCleanly();
+                        bool fail_open = ext_proc_call->IsServerFailOpenAllowed();
+                        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                            << "ExtProc: S2C bypass check: is_closed=" << is_closed
+                            << ", is_clean=" << is_clean
+                            << ", fail_open=" << fail_open;
                         if (config->processing_mode.send_response_body &&
-                            ext_proc_call->IsStreamClosed()) {
-                          // If stream closed unexpectedly and fail-open is not
-                          // allowed, return error status.
-                          if (!ext_proc_call->IsStreamClosedCleanly() &&
-                              !ext_proc_call->IsServerFailOpenAllowed()) {
+                            is_closed) {
+                          if (!is_clean && !fail_open) {
+                            GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                                << "ExtProc: S2C bypass check failing closed with status: "
+                                << ext_proc_call->GetStreamStatus();
                             return ext_proc_call->GetStreamStatus();
                           }
                         }

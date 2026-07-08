@@ -33,6 +33,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "absl/log/log.h"
 #include "src/core/call/call_filters.h"
 #include "src/core/call/call_finalization.h"
 #include "src/core/call/message.h"
@@ -1352,7 +1353,7 @@ class V3InterceptorToV2Bridge : public ChannelFilter, public Interceptor {
                                          [](bool x) { return StatusFlag(x); });
                             });
                       });
-                  call_args.client_to_server_messages->InterceptAndMap(
+                  call_args.client_to_server_messages->InterceptAndMapWithHalfClose(
                       [initiator, handler,
                        pipe_owner](MessageHandle message) mutable {
                         // Step 1: Push the message onto the v3 initiator in
@@ -1368,6 +1369,9 @@ class V3InterceptorToV2Bridge : public ChannelFilter, public Interceptor {
                               if (!message.has_value()) return std::nullopt;
                               return std::move(*message);
                             });
+                      },
+                      [initiator]() mutable {
+                        initiator.SpawnFinishSends();
                       });
                   // For server initial metadata, we do a similar thing, but
                   // in the opposite direction, and using an inter-activity
@@ -1427,15 +1431,19 @@ class V3InterceptorToV2Bridge : public ChannelFilter, public Interceptor {
                   // Step 2: Spawn a promise to pull messages from the v3
                   // initiator and push them into an inter-activity pipe to
                   // return them to the v2 activity.
-                  initiator.SpawnGuarded(
+                   initiator.SpawnGuarded(
                       "pull_server_to_client_message",
                       [initiator, pipe_owner]() mutable {
                         return ForEach(
                             MessagesFrom(initiator),
                             [pipe_owner](MessageHandle message) {
+                              LOG(INFO) << "V2Bridge: pull_server_to_client_message got message from V3, pushing to V2 pipe";
                               return Map(pipe_owner->server_to_client_messages
                                              .sender.Push(std::move(message)),
-                                         [](bool x) { return StatusFlag(x); });
+                                         [](bool x) {
+                                           LOG(INFO) << "V2Bridge: pull_server_to_client_message push result=" << x;
+                                           return StatusFlag(x);
+                                         });
                             });
                       });
                   call_args.server_to_client_messages->InterceptAndMap(
@@ -1443,6 +1451,7 @@ class V3InterceptorToV2Bridge : public ChannelFilter, public Interceptor {
                        pipe_owner](MessageHandle message) mutable {
                         // Step 1: Push the message onto the v3 handler in
                         // its activity.
+                        LOG(INFO) << "V2Bridge: S2C InterceptAndMap got message, pushing to V3 handler";
                         handler.SpawnPushMessage(std::move(message));
                         // Step 3: Here in the v2 activity, read from the
                         // inter-activity pipe and return the messages.
@@ -1451,7 +1460,9 @@ class V3InterceptorToV2Bridge : public ChannelFilter, public Interceptor {
                                 .Next(),
                             [](InterActivityPipe<MessageHandle, 1>::NextResult
                                    message) -> std::optional<MessageHandle> {
-                              if (!message.has_value()) return std::nullopt;
+                              bool has_val = message.has_value();
+                              LOG(INFO) << "V2Bridge: S2C InterceptAndMap pulled from V3, has_val=" << has_val;
+                              if (!has_val) return std::nullopt;
                               return std::move(*message);
                             });
                       });
@@ -1958,6 +1969,7 @@ class BaseCallData : public Activity,
     std::optional<PipeSender<MessageHandle>::PushType> push_;
     std::optional<PipeReceiverNextType<MessageHandle>> next_;
     absl::Status completed_status_;
+    absl::Status cancelled_status_;
     grpc_closure* intercepted_on_complete_;
     grpc_closure on_complete_ =
         MakeMemberClosure<ReceiveMessage, &ReceiveMessage::OnComplete>(this);
