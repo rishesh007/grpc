@@ -155,39 +155,6 @@ bool UnderFraction(const uint32_t fraction_per_million) {
   return random_number < fraction_per_million;
 }
 
-bool IsFilterDisabled(
-    const XdsHttpFilterImpl* filter_impl,
-    const XdsListenerResource::HttpConnectionManager::HttpFilter&
-        hcm_filter_config,
-    const XdsRouteConfigResource::TypedPerFilterConfig*
-        vhost_typed_per_filter_config,
-    const XdsRouteConfigResource::TypedPerFilterConfig*
-        route_typed_per_filter_config,
-    const XdsRouteConfigResource::TypedPerFilterConfig*
-        cluster_weight_typed_per_filter_config) {
-  if (!filter_impl->IsSupportedDisablingOnLdsRds()) return false;
-  if (cluster_weight_typed_per_filter_config != nullptr) {
-    auto it =
-        cluster_weight_typed_per_filter_config->find(hcm_filter_config.name);
-    if (it != cluster_weight_typed_per_filter_config->end()) {
-      return it->second.disabled;
-    }
-  }
-  if (route_typed_per_filter_config != nullptr) {
-    auto it = route_typed_per_filter_config->find(hcm_filter_config.name);
-    if (it != route_typed_per_filter_config->end()) {
-      return it->second.disabled;
-    }
-  }
-  if (vhost_typed_per_filter_config != nullptr) {
-    auto it = vhost_typed_per_filter_config->find(hcm_filter_config.name);
-    if (it != vhost_typed_per_filter_config->end()) {
-      return it->second.disabled;
-    }
-  }
-  return hcm_filter_config.disabled;
-}
-
 }  // namespace
 
 std::optional<size_t> XdsRouting::GetRouteForRequest(
@@ -289,6 +256,39 @@ RefCountedPtr<const FilterConfig> GetOverrideConfig(
     return nullptr;
   }
   return it->second.filter_config;
+}
+
+bool IsFilterDisabled(
+    const XdsHttpFilterImpl* filter_impl,
+    const XdsListenerResource::HttpConnectionManager::HttpFilter&
+        hcm_filter_config,
+    const XdsRouteConfigResource::TypedPerFilterConfig*
+        vhost_typed_per_filter_config,
+    const XdsRouteConfigResource::TypedPerFilterConfig*
+        route_typed_per_filter_config,
+    const XdsRouteConfigResource::TypedPerFilterConfig*
+        cluster_weight_typed_per_filter_config) {
+  if (!filter_impl->IsSupportedDisablingOnLdsRds()) return false;
+  if (cluster_weight_typed_per_filter_config != nullptr) {
+    auto it =
+        cluster_weight_typed_per_filter_config->find(hcm_filter_config.name);
+    if (it != cluster_weight_typed_per_filter_config->end()) {
+      return it->second.disabled;
+    }
+  }
+  if (route_typed_per_filter_config != nullptr) {
+    auto it = route_typed_per_filter_config->find(hcm_filter_config.name);
+    if (it != route_typed_per_filter_config->end()) {
+      return it->second.disabled;
+    }
+  }
+  if (vhost_typed_per_filter_config != nullptr) {
+    auto it = vhost_typed_per_filter_config->find(hcm_filter_config.name);
+    if (it != vhost_typed_per_filter_config->end()) {
+      return it->second.disabled;
+    }
+  }
+  return hcm_filter_config.disabled;
 }
 
 }  // namespace
