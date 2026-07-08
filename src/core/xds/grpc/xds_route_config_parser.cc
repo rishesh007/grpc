@@ -382,7 +382,6 @@ XdsRouteConfigResource::TypedPerFilterConfig ParseTypedPerFilterConfig(
       }
       disabled = envoy_config_route_v3_FilterConfig_disabled(filter_config);
       any = envoy_config_route_v3_FilterConfig_config(filter_config);
-
       is_optional =
           envoy_config_route_v3_FilterConfig_is_optional(filter_config);
       extension->validation_fields.emplace_back(errors, ".config");
