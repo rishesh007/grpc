@@ -1287,6 +1287,12 @@ class ClientCallData::PollContext {
               // delivered.
               self_->receive_message()->Done(*md, flusher_,
                                              /*discard_buffered_message=*/true);
+              // Done() defers the completion closure to WakeInsideCombiner,
+              // which already ran this poll. If the pump isn't idle, repoll to
+              // drain it, else the call stalls.
+              if (!self_->receive_message()->IsIdle()) {
+                repoll_ = true;
+              }
             } else {
               self_->receive_message()->Done(*md, flusher_);
             }
@@ -1379,10 +1385,7 @@ class ClientCallData::PollContext {
             } else {
               GRPC_CHECK(
                   self_->recv_trailing_state_ == RecvTrailingState::kInitial ||
-                  self_->recv_trailing_state_ ==
-                      RecvTrailingState::kForwarded ||
-                  self_->recv_trailing_state_ ==
-                      RecvTrailingState::kCompletedQueuedBehindReceiveMessage);
+                  self_->recv_trailing_state_ == RecvTrailingState::kForwarded);
               self_->call_combiner()->Cancel(self_->cancelled_error_);
               CapturedBatch b(grpc_make_transport_stream_op(GRPC_CLOSURE_CREATE(
                   [](void* p, grpc_error_handle) {
@@ -2308,10 +2311,8 @@ void ServerCallData::StartBatch(grpc_transport_stream_op_batch* b) {
     switch (send_trailing_state_) {
       case SendTrailingState::kInitial:
         send_trailing_metadata_batch_ = batch;
-        // The server is finishing the RPC with a non-OK status, so it has
-        // stopped reading: any inbound client message still buffered here
-        // will never be consumed by the application. Drop it rather than
-        // deliver it up the stack.
+        // Server ends the RPC non-OK, so the app is done reading: any buffered
+        // inbound (client->server) message has no consumer. Drop it.
         if (receive_message() != nullptr &&
             batch->payload->send_trailing_metadata.send_trailing_metadata
                     ->get(GrpcStatusMetadata())
