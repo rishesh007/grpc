@@ -135,8 +135,7 @@ absl::StatusOr<RefCountedPtr<ExtProcFilter>> ExtProcFilter::Create(
 ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
                              RefCountedPtr<const Config> config,
                              ChannelFilter::Args /*filter_args*/)
-    : transport_factory_(config->transport_factory),
-      config_(std::move(config)),
+    : config_(std::move(config)),
       channel_(config_->channel) {}
 
 void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {

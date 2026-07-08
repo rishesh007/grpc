@@ -32,6 +32,7 @@
 #include "src/core/xds/grpc/xds_http_filter_registry.h"
 #include "src/core/xds/grpc/xds_listener.h"
 #include "src/core/xds/grpc/xds_route_config.h"
+#include "src/core/xds/xds_client/xds_transport.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 
@@ -160,6 +161,7 @@ class XdsRouting final {
         const XdsHttpFilterRegistry& http_filter_registry,
         FilterChainBuilder& builder,
         absl::AnyInvocable<void(FilterChainBuilder&)> add_last_filter,
+        XdsTransportFactory* transport_factory,
         Blackboard& blackboard);
 
     // Returns a filter chain builder for a given virtual host.
@@ -175,6 +177,7 @@ class XdsRouting final {
         hcm_filter_configs_;
     FilterChainBuilder& builder_;
     absl::AnyInvocable<void(FilterChainBuilder&)> add_last_filter_;
+    XdsTransportFactory* transport_factory_;
     Blackboard& blackboard_;
 
     // Same size as hcm_filter_configs_.

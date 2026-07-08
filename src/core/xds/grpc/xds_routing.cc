@@ -229,10 +229,12 @@ XdsRouting::RouteConfigFilterChainBuilder::RouteConfigFilterChainBuilder(
     const XdsHttpFilterRegistry& http_filter_registry,
     FilterChainBuilder& builder,
     absl::AnyInvocable<void(FilterChainBuilder&)> add_last_filter,
+    XdsTransportFactory* transport_factory,
     Blackboard& blackboard)
     : hcm_filter_configs_(hcm_filter_configs),
       builder_(builder),
       add_last_filter_(std::move(add_last_filter)),
+      transport_factory_(transport_factory),
       blackboard_(blackboard) {
   filter_impls_.reserve(hcm_filter_configs.size());
   for (const auto& http_filter : hcm_filter_configs) {
@@ -261,7 +263,8 @@ XdsRouting::RouteConfigFilterChainBuilder::GetDefaultFilterChain() {
       RefCountedPtr<const FilterConfig> config;
       if (filter_config.filter_config != nullptr) {
         config = filter_impl->MergeConfigs(filter_config.filter_config, nullptr,
-                                           nullptr, nullptr, blackboard_);
+                                           nullptr, nullptr, transport_factory_,
+                                           blackboard_);
       }
       GRPC_TRACE_LOG(xds_resolver, INFO)
           << "  Adding filter=" << filter_config.name
@@ -314,7 +317,8 @@ XdsRouting::RouteConfigFilterChainBuilder::VirtualHostFilterChainBuilder::
             filter_impl, vhost_.typed_per_filter_config, filter_config.name);
         config = filter_impl->MergeConfigs(
             filter_config.filter_config, std::move(vhost_override_config),
-            nullptr, nullptr, route_config_builder_.blackboard_);
+            nullptr, nullptr, route_config_builder_.transport_factory_,
+            route_config_builder_.blackboard_);
       }
       GRPC_TRACE_LOG(xds_resolver, INFO)
           << "  Adding filter=" << filter_config.name
@@ -356,6 +360,7 @@ XdsRouting::RouteConfigFilterChainBuilder::VirtualHostFilterChainBuilder::
       config = filter_impl->MergeConfigs(
           filter_config.filter_config, std::move(vhost_override_config),
           std::move(route_override_config), nullptr,
+          route_config_builder_.transport_factory_,
           route_config_builder_.blackboard_);
     }
     GRPC_TRACE_LOG(xds_resolver, INFO)
@@ -419,6 +424,7 @@ XdsRouting::RouteConfigFilterChainBuilder::VirtualHostFilterChainBuilder::
           filter_config.filter_config, std::move(vhost_override_config),
           std::move(route_override_config),
           std::move(cluster_weight_override_config),
+          route_config_builder.transport_factory_,
           route_config_builder.blackboard_);
     }
     GRPC_TRACE_LOG(xds_resolver, INFO)

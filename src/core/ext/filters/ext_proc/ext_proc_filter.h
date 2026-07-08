@@ -61,7 +61,6 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
              disable_immediate_response == o.disable_immediate_response &&
              observability_mode == o.observability_mode &&
              deferred_close_timeout == o.deferred_close_timeout &&
-             transport_factory == o.transport_factory &&
              instance_name == o.instance_name && channel == o.channel;
     }
 
@@ -112,9 +111,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     // The maximum duration to wait for the external processor to close or drain
     // its stream before forcibly closing the side-channel stream.
     Duration deferred_close_timeout;
-    // Factory used to create and manage underlying transport connections for
-    // the side-channel gRPC client talking to the external processing server.
-    RefCountedPtr<XdsTransportFactory> transport_factory;
+
     // The unique identifier or instance name of the xDS client/ext_proc filter
     // configuration, used for logging, metrics, or resource retention across
     // xDS updates.
@@ -164,7 +161,6 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
   void InterceptCall(UnstartedCallHandler unstarted_call_handler) override;
 
-  RefCountedPtr<XdsTransportFactory> transport_factory_;
   RefCountedPtr<const Config> config_;
   RefCountedPtr<ExtProcChannel> channel_;
 };
