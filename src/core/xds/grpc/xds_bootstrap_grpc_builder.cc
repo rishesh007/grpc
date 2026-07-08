@@ -44,6 +44,7 @@
 #include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/grpc/xds_common_types_parser.h"
 #include "src/core/xds/grpc/xds_http_composite_filter.h"
+#include "src/core/xds/grpc/xds_http_ext_proc_filter.h"
 #include "src/core/xds/grpc/xds_http_fault_filter.h"
 #include "src/core/xds/grpc/xds_http_gcp_authn_filter.h"
 #include "src/core/xds/grpc/xds_http_rbac_filter.h"
@@ -93,6 +94,9 @@ XdsHttpFilterRegistry GrpcXdsBootstrapBuilder::CreateXdsHttpFilterRegistry(
     registry.RegisterFilter(std::make_unique<XdsHttpGcpAuthnFilter>());
     if (IsExperimentEnvVarEnabled("GRPC_EXPERIMENTAL_XDS_COMPOSITE_FILTER")) {
       registry.RegisterFilter(std::make_unique<XdsHttpCompositeFilter>());
+    }
+    if (IsExperimentEnvVarEnabled("GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_CLIENT")) {
+      registry.RegisterFilter(std::make_unique<XdsHttpExtProcFilter>());
     }
     MutexLock lock(g_mu);
     if (*g_http_filter_factory_factory != nullptr) {

@@ -6570,6 +6570,55 @@ grpc_cc_library(
 )
 
 grpc_cc_library(
+    name = "xds_http_ext_proc_filter",
+    srcs = [
+        "xds/grpc/xds_http_ext_proc_filter.cc",
+    ],
+    hdrs = [
+        "xds/grpc/xds_http_ext_proc_filter.h",
+    ],
+    external_deps = [
+        "absl/status:statusor",
+        "absl/strings",
+        "re2",
+        "@com_google_protobuf//upb/base",
+        "@com_google_protobuf//upb/reflection",
+        "@com_google_protobuf//upb/message",
+    ],
+    tags = ["nofixdeps"],
+    deps = [
+        "channel_args",
+        "channel_fwd",
+        "down_cast",
+        "envoy_config_common_mutation_rules_upb",
+        "envoy_config_core_upb",
+        "envoy_extensions_filters_http_ext_proc_upb",
+        "envoy_extensions_filters_http_ext_proc_upbdefs",
+        "envoy_type_matcher_upb",
+        "envoy_type_upb",
+        "experiment_env_var",
+        "filter_args",
+        "grpc_check",
+        "grpc_ext_proc_filter",
+        "json",
+        "json_writer",
+        "protobuf_wrappers_upb",
+        "ref_counted",
+        "upb_utils",
+        "validation_errors",
+        "xds_bootstrap_grpc",
+        "xds_common_types",
+        "xds_common_types_parser",
+        "xds_grpc_service_parser",
+        "xds_http_filter",
+        "xds_http_filter_registry",
+        "xds_server_grpc",
+        "//:ref_counted_ptr",
+        "//:xds_client",
+    ],
+)
+
+grpc_cc_library(
     name = "xds_http_stateful_session_filter",
     srcs = [
         "xds/grpc/xds_http_stateful_session_filter.cc",
@@ -6896,6 +6945,7 @@ grpc_cc_library(
         "xds_common_types_parser",
         "xds_file_watcher_certificate_provider_factory",
         "xds_http_composite_filter",
+        "xds_http_ext_proc_filter",
         "xds_http_fault_filter",
         "xds_http_filter",
         "xds_http_filter_registry",
@@ -7251,6 +7301,9 @@ grpc_cc_library(
         "xds/grpc/xds_matcher_action.cc",
     ],
     hdrs = [
+        "xds/grpc/xds_matcher_action.h",
+    ],
+    deps = [
         "envoy_admin_upb",
         "envoy_config_cluster_upb",
         "envoy_config_cluster_upbdefs",
@@ -7481,6 +7534,7 @@ grpc_cc_library(
         "xds_http_filter_registry",
         "xds_listener",
         "xds_route_config",
+        "//:xds_client",
     ],
 )
 

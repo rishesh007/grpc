@@ -39,6 +39,7 @@
 #include "src/core/xds/grpc/xds_bootstrap_grpc.h"
 #include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/grpc/xds_common_types_parser.h"
+#include "src/core/xds/grpc/xds_grpc_service_parser.h"
 #include "src/core/xds/grpc/xds_http_filter.h"
 #include "src/core/xds/grpc/xds_http_filter_registry.h"
 #include "src/core/xds/grpc/xds_server_grpc.h"
@@ -419,8 +420,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
     RefCountedPtr<const FilterConfig> virtual_host_override_config,
     RefCountedPtr<const FilterConfig> route_override_config,
     RefCountedPtr<const FilterConfig> cluster_weight_override_config,
-    XdsTransportFactory* transport_factory,
-    Blackboard& blackboard) const {
+    XdsTransportFactory* transport_factory, Blackboard& blackboard) const {
   // Find the most specific override config.
   const FilterConfig* override_config = nullptr;
   if (cluster_weight_override_config != nullptr) {
@@ -477,8 +477,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
     }
   }
   // Blackboard handling
-  if (config->grpc_service.has_value() &&
-      transport_factory != nullptr) {
+  if (config->grpc_service.has_value() && transport_factory != nullptr) {
     std::string key = config->grpc_service->Key();
     config->channel =
         blackboard.GetOrSet<ExtProcFilter::ExtProcChannel>(key, [&]() {

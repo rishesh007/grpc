@@ -113,7 +113,10 @@ using grpc_event_engine::experimental::FuzzingEventEngine;
 class XdsHttpFilterTest : public ::testing::Test {
  protected:
   XdsHttpFilterTest()
-      : decode_context_{nullptr, xds_server_, upb_def_pool_.ptr(),
+      : event_engine_(
+            std::make_shared<
+                grpc_event_engine::experimental::ThreadedFuzzingEventEngine>()),
+        decode_context_{nullptr, xds_server_, upb_def_pool_.ptr(),
                         upb_arena_.ptr()} {
     Reset();
   }
@@ -189,9 +192,9 @@ class XdsHttpFilterTest : public ::testing::Test {
   }
 
   const XdsHttpFilterImpl* GetFilter(absl::string_view type) {
-      return GetFilter(registry(), type);
-    }
-    
+    return GetFilter(registry(), type);
+  }
+
   std::shared_ptr<FuzzingEventEngine> event_engine_;
   GrpcXdsServer xds_server_;
   RefCountedPtr<XdsClient> xds_client_;
@@ -1824,11 +1827,11 @@ TEST_F(XdsGcpAuthnFilterTest, MergeConfigsGetsCacheFromBlackboard) {
   config->instance_name = "langley";
   config->cache_size = 1;
   auto blackboard = MakeRefCounted<Blackboard>();
-  auto merged_config = filter_->MergeConfigs(
-      config, /*virtual_host_override_config=*/nullptr,
-      /*route_override_config=*/nullptr,
-      /*cluster_weight_override_config=*/nullptr,
-      xds_client_->transport_factory(), *blackboard);
+  auto merged_config =
+      filter_->MergeConfigs(config, /*virtual_host_override_config=*/nullptr,
+                            /*route_override_config=*/nullptr,
+                            /*cluster_weight_override_config=*/nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config, nullptr);
   ASSERT_EQ(merged_config->type(), GcpAuthenticationFilter::Config::Type());
   EXPECT_THAT(merged_config->ToString(),
@@ -2257,11 +2260,11 @@ TEST_F(XdsCompositeFilterTest, MergeConfigsHandlesBlackboardForNestedFilters) {
   // Now call MergeConfigs() and make sure it delegates to the child
   // filters to handle the blackboard.
   auto blackboard = MakeRefCounted<Blackboard>();
-  auto merged_config = filter_->MergeConfigs(
-      config, /*virtual_host_override_config=*/nullptr,
-      /*route_override_config=*/nullptr,
-      /*cluster_weight_override_config=*/nullptr,
-      xds_client_->transport_factory(), *blackboard);
+  auto merged_config =
+      filter_->MergeConfigs(config, /*virtual_host_override_config=*/nullptr,
+                            /*route_override_config=*/nullptr,
+                            /*cluster_weight_override_config=*/nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config, nullptr);
   ASSERT_EQ(merged_config->type(), CompositeFilter::Config::Type());
   EXPECT_EQ(merged_config->ToString(),
@@ -2923,10 +2926,9 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsBasic) {
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   ASSERT_NE(top_level_config, nullptr);
   auto blackboard = MakeRefCounted<Blackboard>();
-  auto merged_config = filter_->MergeConfigs(top_level_config, nullptr, nullptr,
-                                             nullptr,
-                                             xds_client_->transport_factory(),
-                                             *blackboard);
+  auto merged_config =
+      filter_->MergeConfigs(top_level_config, nullptr, nullptr, nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config, nullptr);
   ASSERT_EQ(merged_config->type(), ExtProcFilter::Config::Type());
   EXPECT_EQ(merged_config->ToString(), top_level_config->ToString());
@@ -2953,9 +2955,9 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsWithVirtualHostOverride) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   auto blackboard = MakeRefCounted<Blackboard>();
-  auto merged = filter_->MergeConfigs(top_level_config, vhost_config, nullptr,
-                                      nullptr, xds_client_->transport_factory(),
-                                      *blackboard);
+  auto merged =
+      filter_->MergeConfigs(top_level_config, vhost_config, nullptr, nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
             "{grpc_service={server_uri=localhost:1234, "
@@ -3000,10 +3002,9 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsWithRouteOverride) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   auto blackboard = MakeRefCounted<Blackboard>();
-  auto merged = filter_->MergeConfigs(top_level_config, vhost_config,
-                                      route_config, nullptr,
-                                      xds_client_->transport_factory(),
-                                      *blackboard);
+  auto merged = filter_->MergeConfigs(
+      top_level_config, vhost_config, route_config, nullptr,
+      xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
             "{grpc_service={server_uri=localhost:5678, "
@@ -3025,15 +3026,15 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsSharesChannelOnSameBlackboard) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   auto blackboard = MakeRefCounted<Blackboard>();
-  auto merged_config1 = filter_->MergeConfigs(
-      top_level_config, nullptr, nullptr, nullptr,
-      xds_client_->transport_factory(), *blackboard);
+  auto merged_config1 =
+      filter_->MergeConfigs(top_level_config, nullptr, nullptr, nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config1, nullptr);
   auto& config1 = DownCast<const ExtProcFilter::Config&>(*merged_config1);
   ASSERT_NE(config1.channel, nullptr);
-  auto merged_config2 = filter_->MergeConfigs(
-      top_level_config, nullptr, nullptr, nullptr,
-      xds_client_->transport_factory(), *blackboard);
+  auto merged_config2 =
+      filter_->MergeConfigs(top_level_config, nullptr, nullptr, nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config2, nullptr);
   auto& config2 = DownCast<const ExtProcFilter::Config&>(*merged_config2);
   ASSERT_NE(config2.channel, nullptr);
@@ -3056,15 +3057,15 @@ TEST_F(XdsExtProcFilterTest,
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   auto blackboard = MakeRefCounted<Blackboard>();
-  auto merged_config1 = filter_->MergeConfigs(
-      top_level_config1, nullptr, nullptr, nullptr,
-      xds_client_->transport_factory(), *blackboard);
+  auto merged_config1 =
+      filter_->MergeConfigs(top_level_config1, nullptr, nullptr, nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config1, nullptr);
   auto& config1 = DownCast<const ExtProcFilter::Config&>(*merged_config1);
   ASSERT_NE(config1.channel, nullptr);
-  auto merged_config2 = filter_->MergeConfigs(
-      top_level_config2, nullptr, nullptr, nullptr,
-      xds_client_->transport_factory(), *blackboard);
+  auto merged_config2 =
+      filter_->MergeConfigs(top_level_config2, nullptr, nullptr, nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config2, nullptr);
   auto& config2 = DownCast<const ExtProcFilter::Config&>(*merged_config2);
   ASSERT_NE(config2.channel, nullptr);
@@ -3083,16 +3084,16 @@ TEST_F(XdsExtProcFilterTest,
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   auto blackboard1 = MakeRefCounted<Blackboard>();
-  auto merged_config1 = filter_->MergeConfigs(
-      top_level_config, nullptr, nullptr, nullptr,
-      xds_client_->transport_factory(), *blackboard1);
+  auto merged_config1 =
+      filter_->MergeConfigs(top_level_config, nullptr, nullptr, nullptr,
+                            xds_client_->transport_factory(), *blackboard1);
   ASSERT_NE(merged_config1, nullptr);
   auto& config1 = DownCast<const ExtProcFilter::Config&>(*merged_config1);
   ASSERT_NE(config1.channel, nullptr);
   auto blackboard2 = MakeRefCounted<Blackboard>();
-  auto merged_config2 = filter_->MergeConfigs(
-      top_level_config, nullptr, nullptr, nullptr,
-      xds_client_->transport_factory(), *blackboard2);
+  auto merged_config2 =
+      filter_->MergeConfigs(top_level_config, nullptr, nullptr, nullptr,
+                            xds_client_->transport_factory(), *blackboard2);
   ASSERT_NE(merged_config2, nullptr);
   auto& config2 = DownCast<const ExtProcFilter::Config&>(*merged_config2);
   ASSERT_NE(config2.channel, nullptr);
@@ -3120,15 +3121,15 @@ TEST_F(XdsExtProcFilterTest,
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   auto blackboard = MakeRefCounted<Blackboard>();
-  auto merged_config1 = filter_->MergeConfigs(
-      top_level_config1, nullptr, nullptr, nullptr,
-      xds_client_->transport_factory(), *blackboard);
+  auto merged_config1 =
+      filter_->MergeConfigs(top_level_config1, nullptr, nullptr, nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config1, nullptr);
   auto& config1 = DownCast<const ExtProcFilter::Config&>(*merged_config1);
   ASSERT_NE(config1.channel, nullptr);
-  auto merged_config2 = filter_->MergeConfigs(
-      top_level_config2, nullptr, nullptr, nullptr,
-      xds_client_->transport_factory(), *blackboard);
+  auto merged_config2 =
+      filter_->MergeConfigs(top_level_config2, nullptr, nullptr, nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config2, nullptr);
   auto& config2 = DownCast<const ExtProcFilter::Config&>(*merged_config2);
   ASSERT_NE(config2.channel, nullptr);
