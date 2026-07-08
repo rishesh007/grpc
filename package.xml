@@ -2101,6 +2101,8 @@
     <file baseinstalldir="/" name="src/core/util/json/json_object_loader.h" role="src" />
     <file baseinstalldir="/" name="src/core/util/json/json_reader.cc" role="src" />
     <file baseinstalldir="/" name="src/core/util/json/json_reader.h" role="src" />
+    <file baseinstalldir="/" name="src/core/util/json/json_util.cc" role="src" />
+    <file baseinstalldir="/" name="src/core/util/json/json_util.h" role="src" />
     <file baseinstalldir="/" name="src/core/util/json/json_writer.cc" role="src" />
     <file baseinstalldir="/" name="src/core/util/json/json_writer.h" role="src" />
     <file baseinstalldir="/" name="src/core/util/latent_see.cc" role="src" />
@@ -2230,6 +2232,8 @@
     <file baseinstalldir="/" name="src/core/xds/grpc/xds_endpoint.h" role="src" />
     <file baseinstalldir="/" name="src/core/xds/grpc/xds_endpoint_parser.cc" role="src" />
     <file baseinstalldir="/" name="src/core/xds/grpc/xds_endpoint_parser.h" role="src" />
+    <file baseinstalldir="/" name="src/core/xds/grpc/xds_grpc_service_parser.cc" role="src" />
+    <file baseinstalldir="/" name="src/core/xds/grpc/xds_grpc_service_parser.h" role="src" />
     <file baseinstalldir="/" name="src/core/xds/grpc/xds_health_status.cc" role="src" />
     <file baseinstalldir="/" name="src/core/xds/grpc/xds_health_status.h" role="src" />
     <file baseinstalldir="/" name="src/core/xds/grpc/xds_http_composite_filter.cc" role="src" />

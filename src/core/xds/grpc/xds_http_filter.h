@@ -76,8 +76,7 @@ class XdsHttpFilterImpl {
       RefCountedPtr<const FilterConfig> virtual_host_override_config,
       RefCountedPtr<const FilterConfig> route_override_config,
       RefCountedPtr<const FilterConfig> cluster_weight_override_config,
-      XdsTransportFactory* transport_factory,
-      Blackboard& blackboard) const;
+      XdsTransportFactory* transport_factory, Blackboard& blackboard) const;
 
   // Returns true if the filter is supported on clients; false otherwise
   virtual bool IsSupportedOnClients() const = 0;

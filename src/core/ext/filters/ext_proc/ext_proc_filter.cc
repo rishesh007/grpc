@@ -16,13 +16,9 @@
 
 #include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
 
-#include <grpc/impl/channel_arg_names.h>
-
 #include <string>
 
 #include "src/core/call/call_spine.h"
-#include "src/core/client_channel/client_channel_args.h"
-#include "src/core/config/core_configuration.h"
 #include "src/core/lib/promise/try_seq.h"
 #include "src/core/util/string.h"
 #include "absl/strings/str_join.h"
@@ -41,15 +37,17 @@ std::string ExtProcFilter::Config::ToString() const {
     StrAppend(result, grpc_service->Key());
     is_first = false;
   }
-  if (failure_mode_allow) {
+  if (failure_mode_allow.value_or(false)) {
     if (!is_first) StrAppend(result, ", ");
     StrAppend(result, "failure_mode_allow=true");
     is_first = false;
   }
-  if (!is_first) StrAppend(result, ", ");
-  StrAppend(result, "processing_mode=");
-  StrAppend(result, processing_mode.ToString());
-  is_first = false;
+  if (processing_mode.has_value()) {
+    if (!is_first) StrAppend(result, ", ");
+    StrAppend(result, "processing_mode=");
+    StrAppend(result, processing_mode->ToString());
+    is_first = false;
+  }
   if (!request_attributes.empty()) {
     if (!is_first) StrAppend(result, ", ");
     StrAppend(result, "request_attributes=[");
@@ -135,8 +133,7 @@ absl::StatusOr<RefCountedPtr<ExtProcFilter>> ExtProcFilter::Create(
 ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
                              RefCountedPtr<const Config> config,
                              ChannelFilter::Args /*filter_args*/)
-    : config_(std::move(config)),
-      channel_(config_->channel) {}
+    : config_(std::move(config)) {}
 
 void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {
   CallHandler handler = Consume(std::move(unstarted_call_handler));
@@ -169,6 +166,8 @@ ExtProcFilter::ExtProcChannel::ExtProcChannel(
   absl::Status status;
   transport_ = transport_factory->GetTransport(*server_, &status);
   GRPC_CHECK(transport_ != nullptr);
+  // TODO(rishesh): Return an error if channel construction fails instead of
+  // just logging a message.
   if (!status.ok()) {
     LOG(ERROR) << "Error creating ext_proc channel to " << server_->server_uri()
                << ": " << status;

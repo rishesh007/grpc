@@ -230,8 +230,7 @@ XdsRouting::RouteConfigFilterChainBuilder::RouteConfigFilterChainBuilder(
     const XdsHttpFilterRegistry& http_filter_registry,
     FilterChainBuilder& builder,
     absl::AnyInvocable<void(FilterChainBuilder&)> add_last_filter,
-    XdsTransportFactory* transport_factory,
-    Blackboard& blackboard)
+    XdsTransportFactory* transport_factory, Blackboard& blackboard)
     : hcm_filter_configs_(hcm_filter_configs),
       builder_(builder),
       add_last_filter_(std::move(add_last_filter)),

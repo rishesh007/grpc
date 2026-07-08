@@ -28,7 +28,6 @@
 #include "envoy/extensions/filters/http/ext_proc/v3/ext_proc.upbdefs.h"
 #include "envoy/extensions/filters/http/ext_proc/v3/processing_mode.upb.h"
 #include "envoy/extensions/filters/http/ext_proc/v3/processing_mode.upbdefs.h"
-#include "envoy/type/matcher/v3/string.upb.h"
 #include "re2/re2.h"
 #include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
 #include "src/core/filter/filter_args.h"
@@ -76,25 +75,6 @@ const grpc_channel_filter* XdsHttpExtProcFilter::channel_filter() const {
 
 namespace {
 
-std::vector<StringMatcher> ListStringMatcherParse(
-    const XdsResourceType::DecodeContext& context,
-    const envoy_type_matcher_v3_ListStringMatcher* list_matcher,
-    ValidationErrors* errors) {
-  if (list_matcher == nullptr) return {};
-  std::vector<StringMatcher> matchers;
-  size_t patterns_size = 0;
-  const envoy_type_matcher_v3_StringMatcher* const* patterns =
-      envoy_type_matcher_v3_ListStringMatcher_patterns(list_matcher,
-                                                       &patterns_size);
-  matchers.reserve(patterns_size);
-  for (size_t i = 0; i < patterns_size; ++i) {
-    ValidationErrors::ScopedField field(errors,
-                                        absl::StrCat(".patterns[", i, "]"));
-    matchers.push_back(StringMatcherParse(context, patterns[i], errors));
-  }
-  return matchers;
-}
-
 bool ParseHeaderProcessingMode(int32_t value, bool default_value,
                                ValidationErrors* errors) {
   switch (value) {
@@ -103,6 +83,7 @@ bool ParseHeaderProcessingMode(int32_t value, bool default_value,
     case envoy_extensions_filters_http_ext_proc_v3_ProcessingMode_SKIP:
       return false;
     case envoy_extensions_filters_http_ext_proc_v3_ProcessingMode_DEFAULT:
+      errors->AddError("DEFAULT header processing mode is not supported");
       return default_value;
     default:
       errors->AddError(
@@ -179,7 +160,7 @@ ExtProcFilter::ProcessingMode ParseProcessingMode(
 }  // namespace
 
 RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
-    absl::string_view instance_name,
+    absl::string_view /*instance_name*/,
     const XdsResourceType::DecodeContext& context,
     const XdsExtension& extension, ValidationErrors* errors) const {
   const absl::string_view* serialized_filter_config =
@@ -197,7 +178,6 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
     return nullptr;
   }
   auto config = MakeRefCounted<ExtProcFilter::Config>();
-  config->instance_name = std::string(instance_name);
   // grpc_service
   {
     ValidationErrors::ScopedField field(errors, ".grpc_service");
@@ -221,6 +201,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
   }
   size_t size;
   // request_attributes
+  // TODO(rishesh): Validate that these attributes are actually valid.
   const auto* request_attributes =
       envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_request_attributes(
           ext_proc, &size);
@@ -293,61 +274,6 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
   return config;
 }
 
-namespace {
-
-struct OverrideConfig final : public FilterConfig {
-  static UniqueTypeName Type() {
-    return GRPC_UNIQUE_TYPE_NAME_HERE("ext_proc_override_config");
-  }
-  UniqueTypeName type() const override { return Type(); }
-
-  bool Equals(const FilterConfig& other) const override {
-    const auto& o = DownCast<const OverrideConfig&>(other);
-    return processing_mode == o.processing_mode &&
-           grpc_service == o.grpc_service &&
-           request_attributes == o.request_attributes &&
-           response_attributes == o.response_attributes &&
-           failure_mode_allow == o.failure_mode_allow;
-  }
-
-  std::string ToString() const override {
-    std::vector<std::string> parts;
-    if (processing_mode.has_value()) {
-      parts.push_back(
-          absl::StrCat("processing_mode=", processing_mode->ToString()));
-    }
-    if (grpc_service.has_value()) {
-      parts.push_back(absl::StrCat("grpc_service=", grpc_service->Key()));
-    }
-    if (!request_attributes.empty()) {
-      parts.push_back(absl::StrCat("request_attributes=[",
-                                   absl::StrJoin(request_attributes, ", "),
-                                   "]"));
-    }
-    if (!response_attributes.empty()) {
-      parts.push_back(absl::StrCat("response_attributes=[",
-                                   absl::StrJoin(response_attributes, ", "),
-                                   "]"));
-    }
-    if (failure_mode_allow.has_value()) {
-      parts.push_back(absl::StrCat("failure_mode_allow=",
-                                   failure_mode_allow ? "true" : "false"));
-    }
-    return absl::StrCat("{", absl::StrJoin(parts, ", "), "}");
-  }
-
-  std::optional<ExtProcFilter::ProcessingMode> processing_mode;
-  // Wrapped in std::optional because GrpcXdsServerTarget lacks a default
-  // constructor, and std::nullopt indicates that the gRPC service target is not
-  // overridden at this route/vhost level (inheriting from top-level config).
-  std::optional<GrpcXdsServerTarget> grpc_service;
-  std::vector<std::string> request_attributes;
-  std::vector<std::string> response_attributes;
-  std::optional<bool> failure_mode_allow;
-};
-
-}  // namespace
-
 RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
     absl::string_view /*instance_name*/,
     const XdsResourceType::DecodeContext& context,
@@ -371,7 +297,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
           ext_proc_per_route);
   if (overrides == nullptr) return nullptr;
   ValidationErrors::ScopedField field(errors, ".overrides");
-  auto config = MakeRefCounted<OverrideConfig>();
+  auto config = MakeRefCounted<ExtProcFilter::Config>();
   // processing_mode
   if (auto* processing_mode =
           envoy_extensions_filters_http_ext_proc_v3_ExtProcOverrides_processing_mode(
@@ -389,6 +315,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
     config->grpc_service = ParseXdsGrpcService(context, grpc_service, errors);
   }
   // request_attributes
+  // TODO(rishesh): Validate that these attributes are actually valid.
   size_t size;
   const auto* request_attributes =
       envoy_extensions_filters_http_ext_proc_v3_ExtProcOverrides_request_attributes(
@@ -433,7 +360,6 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
   const auto& top_config =
       DownCast<const ExtProcFilter::Config&>(*top_level_config);
   auto config = MakeRefCounted<ExtProcFilter::Config>();
-  config->instance_name = top_config.instance_name;
   config->grpc_service = top_config.grpc_service;
   config->failure_mode_allow = top_config.failure_mode_allow;
   config->processing_mode = top_config.processing_mode;
@@ -460,10 +386,10 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
   config->observability_mode = top_config.observability_mode;
   config->deferred_close_timeout = top_config.deferred_close_timeout;
   if (override_config != nullptr) {
-    GRPC_CHECK_EQ(override_config->type(), OverrideConfig::Type());
-    const OverrideConfig& o = DownCast<const OverrideConfig&>(*override_config);
+    GRPC_CHECK_EQ(override_config->type(), ExtProcFilter::Config::Type());
+    const auto& o = DownCast<const ExtProcFilter::Config&>(*override_config);
     if (o.processing_mode.has_value()) {
-      config->processing_mode = *o.processing_mode;
+      config->processing_mode = o.processing_mode;
     }
     if (o.grpc_service.has_value()) config->grpc_service = o.grpc_service;
     if (!o.request_attributes.empty()) {
@@ -473,7 +399,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
       config->response_attributes = o.response_attributes;
     }
     if (o.failure_mode_allow.has_value()) {
-      config->failure_mode_allow = *o.failure_mode_allow;
+      config->failure_mode_allow = o.failure_mode_allow;
     }
   }
   // Blackboard handling

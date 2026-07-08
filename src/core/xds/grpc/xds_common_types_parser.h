@@ -76,6 +76,11 @@ StringMatcher StringMatcherParse(
     const xds_type_matcher_v3_StringMatcher* matcher_proto,
     ValidationErrors* errors);
 
+std::vector<StringMatcher> ListStringMatcherParse(
+    const XdsResourceType::DecodeContext& context,
+    const envoy_type_matcher_v3_ListStringMatcher* list_matcher,
+    ValidationErrors* errors);
+
 absl::StatusOr<Json> ParseProtobufStructToJson(
     const XdsResourceType::DecodeContext& context,
     const google_protobuf_Struct* resource);

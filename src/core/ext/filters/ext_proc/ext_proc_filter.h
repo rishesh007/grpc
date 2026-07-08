@@ -61,7 +61,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
              disable_immediate_response == o.disable_immediate_response &&
              observability_mode == o.observability_mode &&
              deferred_close_timeout == o.deferred_close_timeout &&
-             instance_name == o.instance_name && channel == o.channel;
+             channel == o.channel;
     }
 
     std::string ToString() const override;
@@ -69,19 +69,24 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     // The gRPC service configuration (target URI, credentials, timeout)
     // used to establish the side-channel connection to the external processor
     // server as described in gRFC A102.
-    // Wrapped in std::optional because GrpcXdsServerTarget lacks a default
-    // constructor (requiring explicit URI and credentials arguments), allowing
-    // ExtProcFilter::Config to be default-constructed when instantiated.
+    // Wrapped in std::optional because:
+    // 1. GrpcXdsServerTarget lacks a default constructor (requiring explicit
+    //    URI and credentials arguments), allowing ExtProcFilter::Config to be
+    //    default-constructed when instantiated.
+    // 2. This field is needed when parsing the xDS filter config at both the
+    //    top level (in the HCM) and in any per-route override configs, but it
+    //    will not be populated or needed by the time the filter itself sees the
+    //    config (since the ExtProcChannel will already have been established).
     std::optional<GrpcXdsServerTarget> grpc_service;
     // If true, when an ext_proc stream fails or terminates with a non-OK
     // status, the data plane RPC is allowed to continue without error if the
     // filter is in observability mode or has not yet sent message bodies (body
     // send mode is NONE). Defaults to false (failing the RPC with INTERNAL).
-    bool failure_mode_allow;
+    std::optional<bool> failure_mode_allow;
     // Specifies which data plane events (request/response headers, body chunks,
     // and trailers) should be forwarded to the external processing server. In
     // gRPC, body chunks are sent in GRPC mode.
-    ProcessingMode processing_mode;
+    std::optional<ProcessingMode> processing_mode;
     // List of request attribute names (e.g., "request.path", "request.method",
     // "request.host") to extract from metadata and include in client request
     // header events.
@@ -111,11 +116,6 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     // The maximum duration to wait for the external processor to close or drain
     // its stream before forcibly closing the side-channel stream.
     Duration deferred_close_timeout;
-
-    // The unique identifier or instance name of the xDS client/ext_proc filter
-    // configuration, used for logging, metrics, or resource retention across
-    // xDS updates.
-    std::string instance_name;
     // Ref-counted handle to the persistent gRPC side-channel (ExtProcChannel)
     // used to communicate with the external processing server across multiple
     // data plane RPCs.
@@ -133,7 +133,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
                 ChannelFilter::Args filter_args);
 
   RefCountedPtr<const Config> config() const { return config_; }
-  RefCountedPtr<ExtProcChannel> channel() const { return channel_; }
+  RefCountedPtr<ExtProcChannel> channel() const { return config_->channel; }
 
   class ExtProcChannel final : public Blackboard::Entry {
    public:
@@ -162,7 +162,6 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   void InterceptCall(UnstartedCallHandler unstarted_call_handler) override;
 
   RefCountedPtr<const Config> config_;
-  RefCountedPtr<ExtProcChannel> channel_;
 };
 
 }  // namespace grpc_core
