@@ -847,20 +847,20 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
 }
 
 TEST_F(XdsRouteConfigFilterChainBuilderTest,
-       GeneratePerHTTPFilterConfigsOmitDisabled) {
+       GeneratePerHTTPFilterConfigsDoesNotSupportDisabling) {
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
       hcm_filters = {MakeHcmFilter("filter1", "hcm"),
                      MakeHcmFilter("filter2", "hcm", /*disabled=*/true)};
-
   // Service Config
   auto service_config_result =
       XdsRouting::GeneratePerHTTPFilterConfigsForServiceConfig(
           registry_, hcm_filters, ChannelArgs{});
   ASSERT_TRUE(service_config_result.ok()) << service_config_result.status();
+  // We do not support disabling in this code path, so filter2 is not omitted.
   EXPECT_THAT(service_config_result->per_filter_configs,
               ::testing::ElementsAre(::testing::Pair(
-                  "test_field", ::testing::ElementsAre("service_config"))));
-
+                  "test_field",
+                  ::testing::ElementsAre("service_config", "service_config"))));
   // Method Config (disabled at Route)
   auto vhost = MakeVirtualHost();
   auto route =
@@ -869,9 +869,12 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
       XdsRouting::GeneratePerHTTPFilterConfigsForMethodConfig(
           registry_, hcm_filters, vhost, route, nullptr, ChannelArgs{});
   ASSERT_TRUE(method_config_result.ok()) << method_config_result.status();
-  // filter1 is disabled at route, filter2 is disabled at HCM. Both should be
-  // omitted.
-  EXPECT_THAT(method_config_result->per_filter_configs, ::testing::IsEmpty());
+  // We do not support disabling in this code path, so neither filter1
+  // (disabled at route) nor filter2 (disabled at HCM) is omitted.
+  EXPECT_THAT(method_config_result->per_filter_configs,
+              ::testing::ElementsAre(::testing::Pair(
+                  "test_field",
+                  ::testing::ElementsAre("method_config", "method_config"))));
 }
 
 TEST_F(XdsRouteConfigFilterChainBuilderTest, NonDisablingFilterNotDisabled) {

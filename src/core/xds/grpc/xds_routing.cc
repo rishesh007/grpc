@@ -517,14 +517,6 @@ XdsRouting::GeneratePerHTTPFilterConfigsForMethodConfig(
           const XdsListenerResource::HttpConnectionManager::HttpFilter&
               http_filter)
           -> absl::StatusOr<XdsHttpFilterImpl::ServiceConfigJsonEntry> {
-        if (IsFilterDisabled(&filter_impl, http_filter,
-                             &vhost.typed_per_filter_config,
-                             &route.typed_per_filter_config,
-                             cluster_weight != nullptr
-                                 ? &cluster_weight->typed_per_filter_config
-                                 : nullptr)) {
-          return XdsHttpFilterImpl::ServiceConfigJsonEntry{};
-        }
         // Find override config, if any.
         const XdsRouteConfigResource::FilterConfigOverride*
             filter_config_override = FindFilterConfigOverride(
@@ -553,10 +545,6 @@ XdsRouting::GeneratePerHTTPFilterConfigsForServiceConfig(
           const XdsListenerResource::HttpConnectionManager::HttpFilter&
               http_filter)
           -> absl::StatusOr<XdsHttpFilterImpl::ServiceConfigJsonEntry> {
-        if (http_filter.disabled &&
-            filter_impl.IsSupportedDisablingOnLdsRds()) {
-          return XdsHttpFilterImpl::ServiceConfigJsonEntry{};
-        }
         return filter_impl.GenerateServiceConfig(http_filter.config);
       });
 }
