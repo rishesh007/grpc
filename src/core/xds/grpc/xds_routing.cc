@@ -222,8 +222,7 @@ XdsRouting::RouteConfigFilterChainBuilder::GetDefaultFilterChain() {
     for (size_t i = 0; i < filter_impls_.size(); ++i) {
       auto* filter_impl = filter_impls_[i];
       const auto& filter_config = hcm_filter_configs_[i];
-      if (filter_config.disabled &&
-          filter_impl->IsSupportedDisablingOnLdsRds()) {
+      if (filter_config.disabled) {
         continue;
       }
       RefCountedPtr<const FilterConfig> config;
@@ -268,7 +267,6 @@ bool IsFilterDisabled(
         route_typed_per_filter_config,
     const XdsRouteConfigResource::TypedPerFilterConfig*
         cluster_weight_typed_per_filter_config) {
-  if (!filter_impl->IsSupportedDisablingOnLdsRds()) return false;
   if (cluster_weight_typed_per_filter_config != nullptr) {
     auto it =
         cluster_weight_typed_per_filter_config->find(hcm_filter_config.name);

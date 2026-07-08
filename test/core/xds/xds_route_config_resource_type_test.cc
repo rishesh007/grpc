@@ -606,6 +606,28 @@ TEST_P(TypedPerFilterConfigTest, FilterConfigWrapperEmptyConfig) {
       << decode_result.resource.status();
 }
 
+TEST_P(TypedPerFilterConfigTest, FilterConfigWrapperDisabledEmptyConfig) {
+  auto* typed_per_filter_config_proto =
+      GetTypedPerFilterConfigProto(&route_config_);
+  envoy::config::route::v3::FilterConfig filter_config;
+  filter_config.set_disabled(true);
+  (*typed_per_filter_config_proto)["fault"].PackFrom(filter_config);
+  std::string serialized_resource;
+  ASSERT_TRUE(route_config_.SerializeToString(&serialized_resource));
+  auto* resource_type = XdsRouteConfigResourceType::Get();
+  auto decode_result =
+      resource_type->Decode(decode_context_, serialized_resource);
+  EXPECT_EQ(decode_result.resource.status().code(),
+            absl::StatusCode::kInvalidArgument);
+  EXPECT_EQ(
+      decode_result.resource.status().message(),
+      absl::StrCat(
+          "errors validating RouteConfiguration resource: [field:", FieldName(),
+          "[fault].value[envoy.config.route.v3.FilterConfig].config "
+          "error:field not present]"))
+      << decode_result.resource.status();
+}
+
 TEST_P(TypedPerFilterConfigTest, FilterConfigWrapperUnsupportedFilterType) {
   envoy::config::route::v3::FilterConfig filter_config_wrapper;
   filter_config_wrapper.mutable_config()->PackFrom(RouteConfiguration());
