@@ -150,6 +150,7 @@ class TestHttpFilter final : public XdsHttpFilterImpl {
       RefCountedPtr<const FilterConfig> virtual_host_override_config,
       RefCountedPtr<const FilterConfig> route_override_config,
       RefCountedPtr<const FilterConfig> cluster_weight_override_config,
+      XdsTransportFactory* /*transport_factory*/,
       Blackboard& blackboard) const override {
     std::vector<std::string> values;
     auto add_value = [&](const RefCountedPtr<const FilterConfig>& config) {
@@ -311,7 +312,7 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   auto vhost_builder =
       route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
   auto route = MakeRoute();
-  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route);
+  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route, nullptr);
   EXPECT_THAT(filter_chain,
               IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
                   &TestFilter::kFilterVtable, "hcm/blackboard{hcm}"))));
@@ -328,7 +329,7 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   auto vhost_builder =
       route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
   auto route = MakeRoute();
-  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route);
+  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route, nullptr);
   EXPECT_THAT(
       filter_chain,
       IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
@@ -346,7 +347,7 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   auto vhost_builder =
       route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
   auto route = MakeRoute({{"filter1", MakeOverride("route")}});
-  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route);
+  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route, nullptr);
   EXPECT_THAT(
       filter_chain,
       IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
@@ -364,7 +365,7 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   auto vhost_builder =
       route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
   auto route = MakeRoute({{"filter1", MakeOverride("route")}});
-  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route);
+  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route, nullptr);
   EXPECT_THAT(filter_chain,
               IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
                   &TestFilter::kFilterVtable,
@@ -385,8 +386,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   auto weighted_cluster_builder =
       vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
   auto cluster_weight = MakeClusterWeight("cluster1", 100);
-  auto filter_chain =
-      weighted_cluster_builder.BuildFilterChainForClusterWeight(cluster_weight);
+  auto filter_chain = weighted_cluster_builder.BuildFilterChainForClusterWeight(
+      cluster_weight, nullptr);
   EXPECT_THAT(filter_chain,
               IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
                   &TestFilter::kFilterVtable, "hcm/blackboard{hcm}"))));
@@ -406,8 +407,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   auto weighted_cluster_builder =
       vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
   auto cluster_weight = MakeClusterWeight("cluster1", 100);
-  auto filter_chain =
-      weighted_cluster_builder.BuildFilterChainForClusterWeight(cluster_weight);
+  auto filter_chain = weighted_cluster_builder.BuildFilterChainForClusterWeight(
+      cluster_weight, nullptr);
   EXPECT_THAT(
       filter_chain,
       IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
@@ -428,8 +429,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   auto weighted_cluster_builder =
       vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
   auto cluster_weight = MakeClusterWeight("cluster1", 100);
-  auto filter_chain =
-      weighted_cluster_builder.BuildFilterChainForClusterWeight(cluster_weight);
+  auto filter_chain = weighted_cluster_builder.BuildFilterChainForClusterWeight(
+      cluster_weight, nullptr);
   EXPECT_THAT(
       filter_chain,
       IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
@@ -451,8 +452,8 @@ TEST_F(
   auto weighted_cluster_builder =
       vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
   auto cluster_weight = MakeClusterWeight("cluster1", 100);
-  auto filter_chain =
-      weighted_cluster_builder.BuildFilterChainForClusterWeight(cluster_weight);
+  auto filter_chain = weighted_cluster_builder.BuildFilterChainForClusterWeight(
+      cluster_weight, nullptr);
   EXPECT_THAT(filter_chain,
               IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
                   &TestFilter::kFilterVtable,
@@ -474,8 +475,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
       vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
   auto cluster_weight =
       MakeClusterWeight("cluster1", 100, {{"filter1", MakeOverride("cw")}});
-  auto filter_chain =
-      weighted_cluster_builder.BuildFilterChainForClusterWeight(cluster_weight);
+  auto filter_chain = weighted_cluster_builder.BuildFilterChainForClusterWeight(
+      cluster_weight, nullptr);
   EXPECT_THAT(filter_chain,
               IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
                   &TestFilter::kFilterVtable, "hcm+cw/blackboard{hcm+cw}"))));
@@ -497,8 +498,8 @@ TEST_F(
       vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
   auto cluster_weight =
       MakeClusterWeight("cluster1", 100, {{"filter1", MakeOverride("cw")}});
-  auto filter_chain =
-      weighted_cluster_builder.BuildFilterChainForClusterWeight(cluster_weight);
+  auto filter_chain = weighted_cluster_builder.BuildFilterChainForClusterWeight(
+      cluster_weight, nullptr);
   EXPECT_THAT(filter_chain,
               IsFilterChain(::testing::ElementsAre(
                   IsFilterAndConfig(&TestFilter::kFilterVtable,
@@ -521,8 +522,8 @@ TEST_F(
       vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
   auto cluster_weight =
       MakeClusterWeight("cluster1", 100, {{"filter1", MakeOverride("cw")}});
-  auto filter_chain =
-      weighted_cluster_builder.BuildFilterChainForClusterWeight(cluster_weight);
+  auto filter_chain = weighted_cluster_builder.BuildFilterChainForClusterWeight(
+      cluster_weight, nullptr);
   EXPECT_THAT(filter_chain,
               IsFilterChain(::testing::ElementsAre(
                   IsFilterAndConfig(&TestFilter::kFilterVtable,
@@ -545,8 +546,8 @@ TEST_F(
       vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
   auto cluster_weight =
       MakeClusterWeight("cluster1", 100, {{"filter1", MakeOverride("cw")}});
-  auto filter_chain =
-      weighted_cluster_builder.BuildFilterChainForClusterWeight(cluster_weight);
+  auto filter_chain = weighted_cluster_builder.BuildFilterChainForClusterWeight(
+      cluster_weight, nullptr);
   EXPECT_THAT(filter_chain,
               IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
                   &TestFilter::kFilterVtable,
@@ -564,7 +565,7 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest, MultipleFilters) {
   auto vhost_builder =
       route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
   auto route = MakeRoute({{"filter2", MakeOverride("route2")}});
-  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route);
+  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route, nullptr);
   EXPECT_THAT(filter_chain,
               IsFilterChain(::testing::ElementsAre(
                   IsFilterAndConfig(&TestFilter::kFilterVtable,
@@ -588,10 +589,10 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest, Caching) {
       vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
   auto cluster_weight0 = MakeClusterWeight("cluster0", 50);
   auto chain0 = weighted_cluster_builder.BuildFilterChainForClusterWeight(
-      cluster_weight0);
+      cluster_weight0, nullptr);
   auto cluster_weight1 = MakeClusterWeight("cluster1", 50);
   auto chain1 = weighted_cluster_builder.BuildFilterChainForClusterWeight(
-      cluster_weight1);
+      cluster_weight1, nullptr);
   EXPECT_EQ(chain0, chain1);
 }
 

@@ -1802,10 +1802,11 @@ TEST_F(XdsGcpAuthnFilterTest, MergeConfigsGetsCacheFromBlackboard) {
   config->instance_name = "langley";
   config->cache_size = 1;
   auto blackboard = MakeRefCounted<Blackboard>();
-  auto merged_config = filter_->MergeConfigs(
-      config, /*virtual_host_override_config=*/nullptr,
-      /*route_override_config=*/nullptr,
-      /*cluster_weight_override_config=*/nullptr, *blackboard);
+  auto merged_config =
+      filter_->MergeConfigs(config, /*virtual_host_override_config=*/nullptr,
+                            /*route_override_config=*/nullptr,
+                            /*cluster_weight_override_config=*/nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config, nullptr);
   ASSERT_EQ(merged_config->type(), GcpAuthenticationFilter::Config::Type());
   EXPECT_THAT(merged_config->ToString(),
@@ -2234,10 +2235,11 @@ TEST_F(XdsCompositeFilterTest, MergeConfigsHandlesBlackboardForNestedFilters) {
   // Now call MergeConfigs() and make sure it delegates to the child
   // filters to handle the blackboard.
   auto blackboard = MakeRefCounted<Blackboard>();
-  auto merged_config = filter_->MergeConfigs(
-      config, /*virtual_host_override_config=*/nullptr,
-      /*route_override_config=*/nullptr,
-      /*cluster_weight_override_config=*/nullptr, *blackboard);
+  auto merged_config =
+      filter_->MergeConfigs(config, /*virtual_host_override_config=*/nullptr,
+                            /*route_override_config=*/nullptr,
+                            /*cluster_weight_override_config=*/nullptr,
+                            xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config, nullptr);
   ASSERT_EQ(merged_config->type(), CompositeFilter::Config::Type());
   EXPECT_EQ(merged_config->ToString(),

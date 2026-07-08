@@ -7304,6 +7304,7 @@ grpc_cc_library(
         "xds_http_filter_registry",
         "xds_listener",
         "xds_route_config",
+        "//:xds_client",
     ],
 )
 

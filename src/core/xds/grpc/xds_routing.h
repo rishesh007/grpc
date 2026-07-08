@@ -31,6 +31,7 @@
 #include "src/core/xds/grpc/xds_http_filter_registry.h"
 #include "src/core/xds/grpc/xds_listener.h"
 #include "src/core/xds/grpc/xds_route_config.h"
+#include "src/core/xds/xds_client/xds_transport.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -105,10 +106,12 @@ class XdsRouting final {
         absl::StatusOr<RefCountedPtr<const FilterChain>>
         BuildFilterChainForClusterWeight(
             const XdsRouteConfigResource::Route::RouteAction::ClusterWeight&
-                cluster_weight);
+                cluster_weight,
+            XdsTransportFactory* transport_factory);
 
        private:
-        absl::StatusOr<RefCountedPtr<const FilterChain>> GetRouteFilterChain();
+        absl::StatusOr<RefCountedPtr<const FilterChain>> GetRouteFilterChain(
+            XdsTransportFactory* transport_factory);
 
         VirtualHostFilterChainBuilder& vhost_builder_;
         const XdsRouteConfigResource::Route& route_;
@@ -127,7 +130,8 @@ class XdsRouting final {
       // Builds a filter chain for a route that has an individual cluster
       // or a ClusterSpecifierPlugin.
       absl::StatusOr<RefCountedPtr<const FilterChain>> BuildFilterChainForRoute(
-          const XdsRouteConfigResource::Route& route);
+          const XdsRouteConfigResource::Route& route,
+          XdsTransportFactory* transport_factory);
 
       // Returns a filter chain builder for a given route that uses
       // WeightedClusters.
@@ -139,7 +143,7 @@ class XdsRouting final {
 
      private:
       absl::StatusOr<RefCountedPtr<const FilterChain>>
-      GetVirtualHostFilterChain();
+      GetVirtualHostFilterChain(XdsTransportFactory* transport_factory);
 
       RouteConfigFilterChainBuilder& route_config_builder_;
       const XdsRouteConfigResource::VirtualHost& vhost_;
@@ -169,7 +173,8 @@ class XdsRouting final {
     }
 
    private:
-    absl::StatusOr<RefCountedPtr<const FilterChain>> GetDefaultFilterChain();
+    absl::StatusOr<RefCountedPtr<const FilterChain>> GetDefaultFilterChain(
+        XdsTransportFactory* transport_factory);
 
     const std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>&
         hcm_filter_configs_;
