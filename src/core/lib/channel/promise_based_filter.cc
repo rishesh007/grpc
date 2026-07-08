@@ -1287,13 +1287,6 @@ class ClientCallData::PollContext {
               // delivered.
               self_->receive_message()->Done(*md, flusher_,
                                              /*discard_buffered_message=*/true);
-              // For the kBatchCompleted(NoPipe) states, Done() only marks the
-              // state cancelled and defers firing the completion closure to
-              // WakeInsideCombiner; repoll so that batch actually drains
-              // instead of stalling the call.
-              if (!self_->receive_message()->IsIdle()) {
-                repoll_ = true;
-              }
             } else {
               self_->receive_message()->Done(*md, flusher_);
             }
