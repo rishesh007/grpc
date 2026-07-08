@@ -221,7 +221,7 @@ class XdsResolver final : public Resolver {
     void BuildFilterChains(const XdsConfig& xds_config,
                            const XdsHttpFilterRegistry& http_filter_registry,
                            FilterChainBuilder& builder,
-                           XdsTransportFactory* transport_factory,
+                           XdsTransportFactory& transport_factory,
                            Blackboard& blackboard);
 
    private:
@@ -423,7 +423,7 @@ XdsResolver::RouteConfigData::GetRouteForRequest(
 void XdsResolver::RouteConfigData::BuildFilterChains(
     const XdsConfig& xds_config,
     const XdsHttpFilterRegistry& http_filter_registry,
-    FilterChainBuilder& builder, XdsTransportFactory* transport_factory,
+    FilterChainBuilder& builder, XdsTransportFactory& transport_factory,
     Blackboard& blackboard) {
   const auto& hcm = std::get<XdsListenerResource::HttpConnectionManager>(
       xds_config.listener->listener);
@@ -432,7 +432,7 @@ void XdsResolver::RouteConfigData::BuildFilterChains(
       [](FilterChainBuilder& builder) {
         builder.AddFilter<ClusterSelectionFilter>(nullptr);
       },
-      blackboard);
+      blackboard, transport_factory);
   auto vhost_builder = route_config_builder.MakeVirtualHostFilterChainBuilder(
       *xds_config.virtual_host);
   // Set the filter chain for each route.
@@ -454,14 +454,14 @@ void XdsResolver::RouteConfigData::BuildFilterChains(
         GRPC_CHECK_LT(i, route_entry.weighted_cluster_state.size());
         route_entry.weighted_cluster_state[i].filter_chain =
             weighted_cluster_builder.BuildFilterChainForClusterWeight(
-                (*weighted_clusters)[i], transport_factory);
+                (*weighted_clusters)[i]);
       }
     }
     // If the route does not use WeightedClusters, then we generate a
     // filter chain for the route.
     else {
-      route_entry.filter_chain = vhost_builder.BuildFilterChainForRoute(
-          route_entry.route, transport_factory);
+      route_entry.filter_chain =
+          vhost_builder.BuildFilterChainForRoute(route_entry.route);
     }
   }
 }
@@ -765,7 +765,7 @@ void XdsResolver::XdsConfigSelector::BuildFilterChains(
           .http_filter_registry();
   route_config_data_->BuildFilterChains(
       *xds_config_, http_filter_registry, builder,
-      resolver_->xds_client_->transport_factory(), *resolver_->blackboard_);
+      *resolver_->xds_client_->transport_factory(), *resolver_->blackboard_);
 }
 
 //

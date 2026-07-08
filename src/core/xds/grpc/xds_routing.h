@@ -106,12 +106,10 @@ class XdsRouting final {
         absl::StatusOr<RefCountedPtr<const FilterChain>>
         BuildFilterChainForClusterWeight(
             const XdsRouteConfigResource::Route::RouteAction::ClusterWeight&
-                cluster_weight,
-            XdsTransportFactory* transport_factory);
+                cluster_weight);
 
        private:
-        absl::StatusOr<RefCountedPtr<const FilterChain>> GetRouteFilterChain(
-            XdsTransportFactory* transport_factory);
+        absl::StatusOr<RefCountedPtr<const FilterChain>> GetRouteFilterChain();
 
         VirtualHostFilterChainBuilder& vhost_builder_;
         const XdsRouteConfigResource::Route& route_;
@@ -130,8 +128,7 @@ class XdsRouting final {
       // Builds a filter chain for a route that has an individual cluster
       // or a ClusterSpecifierPlugin.
       absl::StatusOr<RefCountedPtr<const FilterChain>> BuildFilterChainForRoute(
-          const XdsRouteConfigResource::Route& route,
-          XdsTransportFactory* transport_factory);
+          const XdsRouteConfigResource::Route& route);
 
       // Returns a filter chain builder for a given route that uses
       // WeightedClusters.
@@ -143,7 +140,7 @@ class XdsRouting final {
 
      private:
       absl::StatusOr<RefCountedPtr<const FilterChain>>
-      GetVirtualHostFilterChain(XdsTransportFactory* transport_factory);
+      GetVirtualHostFilterChain();
 
       RouteConfigFilterChainBuilder& route_config_builder_;
       const XdsRouteConfigResource::VirtualHost& vhost_;
@@ -164,7 +161,7 @@ class XdsRouting final {
         const XdsHttpFilterRegistry& http_filter_registry,
         FilterChainBuilder& builder,
         absl::AnyInvocable<void(FilterChainBuilder&)> add_last_filter,
-        Blackboard& blackboard);
+        Blackboard& blackboard, XdsTransportFactory& transport_factory);
 
     // Returns a filter chain builder for a given virtual host.
     VirtualHostFilterChainBuilder MakeVirtualHostFilterChainBuilder(
@@ -173,14 +170,14 @@ class XdsRouting final {
     }
 
    private:
-    absl::StatusOr<RefCountedPtr<const FilterChain>> GetDefaultFilterChain(
-        XdsTransportFactory* transport_factory);
+    absl::StatusOr<RefCountedPtr<const FilterChain>> GetDefaultFilterChain();
 
     const std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>&
         hcm_filter_configs_;
     FilterChainBuilder& builder_;
     absl::AnyInvocable<void(FilterChainBuilder&)> add_last_filter_;
     Blackboard& blackboard_;
+    XdsTransportFactory& transport_factory_;
 
     // Same size as hcm_filter_configs_.
     std::vector<const XdsHttpFilterImpl*> filter_impls_;

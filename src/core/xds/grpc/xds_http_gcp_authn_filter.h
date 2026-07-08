@@ -77,7 +77,7 @@ class XdsHttpGcpAuthnFilter final : public XdsHttpFilterImpl {
       RefCountedPtr<const FilterConfig> /*virtual_host_override_config*/,
       RefCountedPtr<const FilterConfig> /*route_override_config*/,
       RefCountedPtr<const FilterConfig> /*cluster_weight_override_config*/,
-      XdsTransportFactory* transport_factory,
+      XdsTransportFactory& transport_factory,
       Blackboard& blackboard) const override;
   bool IsSupportedOnClients() const override { return true; }
   bool IsSupportedOnServers() const override { return false; }

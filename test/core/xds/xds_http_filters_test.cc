@@ -1806,7 +1806,7 @@ TEST_F(XdsGcpAuthnFilterTest, MergeConfigsGetsCacheFromBlackboard) {
       filter_->MergeConfigs(config, /*virtual_host_override_config=*/nullptr,
                             /*route_override_config=*/nullptr,
                             /*cluster_weight_override_config=*/nullptr,
-                            xds_client_->transport_factory(), *blackboard);
+                            *xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config, nullptr);
   ASSERT_EQ(merged_config->type(), GcpAuthenticationFilter::Config::Type());
   EXPECT_THAT(merged_config->ToString(),
@@ -2239,7 +2239,7 @@ TEST_F(XdsCompositeFilterTest, MergeConfigsHandlesBlackboardForNestedFilters) {
       filter_->MergeConfigs(config, /*virtual_host_override_config=*/nullptr,
                             /*route_override_config=*/nullptr,
                             /*cluster_weight_override_config=*/nullptr,
-                            xds_client_->transport_factory(), *blackboard);
+                            *xds_client_->transport_factory(), *blackboard);
   ASSERT_NE(merged_config, nullptr);
   ASSERT_EQ(merged_config->type(), CompositeFilter::Config::Type());
   EXPECT_EQ(merged_config->ToString(),
