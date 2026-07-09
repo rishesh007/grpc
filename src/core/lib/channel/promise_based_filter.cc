@@ -1293,13 +1293,20 @@ class ClientCallData::PollContext {
               if (!self_->receive_message()->IsIdle()) {
                 repoll_ = true;
               }
+              // The promise terminated with its own (error) metadata while the
+              // transport's trailing metadata was queued behind the receive
+              // message pump. The buffered message was just discarded above, so
+              // there is nothing left to bypass: release the queued trailing
+              // metadata now so the kComplete handling below picks it up.
+              if (self_->recv_trailing_state_ ==
+                  RecvTrailingState::kCompletedQueuedBehindReceiveMessage) {
+                self_->recv_trailing_state_ = RecvTrailingState::kComplete;
+              }
             } else {
               self_->receive_message()->Done(*md, flusher_);
             }
           }
-          if (self_->recv_trailing_state_ == RecvTrailingState::kComplete ||
-              self_->recv_trailing_state_ ==
-                  RecvTrailingState::kCompletedQueuedBehindReceiveMessage) {
+          if (self_->recv_trailing_state_ == RecvTrailingState::kComplete) {
             if (self_->recv_trailing_metadata_ != md.get()) {
               *self_->recv_trailing_metadata_ = std::move(*md);
             }
