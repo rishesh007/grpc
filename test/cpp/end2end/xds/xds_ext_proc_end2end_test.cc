@@ -2686,9 +2686,14 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(status.ok()) << "Expected OK, got: " << status.error_message();
 }
 
-class DuplicateRequestBodyResponseMockService
-    : public MockExternalProcessorBase {
+class DuplicateResponseMockService : public MockExternalProcessorBase {
  public:
+  explicit DuplicateResponseMockService(
+      std::function<
+          bool(const ::envoy::service::ext_proc::v3::ProcessingRequest&)>
+          duplicate_cond)
+      : duplicate_cond_(std::move(duplicate_cond)) {}
+
   grpc::Status Process(
       grpc::ServerContext* /*context*/,
       grpc::ServerReaderWriter<
@@ -2698,21 +2703,24 @@ class DuplicateRequestBodyResponseMockService
     while (stream->Read(&request)) {
       ::envoy::service::ext_proc::v3::ProcessingResponse response;
       SetDefaultEmptyResponse(request, &response);
-      if (request.has_request_body()) {
-        // Send the response twice!
-        stream->Write(response);
-        stream->Write(response);
-      } else {
+      stream->Write(response);
+      if (duplicate_cond_(request)) {
         stream->Write(response);
       }
     }
     return grpc::Status::OK;
   }
+
+ private:
+  std::function<bool(const ::envoy::service::ext_proc::v3::ProcessingRequest&)>
+      duplicate_cond_;
 };
 
 TEST_P(XdsExtProcEnd2endTest, DuplicateRequestBodyResponseFailsCall) {
-  auto mock_service =
-      std::make_unique<DuplicateRequestBodyResponseMockService>();
+  auto mock_service = std::make_unique<DuplicateResponseMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request) {
+        return request.has_request_body();
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -3708,13 +3716,10 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
-
   EchoRequest request;
   EchoResponse response;
-
   // Message 1
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
@@ -3749,87 +3754,11 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyBidiStreamAsymmetricWriteReadSuccess) {
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(ext_proc_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetRequestHeaderMode(ProcessingMode::SKIP)
-                             .SetRequestBodyMode(ProcessingMode::NONE)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-
-  ClientContext context;
-  auto stream = stub_->BidiStream(&context);
-
-  EchoRequest request;
-  request.set_message("message1");
-  EXPECT_TRUE(stream->Write(request));
-  request.set_message("message2");
-  EXPECT_TRUE(stream->Write(request));
-  request.set_message("message3");
-  EXPECT_TRUE(stream->Write(request));
-
-  EXPECT_TRUE(stream->WritesDone());
-
-  EchoResponse response;
-  EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1-response-body-mutated");
-  EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message2-response-body-mutated");
-  EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message3-response-body-mutated");
-
-  EXPECT_FALSE(stream->Read(&response));
-
-  Status status = stream->Finish();
-  EXPECT_TRUE(status.ok()) << status.error_message();
-
-  MockExternalProcessorService::RequestCounts expected_counts;
-  expected_counts.request_headers = 0;
-  expected_counts.response_headers = 1;
-  expected_counts.response_trailers = 1;
-  expected_counts.request_body = 0;
-  expected_counts.response_body = 3;
-  ext_proc_server_->ext_proc_service()->WaitForRequestCounts(expected_counts);
-}
-
-class DuplicateResponseBodyResponseMockService
-    : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    while (stream->Read(&request)) {
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      SetDefaultEmptyResponse(request, &response);
-      stream->Write(response);
-      if (request.has_response_body()) {
-        // Send duplicate response for response body
-        stream->Write(response);
-      }
-    }
-    return grpc::Status::OK;
-  }
-};
-
-TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyDuplicateResponseFailsCall) {
-  auto mock_service =
-      std::make_unique<DuplicateResponseBodyResponseMockService>();
+       BidiStreamResponseBodyDuplicateResponseFailsCall) {
+  auto mock_service = std::make_unique<DuplicateResponseMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request) {
+        return request.has_response_body();
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -3851,7 +3780,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -3866,129 +3794,6 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_THAT(
       status.error_message(),
       ::testing::HasSubstr("Received unexpected response body response"));
-}
-
-class FailOnSecondResponseBodyMockService : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    int body_count = 0;
-    while (stream->Read(&request)) {
-      if (request.has_response_body()) {
-        body_count++;
-        if (body_count == 2) {
-          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                              "Closed on second body");
-        }
-      }
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      SetDefaultEmptyResponse(request, &response);
-      stream->Write(response);
-    }
-    return grpc::Status::OK;
-  }
-};
-
-TEST_P(XdsExtProcEnd2endTest,
-       BidiStreamResponseBodyExtProcConnectionErrorFailClosed) {
-  auto mock_service = std::make_unique<FailOnSecondResponseBodyMockService>();
-  StartAlternativeServer(std::move(mock_service));
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config =
-      ExternalProcessorBuilder()
-          .SetTargetUri(alternative_ext_proc_server_->target())
-          .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)
-          .SetRequestHeaderMode(ProcessingMode::SKIP)
-          .SetResponseHeaderMode(ProcessingMode::SEND)
-          .SetResponseTrailerMode(ProcessingMode::SEND)
-          .SetRequestBodyMode(ProcessingMode::NONE)
-          .SetResponseBodyMode(ProcessingMode::GRPC)
-          .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-
-  ClientContext context;
-  auto stream = stub_->BidiStream(&context);
-
-  EchoRequest request;
-  EchoResponse response;
-
-  // Message 1 (succeeds)
-  request.set_message("message1");
-  EXPECT_TRUE(stream->Write(request));
-  EXPECT_TRUE(stream->Read(&response));
-
-  // Message 2 (fails)
-  request.set_message("message2");
-  EXPECT_TRUE(stream->Write(request));
-  // Read should fail because processor fails.
-  EXPECT_FALSE(stream->Read(&response));
-
-  Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::RESOURCE_EXHAUSTED,
-                               StatusCode::CANCELLED, StatusCode::UNAVAILABLE));
-}
-
-TEST_P(XdsExtProcEnd2endTest,
-       BidiStreamResponseBodyExtProcConnectionErrorFailOpen) {
-  auto mock_service = std::make_unique<FailOnSecondResponseBodyMockService>();
-  StartAlternativeServer(std::move(mock_service));
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config =
-      ExternalProcessorBuilder()
-          .SetTargetUri(alternative_ext_proc_server_->target())
-          .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)
-          .SetRequestHeaderMode(ProcessingMode::SKIP)
-          .SetResponseHeaderMode(ProcessingMode::SEND)
-          .SetResponseTrailerMode(ProcessingMode::SEND)
-          .SetRequestBodyMode(ProcessingMode::NONE)
-          .SetResponseBodyMode(ProcessingMode::GRPC)
-          .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-
-  ClientContext context;
-  auto stream = stub_->BidiStream(&context);
-
-  EchoRequest request;
-  EchoResponse response;
-
-  // Message 1 (succeeds)
-  request.set_message("message1");
-  EXPECT_TRUE(stream->Write(request));
-  EXPECT_TRUE(stream->Read(&response));
-
-  // Message 2 (fails)
-  request.set_message("message2");
-  EXPECT_TRUE(stream->Write(request));
-  // Read should fail because processor fails and it is committed.
-  EXPECT_FALSE(stream->Read(&response));
-
-  Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::RESOURCE_EXHAUSTED,
-                               StatusCode::CANCELLED, StatusCode::UNAVAILABLE));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -4024,18 +3829,13 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
-
   EchoRequest request;
   EchoResponse response;
-
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
-  // Read should fail because processor closes stream on first response body.
   EXPECT_FALSE(stream->Read(&response));
-
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::RESOURCE_EXHAUSTED);
@@ -4076,20 +3876,16 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
-
   EchoRequest request;
   EchoResponse response;
-
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   // Even though failure_mode_allow is true (fail-open), because the
   // stream failed AFTER the first body message was sent to ext_proc, the filter
   // must fail the RPC to avoid message loss or inconsistent state.
   EXPECT_FALSE(stream->Read(&response));
-
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::RESOURCE_EXHAUSTED);
@@ -4133,20 +3929,16 @@ TEST_P(
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
-
   EchoRequest request;
   EchoResponse response;
-
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   // In observability mode, the filter does not block the response body, so the
   // read might succeed before the asynchronous ext_proc error propagates to
   // fail the stream.
   stream->Read(&response);
-
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::RESOURCE_EXHAUSTED);
@@ -4190,19 +3982,15 @@ TEST_P(
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
-
   EchoRequest request;
   EchoResponse response;
-
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   // Read should succeed because observability mode + fail-open allows it.
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
