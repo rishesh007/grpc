@@ -568,7 +568,7 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
   template <typename ServiceType>
   class ExtProcServer : public ExtProcServerBase {
    public:
-    ExtProcServer(std::shared_ptr<ServiceType> service)
+    ExtProcServer(std::unique_ptr<ServiceType> service)
         : service_(std::move(service)), port_(grpc_pick_unused_port_or_die()) {}
 
     void Start() override {
@@ -597,7 +597,7 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     ServiceType* ext_proc_service() { return service_.get(); }
 
    private:
-    std::shared_ptr<ServiceType> service_;
+    std::unique_ptr<ServiceType> service_;
     int port_;
     std::unique_ptr<Server> server_;
   };
@@ -628,7 +628,7 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
                /*balancer_authority_override=*/"", /*args=*/nullptr);
     ext_proc_server_ =
         std::make_unique<ExtProcServer<MockExternalProcessorService>>(
-            std::make_shared<MockExternalProcessorService>());
+            std::make_unique<MockExternalProcessorService>());
     ext_proc_server_->Start();
   }
 
@@ -647,12 +647,12 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     ext_proc_server_->Shutdown();
     immediate_response_server_ =
         std::make_unique<ExtProcServer<ImmediateResponseMockService>>(
-            std::make_shared<ImmediateResponseMockService>());
+            std::make_unique<ImmediateResponseMockService>());
     immediate_response_server_->Start();
   }
 
   template <typename ServiceType>
-  void StartAlternativeServer(std::shared_ptr<ServiceType> service) {
+  void StartAlternativeServer(std::unique_ptr<ServiceType> service) {
     ext_proc_server_->Shutdown();
     alternative_ext_proc_server_ =
         std::make_unique<ExtProcServer<ServiceType>>(std::move(service));
@@ -1796,7 +1796,7 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseTrailersOnly) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, RequestHeadersContinueAndReplaceFails) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_headers()) {
@@ -1807,7 +1807,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersContinueAndReplaceFails) {
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -1836,7 +1836,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersContinueAndReplaceFails) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, RequestHeadersInvalidHeaderMutationFails) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_headers()) {
@@ -1850,7 +1850,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersInvalidHeaderMutationFails) {
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -1885,7 +1885,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersRequestAttributesSent) {
   std::string path_received;
   std::string method_received;
   absl::Mutex mu;
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_headers()) {
@@ -1899,7 +1899,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersRequestAttributesSent) {
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -1925,15 +1925,14 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersRequestAttributesSent) {
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_TRUE(status.ok()) << status.error_message();
-
   // Shutdown the server to ensure all messages are processed and we can safely
   // read the received attributes.
   alternative_ext_proc_server_->Shutdown();
-
   EXPECT_EQ(path_received, "/grpc.testing.EchoTestService/Echo");
   EXPECT_EQ(method_received, "POST");
 }
 
+// fix this
 TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorFailCall) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
@@ -1960,8 +1959,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorFailCall) {
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED));
+  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
 }
 
 TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorAllowCall) {
@@ -1993,7 +1991,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorAllowCall) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, ResponseHeadersContinueAndReplaceFails) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_headers()) {
@@ -2004,7 +2002,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersContinueAndReplaceFails) {
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -2033,7 +2031,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersContinueAndReplaceFails) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, ResponseHeadersInvalidHeaderMutationFails) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_headers()) {
@@ -2047,7 +2045,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersInvalidHeaderMutationFails) {
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -2253,7 +2251,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, ResponseTrailersInvalidHeaderMutationFails) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_trailers()) {
@@ -2266,7 +2264,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseTrailersInvalidHeaderMutationFails) {
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -2552,8 +2550,8 @@ class CloseExtProcStreamOnRequestBodyMockService
 
 TEST_P(XdsExtProcEnd2endTest, RequestBodyExtProcConnectionErrorFailCall) {
   auto mock_service =
-      std::make_shared<CloseExtProcStreamOnRequestBodyMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<CloseExtProcStreamOnRequestBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -2584,8 +2582,8 @@ TEST_P(XdsExtProcEnd2endTest, RequestBodyExtProcConnectionErrorFailCall) {
 
 TEST_P(XdsExtProcEnd2endTest, RequestBodyExtProcConnectionErrorAllowCall) {
   auto mock_service =
-      std::make_shared<CloseExtProcStreamOnRequestBodyMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<CloseExtProcStreamOnRequestBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -2619,9 +2617,9 @@ TEST_P(XdsExtProcEnd2endTest, RequestBodyExtProcConnectionErrorAllowCall) {
 
 TEST_P(XdsExtProcEnd2endTest, ObservabilityRequestBodyFailClosed) {
   auto mock_service =
-      std::make_shared<CloseExtProcStreamOnRequestBodyMockService>();
+      std::make_unique<CloseExtProcStreamOnRequestBodyMockService>();
   StartAlternativeServer(
-      mock_service);  // Shuts down default and starts alternative
+      std::move(mock_service));  // Shuts down default and starts alternative
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -2652,9 +2650,9 @@ TEST_P(XdsExtProcEnd2endTest, ObservabilityRequestBodyFailClosed) {
 
 TEST_P(XdsExtProcEnd2endTest, ObservabilityRequestBodyFailOpen) {
   auto mock_service =
-      std::make_shared<CloseExtProcStreamOnRequestBodyMockService>();
+      std::make_unique<CloseExtProcStreamOnRequestBodyMockService>();
   StartAlternativeServer(
-      mock_service);  // Shuts down default and starts alternative
+      std::move(mock_service));  // Shuts down default and starts alternative
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -2708,8 +2706,8 @@ class CloseExtProcStreamOnResponseBodyMockService
 
 TEST_P(XdsExtProcEnd2endTest, ObservabilityResponseBodyFailClosed) {
   auto mock_service =
-      std::make_shared<CloseExtProcStreamOnResponseBodyMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -2746,8 +2744,8 @@ TEST_P(XdsExtProcEnd2endTest, ObservabilityResponseBodyFailClosed) {
 
 TEST_P(XdsExtProcEnd2endTest, ObservabilityResponseBodyFailOpen) {
   auto mock_service =
-      std::make_shared<CloseExtProcStreamOnResponseBodyMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -2801,8 +2799,8 @@ class DuplicateRequestBodyResponseMockService
 
 TEST_P(XdsExtProcEnd2endTest, DuplicateRequestBodyResponseFailsCall) {
   auto mock_service =
-      std::make_shared<DuplicateRequestBodyResponseMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<DuplicateRequestBodyResponseMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3002,8 +3000,8 @@ class EarlyHalfCloseWithoutMessageMockService
 TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithMessageFailure) {
   CreateAndStartBackends(1);
   auto ext_proc_service =
-      std::make_shared<EarlyHalfCloseWithMessageMockService>();
-  StartAlternativeServer(ext_proc_service);
+      std::make_unique<EarlyHalfCloseWithMessageMockService>();
+  StartAlternativeServer(std::move(ext_proc_service));
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
       ExternalProcessorBuilder()
@@ -3046,8 +3044,8 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithMessageFailure) {
 TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithoutMessageFailure) {
   CreateAndStartBackends(1);
   auto ext_proc_service =
-      std::make_shared<EarlyHalfCloseWithoutMessageMockService>();
-  StartAlternativeServer(ext_proc_service);
+      std::make_unique<EarlyHalfCloseWithoutMessageMockService>();
+  StartAlternativeServer(std::move(ext_proc_service));
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
       ExternalProcessorBuilder()
@@ -3093,7 +3091,7 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamNormalHalfCloseSuccess) {
     bool saw_eos_without_msg ABSL_GUARDED_BY(mu) = false;
   };
   auto claims = std::make_shared<ExtProcClaims>();
-  auto ext_proc_service = std::make_shared<GenericMockService>(
+  auto ext_proc_service = std::make_unique<GenericMockService>(
       [claims](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
                ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         SetDefaultEmptyResponse(request, response);
@@ -3119,7 +3117,7 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamNormalHalfCloseSuccess) {
           }
         }
       });
-  StartAlternativeServer(ext_proc_service);
+  StartAlternativeServer(std::move(ext_proc_service));
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
       ExternalProcessorBuilder()
@@ -3281,8 +3279,8 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamObservabilitySuccess) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, BidiStreamExtProcConnectionErrorFailClosed) {
-  auto mock_service = std::make_shared<FailOnSecondRequestBodyMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailOnSecondRequestBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3325,8 +3323,8 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamExtProcConnectionErrorFailClosed) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, BidiStreamExtProcConnectionErrorFailOpen) {
-  auto mock_service = std::make_shared<FailOnSecondRequestBodyMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailOnSecondRequestBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3371,8 +3369,8 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamExtProcConnectionErrorFailOpen) {
 TEST_P(XdsExtProcEnd2endTest,
        BidiStreamObservabilityExtProcConnectionErrorFailClosed) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_shared<FailOnSecondRequestBodyMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailOnSecondRequestBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3419,8 +3417,8 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        BidiStreamObservabilityExtProcConnectionErrorFailOpen) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_shared<FailOnSecondRequestBodyMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailOnSecondRequestBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3472,7 +3470,7 @@ TEST_P(XdsExtProcEnd2endTest,
   std::string method_received;
   bool headers_received = false;
   absl::Mutex mu;
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_headers()) {
@@ -3488,7 +3486,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3524,7 +3522,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ClientToServerRequestBodyContinueAndReplaceFailClosedFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
@@ -3538,7 +3536,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3570,7 +3568,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ClientToServerRequestBodyContinueAndReplaceFailOpenFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
@@ -3584,7 +3582,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3617,7 +3615,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ClientToServerRequestBodyGrpcMessageCompressedFailClosedFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
@@ -3630,7 +3628,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3662,7 +3660,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ClientToServerRequestBodyGrpcMessageCompressedFailOpenFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
@@ -3675,7 +3673,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3708,7 +3706,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyContinueAndReplaceFailClosedFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -3722,7 +3720,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3759,7 +3757,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyContinueAndReplaceFailOpenFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -3773,7 +3771,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3811,7 +3809,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyGrpcMessageCompressedFailClosedFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -3824,7 +3822,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -3861,7 +3859,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyGrpcMessageCompressedFailOpenFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -3874,7 +3872,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4051,8 +4049,8 @@ class DuplicateResponseBodyResponseMockService
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyDuplicateResponseFailsCall) {
   auto mock_service =
-      std::make_shared<DuplicateResponseBodyResponseMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<DuplicateResponseBodyResponseMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4117,8 +4115,8 @@ class FailOnSecondResponseBodyMockService : public MockExternalProcessorBase {
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyBidiStreamExtProcConnectionErrorFailClosed) {
-  auto mock_service = std::make_shared<FailOnSecondResponseBodyMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailOnSecondResponseBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4166,8 +4164,8 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyBidiStreamExtProcConnectionErrorFailOpen) {
-  auto mock_service = std::make_shared<FailOnSecondResponseBodyMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailOnSecondResponseBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4216,8 +4214,8 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyExtProcConnectionErrorFailCall) {
   auto mock_service =
-      std::make_shared<CloseExtProcStreamOnResponseBodyMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4260,8 +4258,8 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyExtProcConnectionErrorAllowCall) {
   auto mock_service =
-      std::make_shared<CloseExtProcStreamOnResponseBodyMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4307,8 +4305,8 @@ TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyObservabilityExtProcConnectionErrorFailCall) {
   ResetStubWithUniqueArg();
   auto mock_service =
-      std::make_shared<CloseExtProcStreamOnResponseBodyMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4355,8 +4353,8 @@ TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyObservabilityExtProcConnectionErrorAllowCall) {
   ResetStubWithUniqueArg();
   auto mock_service =
-      std::make_shared<CloseExtProcStreamOnResponseBodyMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4412,8 +4410,8 @@ class FailImmediatelyMockService : public MockExternalProcessorBase {
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeRequestHeadersObservabilityFailCall) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_shared<FailImmediatelyMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailImmediatelyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4448,8 +4446,8 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeRequestHeadersObservabilityAllowCall) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_shared<FailImmediatelyMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailImmediatelyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4499,8 +4497,8 @@ class FailAfterRequestHeadersMockService : public MockExternalProcessorBase {
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeRequestBodyObservabilityFailCall) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_shared<FailAfterRequestHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailAfterRequestHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4543,8 +4541,8 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeRequestBodyObservabilityAllowCall) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_shared<FailAfterRequestHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailAfterRequestHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4657,8 +4655,8 @@ class ServerToClientResponseBodyHalfCloseMockService
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyHalfCloseFailClosedFailsCall) {
   auto mock_service =
-      std::make_shared<ServerToClientResponseBodyHalfCloseMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<ServerToClientResponseBodyHalfCloseMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4698,8 +4696,8 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyHalfCloseFailOpenFailsCall) {
   auto mock_service =
-      std::make_shared<ServerToClientResponseBodyHalfCloseMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<ServerToClientResponseBodyHalfCloseMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4738,7 +4736,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ClientToServerOrderingResponseBodyBeforeHeadersFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_headers()) {
@@ -4750,7 +4748,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4788,7 +4786,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ClientToServerOrderingHeadersResponseWhenDisabledFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
@@ -4798,7 +4796,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4836,7 +4834,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientOrderingResponseBodyBeforeHeadersFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_headers()) {
@@ -4848,7 +4846,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4887,7 +4885,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientOrderingTrailersBeforeHeadersFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_headers()) {
@@ -4897,7 +4895,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4938,7 +4936,7 @@ TEST_P(XdsExtProcEnd2endTest,
   // We disable S2C headers to work around the transport-level coalescing
   // limitation. This allows us to test the interaction between S2C body and
   // trailers.
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -4948,7 +4946,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5021,8 +5019,8 @@ TEST_P(XdsExtProcEnd2endTest,
   // We disable S2C headers to work around the transport-level coalescing
   // limitation. This allows us to test the interaction between S2C body and
   // trailers.
-  auto mock_service = std::make_shared<ResponseBodyAfterTrailersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<ResponseBodyAfterTrailersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5072,7 +5070,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientOrderingHeadersResponseWhenDisabledFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -5082,7 +5080,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5121,7 +5119,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientOrderingTrailersResponseWhenDisabledFailsCall) {
-  auto mock_service = std::make_shared<GenericMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_headers()) {
@@ -5131,7 +5129,7 @@ TEST_P(XdsExtProcEnd2endTest,
           SetDefaultEmptyResponse(request, response);
         }
       });
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5189,8 +5187,8 @@ class CloseStreamAfterHeadersMockService : public MockExternalProcessorBase {
 
 TEST_P(XdsExtProcEnd2endTest,
        RequestHeadersExtProcCloseStreamAfterHeadersAllowCall) {
-  auto mock_service = std::make_shared<CloseStreamAfterHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5237,8 +5235,8 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        RequestHeadersExtProcCloseStreamAfterHeadersFailCall) {
-  auto mock_service = std::make_shared<CloseStreamAfterHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5283,8 +5281,8 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamErrorAfterRequestHeaderResponseBeforeResponseHeaderCallWhenFailureModeAllowIsTrue) {
-  auto mock_service = std::make_shared<CloseStreamAfterHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5316,8 +5314,8 @@ TEST_P(
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamErrorAfterRequestHeaderResponseBeforeResponseHeaderCallWhenFailureModeAllowIsFalse) {
-  auto mock_service = std::make_shared<CloseStreamAfterHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5351,8 +5349,8 @@ TEST_P(
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseBodyCallWhenFailureModeAllowIsTrue) {
-  auto mock_service = std::make_shared<CloseStreamAfterHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5386,8 +5384,8 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseBodyCallWhenFailureModeAllowIsFalse) {
-  auto mock_service = std::make_shared<CloseStreamAfterHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5423,8 +5421,8 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseTrailerCallWhenFailureModeAllowIsTrue) {
-  auto mock_service = std::make_shared<CloseStreamAfterHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5455,8 +5453,8 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseTrailerCallWhenFailureModeAllowIsFalse) {
-  auto mock_service = std::make_shared<CloseStreamAfterHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -5564,8 +5562,8 @@ class FailAfterResponseBodyMockService : public MockExternalProcessorBase {
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseHeadersObservabilityFailCall) {
   auto mock_service =
-      std::make_shared<FailAfterRequestHeadersAllowedMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<FailAfterRequestHeadersAllowedMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -5606,8 +5604,8 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseHeadersObservabilityAllowCall) {
   auto mock_service =
-      std::make_shared<FailAfterRequestHeadersAllowedMockService>();
-  StartAlternativeServer(mock_service);
+      std::make_unique<FailAfterRequestHeadersAllowedMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -5646,8 +5644,8 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseBodyObservabilityFailCall) {
-  auto mock_service = std::make_shared<FailAfterResponseHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailAfterResponseHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -5687,8 +5685,8 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseBodyObservabilityAllowCall) {
-  auto mock_service = std::make_shared<FailAfterResponseHeadersMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailAfterResponseHeadersMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -5727,8 +5725,8 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseTrailersObservabilityFailCall) {
-  auto mock_service = std::make_shared<FailAfterResponseBodyMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailAfterResponseBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -5769,8 +5767,8 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseTrailersObservabilityAllowCall) {
-  auto mock_service = std::make_shared<FailAfterResponseBodyMockService>();
-  StartAlternativeServer(mock_service);
+  auto mock_service = std::make_unique<FailAfterResponseBodyMockService>();
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6054,9 +6052,9 @@ class DrainMockService : public MockExternalProcessorBase {
 };
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailClosed) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kBeforeRequestHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6091,9 +6089,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailClosed) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailOpen) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kBeforeRequestHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6129,9 +6127,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailOpen) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeRequestHeadersObservabilityFailClosed) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kBeforeRequestHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6167,9 +6165,9 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeRequestHeadersObservabilityFailOpen) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kBeforeRequestHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6204,9 +6202,9 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseAfterRequestHeaders) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kAfterRequestHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6241,9 +6239,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseAfterRequestHeaders) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseAfterRequestHeadersObservability) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kAfterRequestHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6278,9 +6276,9 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailClosed) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6314,9 +6312,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailClosed) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailOpen) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6351,9 +6349,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailOpen) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersObservabilityFailClosed) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6389,9 +6387,9 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersObservabilityFailOpen) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6427,9 +6425,9 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersWithActiveClient) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6469,9 +6467,9 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyBeforeAnyMessage) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kAfterRequestHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6508,9 +6506,9 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyBeforeAnyMessageObservability) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kAfterRequestHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6546,9 +6544,9 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyNoInFlight) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringRequestBody, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6583,9 +6581,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyNoInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyNoInFlightObservability) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringRequestBody, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6628,9 +6626,9 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyWithInFlight) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringRequestBody, 0);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -6666,9 +6664,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyWithInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyWithInFlightObservability) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringRequestBody, 0);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -6715,8 +6713,8 @@ void XdsExtProcEnd2endTest::RunCloseTrailersTest(
     bool failure_mode_allow, bool observability_mode,
     grpc::StatusCode expected_status_code, std::string expected_error_message) {
   auto mock_service =
-      std::make_shared<TrailersCloseMockService>(stage, close_status);
-  StartAlternativeServer(mock_service);
+      std::make_unique<TrailersCloseMockService>(stage, close_status);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6847,9 +6845,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamErrorCloseDuringResponseTrailersFailOpen) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseBody, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6902,9 +6900,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyNoInFlightObservability) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseBody, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -6952,10 +6950,10 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseBody, 2,
       /*close_before_responding=*/true);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -7006,10 +7004,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyWithInFlightObservability) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseBody, 2,
       /*close_before_responding=*/true);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -7066,9 +7064,9 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersWithBodyFailClosed) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -7107,9 +7105,9 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersWithBodyFailOpen) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseHeaders);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -7147,9 +7145,9 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyNoInFlightWithFailureModeAllow) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseBody, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -7199,9 +7197,9 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamCleanCloseDuringResponseBodyNoInFlightObservabilityWithFailureModeAllow) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseBody, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -7251,10 +7249,10 @@ TEST_P(
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyWithInFlightWithFailureModeAllow) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseBody, 2,
       /*close_before_responding=*/true);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -7306,10 +7304,10 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamCleanCloseDuringResponseBodyWithInFlightObservabilityWithFailureModeAllow) {
-  auto mock_service = std::make_shared<CleanCloseMockService>(
+  auto mock_service = std::make_unique<CleanCloseMockService>(
       CleanCloseMockService::CloseStage::kDuringResponseBody, 2,
       /*close_before_responding=*/true);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -7365,9 +7363,9 @@ TEST_P(
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
-  auto mock_service = std::make_shared<DrainMockService>(
+  auto mock_service = std::make_unique<DrainMockService>(
       DrainMockService::TriggerPoint::kClientBody, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -7415,9 +7413,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainServerBody) {
-  auto mock_service = std::make_shared<DrainMockService>(
+  auto mock_service = std::make_unique<DrainMockService>(
       DrainMockService::TriggerPoint::kServerBody, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -7463,9 +7461,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainServerBody) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestHeaders) {
-  auto mock_service = std::make_shared<DrainMockService>(
+  auto mock_service = std::make_unique<DrainMockService>(
       DrainMockService::TriggerPoint::kRequestHeaders, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -7508,9 +7506,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestHeaders) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseHeaders) {
-  auto mock_service = std::make_shared<DrainMockService>(
+  auto mock_service = std::make_unique<DrainMockService>(
       DrainMockService::TriggerPoint::kResponseHeaders, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
@@ -7548,9 +7546,9 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseHeaders) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseTrailers) {
-  auto mock_service = std::make_shared<DrainMockService>(
+  auto mock_service = std::make_unique<DrainMockService>(
       DrainMockService::TriggerPoint::kResponseTrailers, 1);
-  StartAlternativeServer(mock_service);
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
   ResetStubWithUniqueArg();
