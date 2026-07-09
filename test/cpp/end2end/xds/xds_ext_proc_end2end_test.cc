@@ -519,6 +519,36 @@ class GenericMockService : public MockExternalProcessorBase {
   Callback callback_;
 };
 
+class StatusMockService : public MockExternalProcessorBase {
+ public:
+  using Callback = std::function<grpc::Status(
+      const ::envoy::service::ext_proc::v3::ProcessingRequest&,
+      ::envoy::service::ext_proc::v3::ProcessingResponse*)>;
+
+  explicit StatusMockService(Callback callback)
+      : callback_(std::move(callback)) {}
+
+  grpc::Status Process(
+      grpc::ServerContext* /*context*/,
+      grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
+    ::envoy::service::ext_proc::v3::ProcessingRequest request;
+    while (stream->Read(&request)) {
+      ::envoy::service::ext_proc::v3::ProcessingResponse response;
+      grpc::Status status = callback_(request, &response);
+      if (!status.ok()) {
+        return status;
+      }
+      stream->Write(response);
+    }
+    return grpc::Status::OK;
+  }
+
+ private:
+  Callback callback_;
+};
+
 class TrailersCloseMockService : public MockExternalProcessorBase {
  public:
   enum class CloseStage {
@@ -1933,7 +1963,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersRequestAttributesSent) {
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       RequestHeadersExtProcConnectionErrorFailModeFalse) {
+       RequestHeadersExtProcConnectionErrorFailureModeFalse) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2133,7 +2163,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       RequestHeadersObservabilityExtProcConnectionErrorFailCall) {
+       RequestHeadersObservabilityExtProcConnectionErrorFailureModeFalse) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2164,7 +2194,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       RequestHeadersObservabilityExtProcConnectionErrorAllowCall) {
+       RequestHeadersObservabilityExtProcConnectionErrorFailureModeTrue) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2194,7 +2224,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ResponseHeadersObservabilityExtProcConnectionErrorFailCall) {
+       ResponseHeadersObservabilityExtProcConnectionErrorFailureModeFalse) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2223,7 +2253,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ResponseHeadersObservabilityExtProcConnectionErrorAllowCall) {
+       ResponseHeadersObservabilityExtProcConnectionErrorFailureModeTrue) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2403,32 +2433,18 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
 
-class CloseExtProcStreamOnRequestBodyMockService
-    : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    while (stream->Read(&request)) {
-      if (request.has_request_body()) {
-        // Return an error to close the stream immediately on receiving body
-        return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                            "Closed on body");
-      }
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      SetDefaultEmptyResponse(request, &response);
-      stream->Write(response);
-    }
-    return grpc::Status::OK;
-  }
-};
-
-TEST_P(XdsExtProcEnd2endTest, RequestBodyExtProcConnectionErrorFailCall) {
-  auto mock_service =
-      std::make_unique<CloseExtProcStreamOnRequestBodyMockService>();
+TEST_P(XdsExtProcEnd2endTest,
+       RequestBodyExtProcConnectionErrorFailureModeFalse) {
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_request_body()) {
+          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                              "Closed on body");
+        }
+        SetDefaultEmptyResponse(request, response);
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -2458,9 +2474,18 @@ TEST_P(XdsExtProcEnd2endTest, RequestBodyExtProcConnectionErrorFailCall) {
   EXPECT_THAT(status.error_message(), ::testing::HasSubstr("Closed on body"));
 }
 
-TEST_P(XdsExtProcEnd2endTest, RequestBodyExtProcConnectionErrorAllowCall) {
-  auto mock_service =
-      std::make_unique<CloseExtProcStreamOnRequestBodyMockService>();
+TEST_P(XdsExtProcEnd2endTest,
+       RequestBodyExtProcConnectionErrorFailureModeTrue) {
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_request_body()) {
+          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                              "Closed on body");
+        }
+        SetDefaultEmptyResponse(request, response);
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -2493,11 +2518,19 @@ TEST_P(XdsExtProcEnd2endTest, RequestBodyExtProcConnectionErrorAllowCall) {
   EXPECT_THAT(status.error_message(), ::testing::HasSubstr("Closed on body"));
 }
 
-TEST_P(XdsExtProcEnd2endTest, ObservabilityRequestBodyFailClosed) {
-  auto mock_service =
-      std::make_unique<CloseExtProcStreamOnRequestBodyMockService>();
-  StartAlternativeServer(
-      std::move(mock_service));  // Shuts down default and starts alternative
+TEST_P(XdsExtProcEnd2endTest,
+       RequestBodyObservabilityExtProcConnectionErrorFailureModeFalse) {
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_request_body()) {
+          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                              "Closed on body");
+        }
+        SetDefaultEmptyResponse(request, response);
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -2526,11 +2559,19 @@ TEST_P(XdsExtProcEnd2endTest, ObservabilityRequestBodyFailClosed) {
   EXPECT_EQ(status.error_code(), StatusCode::RESOURCE_EXHAUSTED);
 }
 
-TEST_P(XdsExtProcEnd2endTest, ObservabilityRequestBodyFailOpen) {
-  auto mock_service =
-      std::make_unique<CloseExtProcStreamOnRequestBodyMockService>();
-  StartAlternativeServer(
-      std::move(mock_service));  // Shuts down default and starts alternative
+TEST_P(XdsExtProcEnd2endTest,
+       RequestBodyObservabilityExtProcConnectionErrorFailureModeTrue) {
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_request_body()) {
+          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                              "Closed on body");
+        }
+        SetDefaultEmptyResponse(request, response);
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
