@@ -2452,7 +2452,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -2493,7 +2493,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open!
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -2538,7 +2538,7 @@ TEST_P(XdsExtProcEnd2endTest,
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
           .SetObservabilityMode(true)
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -2579,7 +2579,7 @@ TEST_P(XdsExtProcEnd2endTest,
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
           .SetObservabilityMode(true)
-          .SetFailureModeAllow(true)  // Fail-open!
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -2599,33 +2599,18 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(status.ok()) << "Expected OK, got: " << status.error_message();
 }
 
-class CloseExtProcStreamOnResponseBodyMockService
-    : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    while (stream->Read(&request)) {
-      if (request.has_response_body()) {
-        // Return an error to close the stream immediately on receiving response
-        // body
-        return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                            "Closed on response body");
-      }
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      SetDefaultEmptyResponse(request, &response);
-      stream->Write(response);
-    }
-    return grpc::Status::OK;
-  }
-};
-
-TEST_P(XdsExtProcEnd2endTest, ObservabilityResponseBodyFailClosed) {
-  auto mock_service =
-      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+TEST_P(XdsExtProcEnd2endTest,
+       ResponseBodyObservabilityExtProcConnectionErrorFailureModeFalse) {
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_body()) {
+          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                              "Closed on response body");
+        }
+        SetDefaultEmptyResponse(request, response);
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -2634,7 +2619,7 @@ TEST_P(XdsExtProcEnd2endTest, ObservabilityResponseBodyFailClosed) {
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
           .SetObservabilityMode(true)
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -2661,9 +2646,18 @@ TEST_P(XdsExtProcEnd2endTest, ObservabilityResponseBodyFailClosed) {
       << status.error_message();
 }
 
-TEST_P(XdsExtProcEnd2endTest, ObservabilityResponseBodyFailOpen) {
-  auto mock_service =
-      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+TEST_P(XdsExtProcEnd2endTest,
+       ResponseBodyObservabilityExtProcConnectionErrorFailureModeTrue) {
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_body()) {
+          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                              "Closed on response body");
+        }
+        SetDefaultEmptyResponse(request, response);
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -2672,7 +2666,7 @@ TEST_P(XdsExtProcEnd2endTest, ObservabilityResponseBodyFailOpen) {
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
           .SetObservabilityMode(true)
-          .SetFailureModeAllow(true)  // Fail-open!
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -2726,7 +2720,7 @@ TEST_P(XdsExtProcEnd2endTest, DuplicateRequestBodyResponseFailsCall) {
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -3462,7 +3456,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SKIP)
           .SetResponseTrailerMode(ProcessingMode::SKIP)
@@ -3554,7 +3548,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SKIP)
           .SetResponseTrailerMode(ProcessingMode::SKIP)
@@ -3646,7 +3640,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -3748,7 +3742,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -3976,7 +3970,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -4042,7 +4036,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -4131,9 +4125,17 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyExtProcConnectionErrorFailCall) {
-  auto mock_service =
-      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+       ServerToClientResponseBodyExtProcConnectionErrorFailureModeFalse) {
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_body()) {
+          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                              "Closed on response body");
+        }
+        SetDefaultEmptyResponse(request, response);
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4141,7 +4143,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -4175,9 +4177,17 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyExtProcConnectionErrorAllowCall) {
-  auto mock_service =
-      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+       ServerToClientResponseBodyExtProcConnectionErrorFailureModeTrue) {
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_body()) {
+          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                              "Closed on response body");
+        }
+        SetDefaultEmptyResponse(request, response);
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4185,7 +4195,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open!
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -4220,11 +4230,20 @@ TEST_P(XdsExtProcEnd2endTest,
               ::testing::HasSubstr("Closed on response body"));
 }
 
-TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyObservabilityExtProcConnectionErrorFailCall) {
+TEST_P(
+    XdsExtProcEnd2endTest,
+    ServerToClientResponseBodyObservabilityExtProcConnectionErrorFailureModeFalse) {
   ResetStubWithUniqueArg();
-  auto mock_service =
-      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_body()) {
+          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                              "Closed on response body");
+        }
+        SetDefaultEmptyResponse(request, response);
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4268,11 +4287,20 @@ TEST_P(XdsExtProcEnd2endTest,
               ::testing::HasSubstr("Closed on response body"));
 }
 
-TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyObservabilityExtProcConnectionErrorAllowCall) {
+TEST_P(
+    XdsExtProcEnd2endTest,
+    ServerToClientResponseBodyObservabilityExtProcConnectionErrorFailureModeTrue) {
   ResetStubWithUniqueArg();
-  auto mock_service =
-      std::make_unique<CloseExtProcStreamOnResponseBodyMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_body()) {
+          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                              "Closed on response body");
+        }
+        SetDefaultEmptyResponse(request, response);
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4582,7 +4610,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -4623,7 +4651,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open!
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -5114,7 +5142,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open!
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::GRPC)
           .SetResponseHeaderMode(ProcessingMode::SEND)   // Enable S2C headers
@@ -5162,7 +5190,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::GRPC)
           .SetResponseHeaderMode(ProcessingMode::SEND)   // Enable S2C headers
@@ -5208,7 +5236,7 @@ TEST_P(
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open!
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::NONE)     // Skip body
           .SetResponseHeaderMode(ProcessingMode::SEND)  // Enable S2C headers
@@ -5241,7 +5269,7 @@ TEST_P(
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::NONE)     // Skip body
           .SetResponseHeaderMode(ProcessingMode::SEND)  // Enable S2C headers
@@ -5276,7 +5304,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open!
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::NONE)
           .SetResponseHeaderMode(
@@ -5311,7 +5339,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::NONE)
           .SetResponseHeaderMode(
@@ -5348,7 +5376,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open!
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::NONE)
           .SetResponseHeaderMode(ProcessingMode::SKIP)
@@ -5380,7 +5408,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail-closed!
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::NONE)
           .SetResponseHeaderMode(ProcessingMode::SKIP)
