@@ -222,9 +222,7 @@ XdsRouting::RouteConfigFilterChainBuilder::GetDefaultFilterChain() {
     for (size_t i = 0; i < filter_impls_.size(); ++i) {
       auto* filter_impl = filter_impls_[i];
       const auto& filter_config = hcm_filter_configs_[i];
-      if (filter_config.disabled) {
-        continue;
-      }
+      if (filter_config.disabled) continue;
       RefCountedPtr<const FilterConfig> config;
       if (filter_config.filter_config != nullptr) {
         config = filter_impl->MergeConfigs(filter_config.filter_config, nullptr,
@@ -513,8 +511,7 @@ XdsRouting::GeneratePerHTTPFilterConfigsForMethodConfig(
       http_filter_registry, http_filters, args,
       [&](const XdsHttpFilterImpl& filter_impl,
           const XdsListenerResource::HttpConnectionManager::HttpFilter&
-              http_filter)
-          -> absl::StatusOr<XdsHttpFilterImpl::ServiceConfigJsonEntry> {
+              http_filter) {
         // Find override config, if any.
         const XdsRouteConfigResource::FilterConfigOverride*
             filter_config_override = FindFilterConfigOverride(
@@ -541,8 +538,7 @@ XdsRouting::GeneratePerHTTPFilterConfigsForServiceConfig(
       http_filter_registry, http_filters, args,
       [&](const XdsHttpFilterImpl& filter_impl,
           const XdsListenerResource::HttpConnectionManager::HttpFilter&
-              http_filter)
-          -> absl::StatusOr<XdsHttpFilterImpl::ServiceConfigJsonEntry> {
+              http_filter) {
         return filter_impl.GenerateServiceConfig(http_filter.config);
       });
 }

@@ -186,11 +186,11 @@ class TestHttpFilter final : public XdsHttpFilterImpl {
   }
   absl::StatusOr<ServiceConfigJsonEntry> GenerateMethodConfig(
       const Json&, const Json*) const override {
-    return ServiceConfigJsonEntry{"test_field", "method_config"};
+    return absl::UnimplementedError("not implemented");
   }
   absl::StatusOr<ServiceConfigJsonEntry> GenerateServiceConfig(
       const Json&) const override {
-    return ServiceConfigJsonEntry{"test_field", "service_config"};
+    return absl::UnimplementedError("not implemented");
   }
 };
 
@@ -238,11 +238,8 @@ MATCHER_P(IsFilterChain, matcher, "") {
     *result_listener << arg.status();
     return false;
   }
-  if (*arg == nullptr) {
-    decltype(FakeFilterChain::filters) empty_filters;
-    return ::testing::ExplainMatchResult(matcher, empty_filters,
-                                         result_listener);
-  }
+  std::vector<FilterAndConfig> empty_filters;
+  return ::testing::ExplainMatchResult(matcher, empty_filters, result_listener);
   return ::testing::ExplainMatchResult(
       matcher, DownCast<const FakeFilterChain&>(**arg).filters,
       result_listener);
@@ -252,7 +249,6 @@ class XdsRouteConfigFilterChainBuilderTest : public ::testing::Test {
  protected:
   void SetUp() override {
     registry_.RegisterFilter(std::make_unique<TestHttpFilter>());
-
     blackboard_ = MakeRefCounted<Blackboard>();
   }
 
