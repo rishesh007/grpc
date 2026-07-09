@@ -635,6 +635,7 @@ grpc_cc_test(
         "//:grpc++_codegen_proto",
         "//:grpc++_config_proto",
         "//:grpc++_public_hdrs",
+        "//:grpc_public_hdrs",
         "//:grpc_trace",
         "//:ref_counted_ptr",
         "//:xds_client",
