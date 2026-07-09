@@ -282,7 +282,7 @@ python_config_settings()
 # This should be updated along with build_handwritten.yaml
 g_stands_for = "garden"  # @unused
 
-core_version = "55.0.0"  # @unused
+core_version = "56.0.0"  # @unused
 
 version = "1.83.0-dev"  # @unused
 
