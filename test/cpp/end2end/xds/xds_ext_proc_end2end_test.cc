@@ -3295,8 +3295,7 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_EQ(method_received, "POST");
 }
 
-TEST_P(XdsExtProcEnd2endTest,
-       ClientToServerRequestBodyContinueAndReplaceFailClosedFailsCall) {
+TEST_P(XdsExtProcEnd2endTest, RequestBodyContinueAndReplaceFailureModeFalse) {
   auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3341,8 +3340,7 @@ TEST_P(XdsExtProcEnd2endTest,
               ::testing::HasSubstr("CONTINUE_AND_REPLACE is not supported"));
 }
 
-TEST_P(XdsExtProcEnd2endTest,
-       ClientToServerRequestBodyContinueAndReplaceFailOpenFailsCall) {
+TEST_P(XdsExtProcEnd2endTest, RequestBodyContinueAndReplaceFailureModeTrue) {
   auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3364,7 +3362,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open (configured)
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SKIP)
           .SetResponseTrailerMode(ProcessingMode::SKIP)
@@ -3381,7 +3379,9 @@ TEST_P(XdsExtProcEnd2endTest,
   RpcOptions rpc_options;
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  // Should STILL fail because it is committed!
+  // Even though failure_mode_allow is true (fail-open), the RPC must still fail
+  // because the external processor returned an unsupported response (protocol
+  // error), not a connection error.
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(status.error_message(),
@@ -3389,7 +3389,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ClientToServerRequestBodyGrpcMessageCompressedFailClosedFailsCall) {
+       RequestBodyGrpcMessageCompressedFailureModeFalse) {
   auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3433,8 +3433,7 @@ TEST_P(XdsExtProcEnd2endTest,
               ::testing::HasSubstr("grpc_message_compressed is not supported"));
 }
 
-TEST_P(XdsExtProcEnd2endTest,
-       ClientToServerRequestBodyGrpcMessageCompressedFailOpenFailsCall) {
+TEST_P(XdsExtProcEnd2endTest, RequestBodyGrpcMessageCompressedFailureModeTrue) {
   auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3455,7 +3454,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open (configured)
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SKIP)
           .SetResponseTrailerMode(ProcessingMode::SKIP)
@@ -3472,7 +3471,9 @@ TEST_P(XdsExtProcEnd2endTest,
   RpcOptions rpc_options;
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  // Should STILL fail because it is committed!
+  // Even though failure_mode_allow is true (fail-open), the RPC must still fail
+  // because the external processor returned an unsupported response (protocol
+  // error), not a connection error.
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(status.error_message(),
@@ -3480,7 +3481,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyContinueAndReplaceFailClosedFailsCall) {
+       BidiStreamResponseBodyContinueAndReplaceFailureModeFalse) {
   auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3531,7 +3532,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyContinueAndReplaceFailOpenFailsCall) {
+       BidiStreamResponseBodyContinueAndReplaceFailureModeTrue) {
   auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3553,7 +3554,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open (configured)
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -3575,7 +3576,9 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  // Should STILL fail because it is committed!
+  // Even though failure_mode_allow is true (fail-open), the RPC must still fail
+  // because the external processor returned an unsupported response (protocol
+  // error), not a connection error.
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(status.error_message(),
@@ -3583,7 +3586,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyGrpcMessageCompressedFailClosedFailsCall) {
+       BidiStreamResponseBodyGrpcMessageCompressedFailureModeFalse) {
   auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3633,7 +3636,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyGrpcMessageCompressedFailOpenFailsCall) {
+       BidiStreamResponseBodyGrpcMessageCompressedFailureModeTrue) {
   auto mock_service = std::make_unique<GenericMockService>(
       [&](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3654,7 +3657,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open (configured)
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
@@ -3676,7 +3679,9 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  // Should STILL fail because it is committed!
+  // Even though failure_mode_allow is true (fail-open), the RPC must still fail
+  // because the external processor returned an unsupported response (protocol
+  // error), not a connection error.
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(status.error_message(),
@@ -3947,7 +3952,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(true)  // Fail-open (configured)
+          .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseTrailerMode(ProcessingMode::SEND)
