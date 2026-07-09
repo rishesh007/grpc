@@ -196,7 +196,7 @@ XdsRouting::RouteConfigFilterChainBuilder::RouteConfigFilterChainBuilder(
     const XdsHttpFilterRegistry& http_filter_registry,
     FilterChainBuilder& builder,
     absl::AnyInvocable<void(FilterChainBuilder&)> add_last_filter,
-    Blackboard& blackboard, XdsTransportFactory& transport_factory)
+    XdsTransportFactory& transport_factory, Blackboard& blackboard)
     : hcm_filter_configs_(hcm_filter_configs),
       builder_(builder),
       add_last_filter_(std::move(add_last_filter)),
@@ -299,9 +299,7 @@ XdsRouting::RouteConfigFilterChainBuilder::VirtualHostFilterChainBuilder::
   GRPC_TRACE_LOG(xds_resolver, INFO)
       << "Building filter chain for route:" << route.ToString();
   // If there are no per-route overrides, use the vhost filter chain.
-  if (route.typed_per_filter_config.empty()) {
-    return GetVirtualHostFilterChain();
-  }
+  if (route.typed_per_filter_config.empty()) return GetVirtualHostFilterChain();
   // Otherwise, build a new filter chain for the route.
   for (size_t i = 0; i < route_config_builder_.filter_impls_.size(); ++i) {
     auto* filter_impl = route_config_builder_.filter_impls_[i];

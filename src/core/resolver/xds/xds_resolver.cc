@@ -432,7 +432,7 @@ void XdsResolver::RouteConfigData::BuildFilterChains(
       [](FilterChainBuilder& builder) {
         builder.AddFilter<ClusterSelectionFilter>(nullptr);
       },
-      blackboard, transport_factory);
+      transport_factory, blackboard);
   auto vhost_builder = route_config_builder.MakeVirtualHostFilterChainBuilder(
       *xds_config.virtual_host);
   // Set the filter chain for each route.
