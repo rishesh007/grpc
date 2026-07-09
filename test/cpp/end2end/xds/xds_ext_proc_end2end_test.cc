@@ -1932,7 +1932,8 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersRequestAttributesSent) {
   EXPECT_EQ(method_received, "POST");
 }
 
-TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorFailModeFalse) {
+TEST_P(XdsExtProcEnd2endTest,
+       RequestHeadersExtProcConnectionErrorFailModeFalse) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -1961,7 +1962,8 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorFailModeFalse)
   EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
 }
 
-TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorFailureModeTrue) {
+TEST_P(XdsExtProcEnd2endTest,
+       RequestHeadersExtProcConnectionErrorFailureModeTrue) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2075,7 +2077,8 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersInvalidHeaderMutationFails) {
                   "error:header \"host\" not allowed]"));
 }
 
-TEST_P(XdsExtProcEnd2endTest, ResponseHeadersExtProcConnectionErrorFailCall) {
+TEST_P(XdsExtProcEnd2endTest,
+       ResponseHeadersExtProcConnectionErrorFailureModeFalse) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2102,7 +2105,8 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersExtProcConnectionErrorFailCall) {
   EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
 }
 
-TEST_P(XdsExtProcEnd2endTest, ResponseHeadersExtProcConnectionErrorAllowCall) {
+TEST_P(XdsExtProcEnd2endTest,
+       ResponseHeadersExtProcConnectionErrorFailureModeTrue) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2156,8 +2160,7 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED));
+  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -2216,8 +2219,7 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED));
+  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -2293,7 +2295,8 @@ TEST_P(XdsExtProcEnd2endTest, ResponseTrailersInvalidHeaderMutationFails) {
                   "error:header \"host\" not allowed]"));
 }
 
-TEST_P(XdsExtProcEnd2endTest, ResponseTrailersExtProcConnectionErrorFailCall) {
+TEST_P(XdsExtProcEnd2endTest,
+       ResponseTrailersExtProcConnectionErrorFailureModeFalse) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2316,11 +2319,11 @@ TEST_P(XdsExtProcEnd2endTest, ResponseTrailersExtProcConnectionErrorFailCall) {
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED));
+  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
 }
 
-TEST_P(XdsExtProcEnd2endTest, ResponseTrailersExtProcConnectionErrorAllowCall) {
+TEST_P(XdsExtProcEnd2endTest,
+       ResponseTrailersExtProcConnectionErrorFailureModeTrue) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2346,7 +2349,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseTrailersExtProcConnectionErrorAllowCall) {
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ResponseTrailersObservabilityExtProcConnectionErrorFailCall) {
+       ResponseTrailersObservabilityExtProcConnectionErrorFailureModeFalse) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2370,12 +2373,11 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED));
+  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ResponseTrailersObservabilityExtProcConnectionErrorAllowCall) {
+       ResponseTrailersObservabilityExtProcConnectionErrorFailureModeTrue) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2399,128 +2401,6 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_TRUE(status.ok()) << status.error_message();
-}
-
-TEST_P(XdsExtProcEnd2endTest, TrailersOnlyExtProcConnectionErrorFailCall) {
-  int port = grpc_pick_unused_port_or_die();
-  std::string target = absl::StrCat("localhost:", port);
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(target)
-                             .SetInsecureChannelCredentials()
-                             .SetFailureModeAllow(false)
-                             .SetRequestHeaderMode(ProcessingMode::SKIP)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_server_expected_error(StatusCode::INVALID_ARGUMENT);
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED));
-}
-
-TEST_P(XdsExtProcEnd2endTest, TrailersOnlyExtProcConnectionErrorAllowCall) {
-  int port = grpc_pick_unused_port_or_die();
-  std::string target = absl::StrCat("localhost:", port);
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(target)
-                             .SetInsecureChannelCredentials()
-                             .SetFailureModeAllow(true)
-                             .SetRequestHeaderMode(ProcessingMode::SKIP)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_server_expected_error(StatusCode::INVALID_ARGUMENT);
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INVALID_ARGUMENT);
-}
-
-TEST_P(XdsExtProcEnd2endTest,
-       TrailersOnlyObservabilityExtProcConnectionErrorFailCall) {
-  int port = grpc_pick_unused_port_or_die();
-  std::string target = absl::StrCat("localhost:", port);
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(target)
-                             .SetInsecureChannelCredentials()
-                             .SetFailureModeAllow(false)
-                             .SetObservabilityMode(true)
-                             .SetRequestHeaderMode(ProcessingMode::SKIP)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_server_expected_error(StatusCode::INVALID_ARGUMENT);
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED));
-}
-
-TEST_P(XdsExtProcEnd2endTest,
-       TrailersOnlyObservabilityExtProcConnectionErrorAllowCall) {
-  int port = grpc_pick_unused_port_or_die();
-  std::string target = absl::StrCat("localhost:", port);
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(target)
-                             .SetInsecureChannelCredentials()
-                             .SetFailureModeAllow(true)
-                             .SetObservabilityMode(true)
-                             .SetRequestHeaderMode(ProcessingMode::SKIP)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_server_expected_error(StatusCode::INVALID_ARGUMENT);
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INVALID_ARGUMENT);
 }
 
 class CloseExtProcStreamOnRequestBodyMockService
