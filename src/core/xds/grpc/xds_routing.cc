@@ -255,6 +255,12 @@ RefCountedPtr<const FilterConfig> GetOverrideConfig(
   return it->second.filter_config;
 }
 
+// Returns true if the filter is disabled.
+// The resolution order for the disabled flag is:
+// 1. ClusterWeight override (most specific)
+// 2. Route override
+// 3. VirtualHost override
+// 4. HCM config (least specific, default)
 bool IsFilterDisabled(
     const XdsHttpFilterImpl* filter_impl,
     const XdsListenerResource::HttpConnectionManager::HttpFilter&

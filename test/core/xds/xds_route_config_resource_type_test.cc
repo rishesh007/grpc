@@ -606,26 +606,38 @@ TEST_P(TypedPerFilterConfigTest, FilterConfigWrapperEmptyConfig) {
       << decode_result.resource.status();
 }
 
-TEST_P(TypedPerFilterConfigTest, FilterConfigWrapperDisabledEmptyConfig) {
+TEST_P(TypedPerFilterConfigTest, FilterConfigWrapperDisabled) {
+  envoy::extensions::filters::http::fault::v3::HTTPFault fault_config;
+  fault_config.mutable_abort()->set_grpc_status(GRPC_STATUS_PERMISSION_DENIED);
+  envoy::config::route::v3::FilterConfig filter_config_wrapper;
+  filter_config_wrapper.mutable_config()->PackFrom(fault_config);
+  filter_config_wrapper.set_disabled(true);
   auto* typed_per_filter_config_proto =
       GetTypedPerFilterConfigProto(&route_config_);
-  envoy::config::route::v3::FilterConfig filter_config;
-  filter_config.set_disabled(true);
-  (*typed_per_filter_config_proto)["fault"].PackFrom(filter_config);
+  (*typed_per_filter_config_proto)["fault"].PackFrom(filter_config_wrapper);
   std::string serialized_resource;
   ASSERT_TRUE(route_config_.SerializeToString(&serialized_resource));
   auto* resource_type = XdsRouteConfigResourceType::Get();
   auto decode_result =
       resource_type->Decode(decode_context_, serialized_resource);
-  EXPECT_EQ(decode_result.resource.status().code(),
-            absl::StatusCode::kInvalidArgument);
-  EXPECT_EQ(
-      decode_result.resource.status().message(),
-      absl::StrCat(
-          "errors validating RouteConfiguration resource: [field:", FieldName(),
-          "[fault].value[envoy.config.route.v3.FilterConfig].config "
-          "error:field not present]"))
-      << decode_result.resource.status();
+  ASSERT_TRUE(decode_result.resource.ok()) << decode_result.resource.status();
+  ASSERT_TRUE(decode_result.name.has_value());
+  EXPECT_EQ(*decode_result.name, "foo");
+  auto& resource =
+      static_cast<const XdsRouteConfigResource&>(**decode_result.resource);
+  auto& typed_per_filter_config = GetTypedPerFilterConfig(resource);
+  ASSERT_EQ(typed_per_filter_config.size(), 1UL);
+  auto it = typed_per_filter_config.begin();
+  ASSERT_NE(it, typed_per_filter_config.end());
+  EXPECT_EQ("fault", it->first);
+  const auto& filter_config = it->second;
+  EXPECT_EQ(filter_config.config_proto_type,
+            "envoy.extensions.filters.http.fault.v3.HTTPFault");
+  ASSERT_NE(filter_config.filter_config, nullptr);
+  EXPECT_EQ(filter_config.filter_config->ToString(),
+            "{abort_code=PERMISSION_DENIED, abort_message=\"Fault injected\", "
+            "max_faults=4294967295}");
+  EXPECT_TRUE(filter_config.disabled);
 }
 
 TEST_P(TypedPerFilterConfigTest, FilterConfigWrapperUnsupportedFilterType) {

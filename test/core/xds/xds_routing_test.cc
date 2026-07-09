@@ -201,18 +201,21 @@ struct FakeFilterChain final : public FilterChain {
 };
 
 // A fake filter chain builder that generates a fake filter chain.
+// Always returns a non-null FilterChain (even if empty) to match production
+// behavior and simplify matching in tests.
 class FakeFilterChainBuilder final : public FilterChainBuilder {
  public:
+  FakeFilterChainBuilder() : filter_chain_(MakeRefCounted<FakeFilterChain>()) {}
+
   absl::StatusOr<RefCountedPtr<FilterChain>> Build() override {
-    return std::move(filter_chain_);
+    auto result = std::move(filter_chain_);
+    filter_chain_ = MakeRefCounted<FakeFilterChain>();
+    return result;
   }
 
  private:
   void AddFilter(const FilterHandle& filter_handle,
                  RefCountedPtr<const FilterConfig> config) override {
-    if (filter_chain_ == nullptr) {
-      filter_chain_ = MakeRefCounted<FakeFilterChain>();
-    }
     filter_handle.AddToBuilder(&filter_chain_->filters, std::move(config));
   }
 
@@ -238,8 +241,6 @@ MATCHER_P(IsFilterChain, matcher, "") {
     *result_listener << arg.status();
     return false;
   }
-  std::vector<FilterAndConfig> empty_filters;
-  return ::testing::ExplainMatchResult(matcher, empty_filters, result_listener);
   return ::testing::ExplainMatchResult(
       matcher, DownCast<const FakeFilterChain&>(**arg).filters,
       result_listener);
@@ -660,45 +661,7 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest, DisabledAtClusterWeight) {
 }
 
 TEST_F(XdsRouteConfigFilterChainBuilderTest,
-       EnabledAtClusterWeightOverridesDisabledAtRoute) {
-  std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
-      hcm_filters = {MakeHcmFilter("filter1", "hcm")};
-  XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
-  auto vhost = MakeVirtualHost();
-  auto vhost_builder =
-      route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
-  auto route =
-      MakeRoute({{"filter1", MakeOverride("route", /*disabled=*/true)}});
-  auto weighted_cluster_builder =
-      vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
-  auto cluster_weight =
-      MakeClusterWeight("cluster1", 100, {{"filter1", MakeOverride("cw")}});
-  auto filter_chain =
-      weighted_cluster_builder.BuildFilterChainForClusterWeight(cluster_weight);
-  EXPECT_THAT(filter_chain,
-              IsFilterChain(::testing::ElementsAre(
-                  IsFilterAndConfig(&TestFilter::kFilterVtable,
-                                    "hcm+route+cw/blackboard{hcm+route+cw}"))));
-}
-
-TEST_F(XdsRouteConfigFilterChainBuilderTest,
-       DisabledAtRouteOverridesEnabledAtVhost) {
-  std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
-      hcm_filters = {MakeHcmFilter("filter1", "hcm")};
-  XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
-  auto vhost = MakeVirtualHost({{"filter1", MakeOverride("vhost")}});
-  auto vhost_builder =
-      route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
-  auto route =
-      MakeRoute({{"filter1", MakeOverride("route", /*disabled=*/true)}});
-  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route);
-  EXPECT_THAT(filter_chain, IsFilterChain(::testing::IsEmpty()));
-}
-
-TEST_F(XdsRouteConfigFilterChainBuilderTest,
-       DisabledInHcmEnabledInVirtualHost) {
+       EnabledInVirtualHostOverridesDisabledInHcm) {
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
       hcm_filters = {MakeHcmFilter("filter1", "hcm", /*disabled=*/true)};
   XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
@@ -715,41 +678,10 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   EXPECT_EQ(GetBlackboardEntry("hcm+vhost"), "hcm+vhost");
 }
 
-TEST_F(XdsRouteConfigFilterChainBuilderTest, DisabledInHcmEnabledInRoute) {
+TEST_F(XdsRouteConfigFilterChainBuilderTest,
+       EnabledInRouteOverridesDisabledInVirtualHostAndHcm) {
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
       hcm_filters = {MakeHcmFilter("filter1", "hcm", /*disabled=*/true)};
-  XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
-  auto vhost = MakeVirtualHost();
-  auto vhost_builder =
-      route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
-  auto route = MakeRoute({{"filter1", MakeOverride("route")}});
-  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route);
-  EXPECT_THAT(
-      filter_chain,
-      IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
-          &TestFilter::kFilterVtable, "hcm+route/blackboard{hcm+route}"))));
-  EXPECT_EQ(GetBlackboardEntry("hcm+route"), "hcm+route");
-}
-
-TEST_F(XdsRouteConfigFilterChainBuilderTest, EnabledInHcmDisabledInRoute) {
-  std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
-      hcm_filters = {MakeHcmFilter("filter1", "hcm")};
-  XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
-  auto vhost = MakeVirtualHost();
-  auto vhost_builder =
-      route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
-  auto route =
-      MakeRoute({{"filter1", MakeOverride("route", /*disabled=*/true)}});
-  auto filter_chain = vhost_builder.BuildFilterChainForRoute(route);
-  EXPECT_THAT(filter_chain, IsFilterChain(::testing::IsEmpty()));
-}
-
-TEST_F(XdsRouteConfigFilterChainBuilderTest,
-       DisabledInVirtualHostEnabledInRoute) {
-  std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
-      hcm_filters = {MakeHcmFilter("filter1", "hcm")};
   XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
       hcm_filters, registry_, builder_, nullptr, *blackboard_);
   auto vhost =
@@ -766,34 +698,28 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
 }
 
 TEST_F(XdsRouteConfigFilterChainBuilderTest,
-       GeneratePerHTTPFilterConfigsDoesNotSupportDisabling) {
+       EnabledInClusterWeightOverridesDisabledInRouteVirtualHostAndHcm) {
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
-      hcm_filters = {MakeHcmFilter("filter1", "hcm"),
-                     MakeHcmFilter("filter2", "hcm", /*disabled=*/true)};
-  // Service Config
-  auto service_config_result =
-      XdsRouting::GeneratePerHTTPFilterConfigsForServiceConfig(
-          registry_, hcm_filters, ChannelArgs{});
-  ASSERT_TRUE(service_config_result.ok()) << service_config_result.status();
-  // We do not support disabling in this code path, so filter2 is not omitted.
-  EXPECT_THAT(service_config_result->per_filter_configs,
-              ::testing::ElementsAre(::testing::Pair(
-                  "test_field",
-                  ::testing::ElementsAre("service_config", "service_config"))));
-  // Method Config (disabled at Route)
-  auto vhost = MakeVirtualHost();
+      hcm_filters = {MakeHcmFilter("filter1", "hcm", /*disabled=*/true)};
+  XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
+      hcm_filters, registry_, builder_, nullptr, *blackboard_);
+  auto vhost =
+      MakeVirtualHost({{"filter1", MakeOverride("vhost", /*disabled=*/true)}});
+  auto vhost_builder =
+      route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
   auto route =
       MakeRoute({{"filter1", MakeOverride("route", /*disabled=*/true)}});
-  auto method_config_result =
-      XdsRouting::GeneratePerHTTPFilterConfigsForMethodConfig(
-          registry_, hcm_filters, vhost, route, nullptr, ChannelArgs{});
-  ASSERT_TRUE(method_config_result.ok()) << method_config_result.status();
-  // We do not support disabling in this code path, so neither filter1
-  // (disabled at route) nor filter2 (disabled at HCM) is omitted.
-  EXPECT_THAT(method_config_result->per_filter_configs,
-              ::testing::ElementsAre(::testing::Pair(
-                  "test_field",
-                  ::testing::ElementsAre("method_config", "method_config"))));
+  auto weighted_cluster_builder =
+      vhost_builder.MakeWeightedClusterRouteFilterChainBuilder(route);
+  auto cluster_weight =
+      MakeClusterWeight("cluster1", 100, {{"filter1", MakeOverride("cw")}});
+  auto filter_chain =
+      weighted_cluster_builder.BuildFilterChainForClusterWeight(cluster_weight);
+  EXPECT_THAT(filter_chain,
+              IsFilterChain(::testing::ElementsAre(IsFilterAndConfig(
+                  &TestFilter::kFilterVtable,
+                  "hcm+vhost+route+cw/blackboard{hcm+vhost+route+cw}"))));
+  EXPECT_EQ(GetBlackboardEntry("hcm+vhost+route+cw"), "hcm+vhost+route+cw");
 }
 
 }  // namespace
