@@ -471,16 +471,16 @@ void SetDefaultEmptyResponse(
         ->mutable_header_mutation();
   } else if (request.has_request_body()) {
     auto* body_mutation = response->mutable_request_body()
-                               ->mutable_response()
-                               ->mutable_body_mutation();
+                              ->mutable_response()
+                              ->mutable_body_mutation();
     body_mutation->mutable_streamed_response()->set_body(
         request.request_body().body());
     body_mutation->mutable_streamed_response()->set_end_of_stream(
         request.request_body().end_of_stream());
   } else if (request.has_response_body()) {
     auto* body_mutation = response->mutable_response_body()
-                               ->mutable_response()
-                               ->mutable_body_mutation();
+                              ->mutable_response()
+                              ->mutable_body_mutation();
     body_mutation->mutable_streamed_response()->set_body(
         request.response_body().body());
     body_mutation->mutable_streamed_response()->set_end_of_stream(
@@ -556,28 +556,50 @@ class TrailersCloseMockService : public MockExternalProcessorBase {
 
 class XdsExtProcEnd2endTest : public XdsEnd2endTest {
  public:
-  template <typename ServiceType>
-  class ExtProcServerThread : public XdsEnd2endTest::ServerThread {
+  class ExtProcServerBase {
    public:
-    ExtProcServerThread(XdsEnd2endTest* test_obj,
-                        std::shared_ptr<ServiceType> service)
-        : ServerThread(test_obj, /*use_xds_enabled_server=*/false,
-                       grpc::InsecureServerCredentials()),
-          ext_proc_service_(std::move(service)) {}
+    virtual ~ExtProcServerBase() = default;
+    virtual void Start() = 0;
+    virtual void Shutdown() = 0;
+    virtual std::string target() const = 0;
+    virtual int port() const = 0;
+  };
 
-    ServiceType* ext_proc_service() { return ext_proc_service_.get(); }
+  template <typename ServiceType>
+  class ExtProcServer : public ExtProcServerBase {
+   public:
+    ExtProcServer(std::shared_ptr<ServiceType> service)
+        : service_(std::move(service)), port_(grpc_pick_unused_port_or_die()) {}
 
-   private:
-    const char* Type() override { return "ExtProc"; }
-
-    void RegisterAllServices(ServerBuilder* builder) override {
-      builder->RegisterService(ext_proc_service_.get());
+    void Start() override {
+      LOG(INFO) << "starting ExtProc server on port " << port_;
+      std::string server_address = absl::StrCat("localhost:", port_);
+      ServerBuilder builder;
+      builder.AddListeningPort(server_address,
+                               grpc::InsecureServerCredentials());
+      builder.RegisterService(service_.get());
+      server_ = builder.BuildAndStart();
+      GRPC_CHECK(server_ != nullptr)
+          << "Failed to start ExtProcServer on " << server_address;
+      LOG(INFO) << "ExtProc server startup complete";
     }
 
-    void StartAllServices() override {}
-    void ShutdownAllServices() override {}
+    void Shutdown() override {
+      if (server_) {
+        server_->Shutdown(grpc_timeout_milliseconds_to_deadline(0));
+      }
+    }
 
-    std::shared_ptr<ServiceType> ext_proc_service_;
+    std::string target() const override {
+      return absl::StrCat("localhost:", port_);
+    }
+    int port() const override { return port_; }
+    ServiceType* ext_proc_service() { return service_.get(); }
+
+   private:
+    std::shared_ptr<ServiceType> service_;
+    int port_;
+    std::unique_ptr<Server> server_;
   };
 
   void ResetStubWithUniqueArg() {
@@ -605,8 +627,8 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
                /*xds_resource_does_not_exist_timeout_ms=*/0,
                /*balancer_authority_override=*/"", /*args=*/nullptr);
     ext_proc_server_ =
-        std::make_unique<ExtProcServerThread<MockExternalProcessorService>>(
-            this, std::make_shared<MockExternalProcessorService>());
+        std::make_unique<ExtProcServer<MockExternalProcessorService>>(
+            std::make_shared<MockExternalProcessorService>());
     ext_proc_server_->Start();
   }
 
@@ -624,8 +646,8 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
   void StartImmediateResponseServer() {
     ext_proc_server_->Shutdown();
     immediate_response_server_ =
-        std::make_unique<ExtProcServerThread<ImmediateResponseMockService>>(
-            this, std::make_shared<ImmediateResponseMockService>());
+        std::make_unique<ExtProcServer<ImmediateResponseMockService>>(
+            std::make_shared<ImmediateResponseMockService>());
     immediate_response_server_->Start();
   }
 
@@ -633,8 +655,7 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
   void StartAlternativeServer(std::shared_ptr<ServiceType> service) {
     ext_proc_server_->Shutdown();
     alternative_ext_proc_server_ =
-        std::make_unique<ExtProcServerThread<ServiceType>>(this,
-                                                           std::move(service));
+        std::make_unique<ExtProcServer<ServiceType>>(std::move(service));
     alternative_ext_proc_server_->Start();
   }
 
@@ -706,11 +727,10 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
                             grpc::StatusCode expected_status_code,
                             std::string expected_error_message = "");
 
-  std::unique_ptr<ExtProcServerThread<MockExternalProcessorService>>
-      ext_proc_server_;
-  std::unique_ptr<ExtProcServerThread<ImmediateResponseMockService>>
+  std::unique_ptr<ExtProcServer<MockExternalProcessorService>> ext_proc_server_;
+  std::unique_ptr<ExtProcServer<ImmediateResponseMockService>>
       immediate_response_server_;
-  std::unique_ptr<ServerThread> alternative_ext_proc_server_;
+  std::unique_ptr<ExtProcServerBase> alternative_ext_proc_server_;
 };
 
 INSTANTIATE_TEST_SUITE_P(XdsTest, XdsExtProcEnd2endTest,
@@ -728,7 +748,7 @@ void XdsExtProcEnd2endTest::RunProcessingModeTest(bool req_hdrs, bool resp_hdrs,
   if (observability_mode) {
     google::protobuf::Duration timeout;
     timeout.set_seconds(0);
-    timeout.set_nanos(100 * 1000 * 1000); // 100ms
+    timeout.set_nanos(100 * 1000 * 1000);  // 100ms
     ext_proc_config_builder.SetDeferredCloseTimeout(timeout);
   }
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -1856,8 +1876,9 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersInvalidHeaderMutationFails) {
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Failed to parse XdsHeaderValueOption: [field:header.key "
-                                   "error:header \"host\" not allowed]"));
+              ::testing::HasSubstr(
+                  "Failed to parse XdsHeaderValueOption: [field:header.key "
+                  "error:header \"host\" not allowed]"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, RequestHeadersRequestAttributesSent) {
@@ -2052,8 +2073,9 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersInvalidHeaderMutationFails) {
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Failed to parse XdsHeaderValueOption: [field:header.key "
-                                   "error:header \"host\" not allowed]"));
+              ::testing::HasSubstr(
+                  "Failed to parse XdsHeaderValueOption: [field:header.key "
+                  "error:header \"host\" not allowed]"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, ResponseHeadersExtProcConnectionErrorFailCall) {
@@ -2270,8 +2292,9 @@ TEST_P(XdsExtProcEnd2endTest, ResponseTrailersInvalidHeaderMutationFails) {
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Failed to parse XdsHeaderValueOption: [field:header.key "
-                                   "error:header \"host\" not allowed]"));
+              ::testing::HasSubstr(
+                  "Failed to parse XdsHeaderValueOption: [field:header.key "
+                  "error:header \"host\" not allowed]"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, ResponseTrailersExtProcConnectionErrorFailCall) {
@@ -5035,10 +5058,10 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
   // Due to transport-level timing across HTTP/2 buffers, if the client thread
-  // reads the pushed trailing metadata before the second (illegal) write arrives
-  // from the ext_proc server, status will be OK. If the second write arrives
-  // first, status will be INTERNAL. Both are valid transport outcomes for an
-  // out-of-order post-trailer write.
+  // reads the pushed trailing metadata before the second (illegal) write
+  // arrives from the ext_proc server, status will be OK. If the second write
+  // arrives first, status will be INTERNAL. Both are valid transport outcomes
+  // for an out-of-order post-trailer write.
   if (!status.ok()) {
     EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
     EXPECT_THAT(status.error_message(),
@@ -5934,14 +5957,16 @@ class DrainMockService : public MockExternalProcessorBase {
       } else if (request.has_request_body() &&
                  trigger_point_ == TriggerPoint::kClientBody) {
         message_count++;
-        std::cout << "DrainMockService: Request body count: " << message_count << std::endl;
+        std::cout << "DrainMockService: Request body count: " << message_count
+                  << std::endl;
         if (message_count == trigger_after_n_messages_) {
           should_trigger = true;
         }
       } else if (request.has_response_body() &&
                  trigger_point_ == TriggerPoint::kServerBody) {
         message_count++;
-        std::cout << "DrainMockService: Response body count: " << message_count << std::endl;
+        std::cout << "DrainMockService: Response body count: " << message_count
+                  << std::endl;
         if (message_count == trigger_after_n_messages_) {
           should_trigger = true;
         }
@@ -6018,7 +6043,8 @@ class DrainMockService : public MockExternalProcessorBase {
         drain_triggered = true;
       }
     }
-    std::cout << "DrainMockService: Process exiting (Read returned false)" << std::endl;
+    std::cout << "DrainMockService: Process exiting (Read returned false)"
+              << std::endl;
     return grpc::Status::OK;
   }
 
@@ -6438,8 +6464,7 @@ TEST_P(XdsExtProcEnd2endTest,
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6478,8 +6503,7 @@ TEST_P(XdsExtProcEnd2endTest,
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6554,8 +6578,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyNoInFlight) {
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6638,8 +6661,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyWithInFlight) {
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -6866,8 +6888,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
   // it receives it. Now we send request 2.
   request.set_message("message2");
   if (stream->Write(request)) {
-    // Since the stream closed cleanly but we are committed (we already processed
-    // response1), the RPC must fail.
+    // Since the stream closed cleanly but we are committed (we already
+    // processed response1), the RPC must fail.
     EXPECT_FALSE(stream->Read(&response));
   }
   stream->WritesDone();
@@ -6979,8 +7001,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -7081,8 +7102,7 @@ TEST_P(XdsExtProcEnd2endTest,
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -7173,8 +7193,7 @@ TEST_P(XdsExtProcEnd2endTest,
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(
@@ -7281,8 +7300,7 @@ TEST_P(XdsExtProcEnd2endTest,
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Stream closed cleanly without drain");
+  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
 }
 
 TEST_P(
@@ -7384,7 +7402,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
   EXPECT_EQ(response.message(), "message1_modified");
 
   // Send message2. Since drain was triggered on message1, the ext_proc stream
-  // should be closed by now, and message2 should bypass ext_proc (not modified).
+  // should be closed by now, and message2 should bypass ext_proc (not
+  // modified).
   request.set_message("message2");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
