@@ -1932,8 +1932,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersRequestAttributesSent) {
   EXPECT_EQ(method_received, "POST");
 }
 
-// fix this
-TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorFailCall) {
+TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorFailModeFalse) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -1962,7 +1961,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorFailCall) {
   EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
 }
 
-TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorAllowCall) {
+TEST_P(XdsExtProcEnd2endTest, RequestHeadersExtProcConnectionErrorFailureModeTrue) {
   int port = grpc_pick_unused_port_or_die();
   std::string target = absl::StrCat("localhost:", port);
   CreateAndStartBackends(1);
@@ -2100,8 +2099,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersExtProcConnectionErrorFailCall) {
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED));
+  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
 }
 
 TEST_P(XdsExtProcEnd2endTest, ResponseHeadersExtProcConnectionErrorAllowCall) {
