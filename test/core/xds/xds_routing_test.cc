@@ -302,7 +302,7 @@ class XdsRouteConfigFilterChainBuilderTest : public ::testing::Test {
     return entry->value();
   }
 
-  XdsHttpFilterRegistry registry_;
+  XdsHttpFilterRegistry registry_{false};
   FakeFilterChainBuilder builder_;
   RefCountedPtr<Blackboard> blackboard_;
 };
