@@ -201,8 +201,8 @@ XdsRouting::RouteConfigFilterChainBuilder::RouteConfigFilterChainBuilder(
     : hcm_filter_configs_(hcm_filter_configs),
       builder_(builder),
       add_last_filter_(std::move(add_last_filter)),
-      transport_factory_(transport_factory),
-      blackboard_(blackboard) {
+      blackboard_(blackboard),
+      transport_factory_(transport_factory) {
   filter_impls_.reserve(hcm_filter_configs.size());
   for (const auto& http_filter : hcm_filter_configs) {
     // Find filter.  This is guaranteed to succeed, because it's checked
@@ -522,16 +522,7 @@ XdsRouting::GeneratePerHTTPFilterConfigsForMethodConfig(
       http_filter_registry, http_filters, args,
       [&](const XdsHttpFilterImpl& filter_impl,
           const XdsListenerResource::HttpConnectionManager::HttpFilter&
-              http_filter)
-          -> absl::StatusOr<XdsHttpFilterImpl::ServiceConfigJsonEntry> {
-        if (IsFilterDisabled(&filter_impl, http_filter,
-                             &vhost.typed_per_filter_config,
-                             &route.typed_per_filter_config,
-                             cluster_weight != nullptr
-                                 ? &cluster_weight->typed_per_filter_config
-                                 : nullptr)) {
-          return XdsHttpFilterImpl::ServiceConfigJsonEntry{};
-        }
+              http_filter) {
         // Find override config, if any.
         const XdsRouteConfigResource::FilterConfigOverride*
             filter_config_override = FindFilterConfigOverride(
@@ -558,12 +549,7 @@ XdsRouting::GeneratePerHTTPFilterConfigsForServiceConfig(
       http_filter_registry, http_filters, args,
       [&](const XdsHttpFilterImpl& filter_impl,
           const XdsListenerResource::HttpConnectionManager::HttpFilter&
-              http_filter)
-          -> absl::StatusOr<XdsHttpFilterImpl::ServiceConfigJsonEntry> {
-        if (http_filter.disabled &&
-            filter_impl.IsSupportedDisablingOnLdsRds()) {
-          return XdsHttpFilterImpl::ServiceConfigJsonEntry{};
-        }
+              http_filter) {
         return filter_impl.GenerateServiceConfig(http_filter.config);
       });
 }

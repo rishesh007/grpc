@@ -42,6 +42,7 @@ struct XdsExtension {
   // processing the extension.
   std::vector<ValidationErrors::ScopedField> validation_fields;
 };
+
 struct HeaderMutationRules {
   bool disallow_all = false;
   bool disallow_is_error = false;
