@@ -221,7 +221,7 @@ class XdsResolver final : public Resolver {
     void BuildFilterChains(const XdsConfig& xds_config,
                            const XdsHttpFilterRegistry& http_filter_registry,
                            FilterChainBuilder& builder,
-                           XdsTransportFactory* transport_factory,
+                           XdsTransportFactory& transport_factory,
                            Blackboard& blackboard);
 
    private:
@@ -423,7 +423,7 @@ XdsResolver::RouteConfigData::GetRouteForRequest(
 void XdsResolver::RouteConfigData::BuildFilterChains(
     const XdsConfig& xds_config,
     const XdsHttpFilterRegistry& http_filter_registry,
-    FilterChainBuilder& builder, XdsTransportFactory* transport_factory,
+    FilterChainBuilder& builder, XdsTransportFactory& transport_factory,
     Blackboard& blackboard) {
   const auto& hcm = std::get<XdsListenerResource::HttpConnectionManager>(
       xds_config.listener->listener);
@@ -765,7 +765,7 @@ void XdsResolver::XdsConfigSelector::BuildFilterChains(
           .http_filter_registry();
   route_config_data_->BuildFilterChains(
       *xds_config_, http_filter_registry, builder,
-      resolver_->xds_client_->transport_factory(), *resolver_->blackboard_);
+      *resolver_->xds_client_->transport_factory(), *resolver_->blackboard_);
 }
 
 //

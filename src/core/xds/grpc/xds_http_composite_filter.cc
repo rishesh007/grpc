@@ -285,7 +285,7 @@ RefCountedPtr<const FilterConfig> XdsHttpCompositeFilter::MergeConfigs(
     RefCountedPtr<const FilterConfig> virtual_host_override_config,
     RefCountedPtr<const FilterConfig> route_override_config,
     RefCountedPtr<const FilterConfig> cluster_weight_override_config,
-    XdsTransportFactory* transport_factory, Blackboard& blackboard) const {
+    XdsTransportFactory& transport_factory, Blackboard& blackboard) const {
   // Get the config to use via our base class.
   auto config_to_use = XdsHttpFilterImpl::MergeConfigs(
       std::move(top_level_config), std::move(virtual_host_override_config),

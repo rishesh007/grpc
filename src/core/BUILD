@@ -27,7 +27,10 @@ load(
 licenses(["reciprocal"])
 
 package(
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = [
+        "//:__subpackages__",
+        "//bazel:friends",
+    ],
     features = [
         "layering_check",
         "parse_headers",
@@ -59,7 +62,10 @@ config_setting(
 # once the transition is complete.
 exports_files(
     glob(["**"]),
-    visibility = ["//:__subpackages__"],
+    visibility = [
+        "//:__subpackages__",
+        "//bazel:friends",
+    ],
 )
 
 config_setting(
@@ -4441,6 +4447,7 @@ grpc_cc_library(
     ],
     deps = [
         "dual_ref_counted",
+        "filter_chain",
         "grpc_service_config",
         "metadata_batch",
         "ref_counted",
@@ -4463,6 +4470,7 @@ grpc_cc_library(
         "absl/base:core_headers",
         "absl/status",
         "absl/status:statusor",
+        "absl/strings",
     ],
     deps = [
         "arena",
@@ -9128,6 +9136,7 @@ grpc_cc_library(
         "json_writer",
         "resource_quota",
         "time",
+        "xds_bootstrap_grpc_builder",
         "//:alts_util",
         "//:config",
         "//:debug_location",

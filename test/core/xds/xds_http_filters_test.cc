@@ -116,18 +116,19 @@ class XdsHttpFilterTest : public ::testing::Test {
       : event_engine_(
             std::make_shared<
                 grpc_event_engine::experimental::ThreadedFuzzingEventEngine>()),
+      transport_factory_(
+            MakeRefCounted<FakeXdsTransportFactory>([]() {}, nullptr)),
         decode_context_{nullptr, xds_server_, upb_def_pool_.ptr(),
                         upb_arena_.ptr()} {
     Reset();
   }
 
   void Reset() {
-    xds_client_ = MakeXdsClient(event_engine_);
+    xds_client_ = MakeXdsClient();
     decode_context_.client = xds_client_.get();
   }
 
-  static RefCountedPtr<XdsClient> MakeXdsClient(
-      std::shared_ptr<FuzzingEventEngine> event_engine) {
+  RefCountedPtr<XdsClient> MakeXdsClient() {
     grpc_error_handle error;
     auto bootstrap = GrpcXdsBootstrapBuilder::Build(
         "{\n"
@@ -156,12 +157,10 @@ class XdsHttpFilterTest : public ::testing::Test {
       Crash(absl::StrFormat("Error parsing bootstrap: %s",
                             bootstrap.status().ToString().c_str()));
     }
-    auto transport_factory = MakeRefCounted<FakeXdsTransportFactory>(
-        []() { FAIL() << "Multiple concurrent reads"; }, event_engine);
-    return MakeRefCounted<XdsClient>(
-        std::move(*bootstrap), std::move(transport_factory),
-        std::move(event_engine), /*metrics_reporter=*/nullptr, "foo agent",
-        "foo version");
+    return MakeRefCounted<XdsClient>(std::move(*bootstrap), transport_factory_,
+                                     event_engine_,
+                                     /*metrics_reporter=*/nullptr, "foo agent",
+                                     "foo version");
   }
 
   XdsExtension MakeXdsExtension(const grpc::protobuf::Message& message) {
@@ -197,6 +196,7 @@ class XdsHttpFilterTest : public ::testing::Test {
 
   std::shared_ptr<FuzzingEventEngine> event_engine_;
   GrpcXdsServer xds_server_;
+  RefCountedPtr<FakeXdsTransportFactory> transport_factory_;
   RefCountedPtr<XdsClient> xds_client_;
   upb::DefPool upb_def_pool_;
   upb::Arena upb_arena_;
@@ -1831,7 +1831,7 @@ TEST_F(XdsGcpAuthnFilterTest, MergeConfigsGetsCacheFromBlackboard) {
       filter_->MergeConfigs(config, /*virtual_host_override_config=*/nullptr,
                             /*route_override_config=*/nullptr,
                             /*cluster_weight_override_config=*/nullptr,
-                            xds_client_->transport_factory(), *blackboard);
+                            *transport_factory_, *blackboard);
   ASSERT_NE(merged_config, nullptr);
   ASSERT_EQ(merged_config->type(), GcpAuthenticationFilter::Config::Type());
   EXPECT_THAT(merged_config->ToString(),
@@ -2264,7 +2264,7 @@ TEST_F(XdsCompositeFilterTest, MergeConfigsHandlesBlackboardForNestedFilters) {
       filter_->MergeConfigs(config, /*virtual_host_override_config=*/nullptr,
                             /*route_override_config=*/nullptr,
                             /*cluster_weight_override_config=*/nullptr,
-                            xds_client_->transport_factory(), *blackboard);
+                            *transport_factory_, *blackboard);
   ASSERT_NE(merged_config, nullptr);
   ASSERT_EQ(merged_config->type(), CompositeFilter::Config::Type());
   EXPECT_EQ(merged_config->ToString(),

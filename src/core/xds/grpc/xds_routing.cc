@@ -256,10 +256,7 @@ XdsRouting::RouteConfigFilterChainBuilder::GetDefaultFilterChain() {
     for (size_t i = 0; i < filter_impls_.size(); ++i) {
       auto* filter_impl = filter_impls_[i];
       const auto& filter_config = hcm_filter_configs_[i];
-      if (filter_config.disabled &&
-          filter_impl->IsSupportedDisablingOnLdsRds()) {
-        continue;
-      }
+      if (filter_config.disabled) continue;
       RefCountedPtr<const FilterConfig> config;
       if (filter_config.filter_config != nullptr) {
         config = filter_impl->MergeConfigs(filter_config.filter_config, nullptr,
@@ -291,6 +288,44 @@ RefCountedPtr<const FilterConfig> GetOverrideConfig(
     return nullptr;
   }
   return it->second.filter_config;
+}
+
+// Returns true if the filter is disabled.
+// The resolution order for the disabled flag is:
+// 1. ClusterWeight override (most specific)
+// 2. Route override
+// 3. VirtualHost override
+// 4. HCM config (least specific, default)
+bool IsFilterDisabled(
+    const XdsHttpFilterImpl* filter_impl,
+    const XdsListenerResource::HttpConnectionManager::HttpFilter&
+        hcm_filter_config,
+    const XdsRouteConfigResource::TypedPerFilterConfig*
+        vhost_typed_per_filter_config,
+    const XdsRouteConfigResource::TypedPerFilterConfig*
+        route_typed_per_filter_config,
+    const XdsRouteConfigResource::TypedPerFilterConfig*
+        cluster_weight_typed_per_filter_config) {
+  if (cluster_weight_typed_per_filter_config != nullptr) {
+    auto it =
+        cluster_weight_typed_per_filter_config->find(hcm_filter_config.name);
+    if (it != cluster_weight_typed_per_filter_config->end()) {
+      return it->second.disabled;
+    }
+  }
+  if (route_typed_per_filter_config != nullptr) {
+    auto it = route_typed_per_filter_config->find(hcm_filter_config.name);
+    if (it != route_typed_per_filter_config->end()) {
+      return it->second.disabled;
+    }
+  }
+  if (vhost_typed_per_filter_config != nullptr) {
+    auto it = vhost_typed_per_filter_config->find(hcm_filter_config.name);
+    if (it != vhost_typed_per_filter_config->end()) {
+      return it->second.disabled;
+    }
+  }
+  return hcm_filter_config.disabled;
 }
 
 }  // namespace

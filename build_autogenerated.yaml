@@ -2988,6 +2988,8 @@ libs:
   - src/core/resolver/server_address.h
   - src/core/server/server.h
   - src/core/server/server_call_tracer_filter.h
+  - src/core/server/server_config_selector.h
+  - src/core/server/server_config_selector_filter.h
   - src/core/server/server_interface.h
   - src/core/service_config/service_config.h
   - src/core/service_config/service_config_call_data.h
@@ -3479,6 +3481,7 @@ libs:
   - src/core/server/add_port.cc
   - src/core/server/server.cc
   - src/core/server/server_call_tracer_filter.cc
+  - src/core/server/server_config_selector_filter.cc
   - src/core/service_config/service_config_channel_arg_filter.cc
   - src/core/service_config/service_config_impl.cc
   - src/core/service_config/service_config_parser.cc
@@ -32818,11 +32821,19 @@ targets:
   gtest: true
   build: test
   language: c++
-  headers: []
+  headers:
+  - test/core/event_engine/event_engine_test_utils.h
+  - test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.h
+  - test/core/xds/xds_transport_fake.h
   src:
+  - test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.proto
+  - test/core/event_engine/event_engine_test_utils.cc
+  - test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.cc
   - test/core/xds/xds_routing_test.cc
+  - test/core/xds/xds_transport_fake.cc
   deps:
   - gtest
+  - protobuf
   - grpc_test_util
 - name: xds_security_end2end_test
   gtest: true
