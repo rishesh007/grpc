@@ -117,7 +117,7 @@ class XdsHttpFilterTest : public ::testing::Test {
             std::make_shared<
                 grpc_event_engine::experimental::ThreadedFuzzingEventEngine>()),
         transport_factory_(
-            MakeRefCounted<FakeXdsTransportFactory>([]() {}, nullptr)),
+            MakeRefCounted<FakeXdsTransportFactory>([]() {}, event_engine_)),
         decode_context_{nullptr, xds_server_, upb_def_pool_.ptr(),
                         upb_arena_.ptr()} {
     Reset();
