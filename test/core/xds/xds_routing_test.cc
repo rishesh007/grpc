@@ -257,7 +257,6 @@ class XdsRouteConfigFilterChainBuilderTest : public ::testing::Test {
  protected:
   void SetUp() override {
     registry_.RegisterFilter(std::make_unique<TestHttpFilter>());
-    registry_.RegisterFilter(std::make_unique<NonDisablingTestHttpFilter>());
     blackboard_ = MakeRefCounted<Blackboard>();
     transport_factory_ = MakeRefCounted<FakeXdsTransportFactory>(
         []() {}, /*event_engine=*/nullptr);

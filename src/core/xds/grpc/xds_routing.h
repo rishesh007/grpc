@@ -176,7 +176,6 @@ class XdsRouting final {
         hcm_filter_configs_;
     FilterChainBuilder& builder_;
     absl::AnyInvocable<void(FilterChainBuilder&)> add_last_filter_;
-    XdsTransportFactory* transport_factory_;
     Blackboard& blackboard_;
     XdsTransportFactory& transport_factory_;
 

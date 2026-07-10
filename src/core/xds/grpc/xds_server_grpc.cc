@@ -249,6 +249,27 @@ std::string GrpcXdsServerTarget::Key() const {
   return result;
 }
 
+std::string GrpcXdsServerTarget::XdsGrpcServiceKey() const {
+  std::string result = "{server_uri=";
+  StrAppend(result, server_uri_);
+  if (channel_creds_config_ != nullptr) {
+    StrAppend(result, ", channel_creds={type=");
+    StrAppend(result, channel_creds_config_->type());
+    StrAppend(result, ", config=");
+    StrAppend(result, channel_creds_config_->ToString());
+    StrAppend(result, "}");
+  }
+  for (const auto& call_creds_config : call_creds_configs_) {
+    StrAppend(result, ", call_creds={type=");
+    StrAppend(result, call_creds_config->type());
+    StrAppend(result, ", config=");
+    StrAppend(result, call_creds_config->ToString());
+    StrAppend(result, "}");
+  }
+  StrAppend(result, "}");
+  return result;
+}
+
 bool GrpcXdsServerTarget::Equals(const XdsServerTarget& other) const {
   const auto& o = DownCast<const GrpcXdsServerTarget&>(other);
   if (server_uri_ != o.server_uri_) return false;

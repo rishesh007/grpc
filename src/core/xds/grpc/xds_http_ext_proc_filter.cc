@@ -347,7 +347,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
     RefCountedPtr<const FilterConfig> virtual_host_override_config,
     RefCountedPtr<const FilterConfig> route_override_config,
     RefCountedPtr<const FilterConfig> cluster_weight_override_config,
-    XdsTransportFactory* transport_factory, Blackboard& blackboard) const {
+    XdsTransportFactory& transport_factory, Blackboard& blackboard) const {
   // Find the most specific override config.
   const FilterConfig* override_config = nullptr;
   if (cluster_weight_override_config != nullptr) {
@@ -403,14 +403,14 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
     }
   }
   // Blackboard handling
-  if (config->grpc_service.has_value() && transport_factory != nullptr) {
-    std::string key = config->grpc_service->Key();
+  if (config->grpc_service.has_value()) {
+    std::string key = config->grpc_service->XdsGrpcServiceKey();
     config->channel =
         blackboard.GetOrSet<ExtProcFilter::ExtProcChannel>(key, [&]() {
           std::shared_ptr<const XdsBootstrap::XdsServerTarget> target_shared =
               std::make_shared<GrpcXdsServerTarget>(*config->grpc_service);
           return MakeRefCounted<ExtProcFilter::ExtProcChannel>(
-              std::move(target_shared), transport_factory->Ref());
+              std::move(target_shared), transport_factory.Ref());
         });
   }
   return config;
