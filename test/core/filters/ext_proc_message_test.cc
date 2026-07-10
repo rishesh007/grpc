@@ -826,15 +826,11 @@ TEST_F(ParseExtProcResponseTest, RequestHeadersHeaderMutationEmptyValue) {
   auto* set_header = header_mutation->add_set_headers();
   set_header->mutable_header()->set_key(kMutatedKey);
   auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::RequestHeaders>(
-      parsed->response));
-  const auto& header_mutation_res =
-      std::get<ExtProcResponse::RequestHeaders>(parsed->response).mutation;
-  EXPECT_THAT(header_mutation_res.set_headers,
-              ::testing::ElementsAre(IsHeaderValueOption(
-                  kMutatedKey, "",
-                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)));
+  EXPECT_FALSE(parsed.ok());
+  EXPECT_EQ(parsed.status(),
+            absl::InternalError("Failed to parse XdsHeaderValueOption: "
+                                "[field:header error:either value or raw_value "
+                                "must be set]"));
 }
 
 TEST_F(ParseExtProcResponseTest, RequestHeadersMixedHeaderMutation) {
@@ -914,15 +910,11 @@ TEST_F(ParseExtProcResponseTest, ResponseHeadersHeaderMutationEmptyValue) {
   auto* set_header = header_mutation->add_set_headers();
   set_header->mutable_header()->set_key(kMutatedKey);
   auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::ResponseHeaders>(
-      parsed->response));
-  const auto& header_mutation_res =
-      std::get<ExtProcResponse::ResponseHeaders>(parsed->response).mutation;
-  EXPECT_THAT(header_mutation_res.set_headers,
-              ::testing::ElementsAre(IsHeaderValueOption(
-                  kMutatedKey, "",
-                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)));
+  EXPECT_FALSE(parsed.ok());
+  EXPECT_EQ(parsed.status(),
+            absl::InternalError("Failed to parse XdsHeaderValueOption: "
+                                "[field:header error:either value or raw_value "
+                                "must be set]"));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseHeadersCommonResponseNull) {
@@ -1179,15 +1171,11 @@ TEST_F(ParseExtProcResponseTest, ResponseTrailersHeaderMutationEmptyValue) {
   auto* set_header = header_mutation->add_set_headers();
   set_header->mutable_header()->set_key(kMutatedKey);
   auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::ResponseTrailers>(
-      parsed->response));
-  const auto& header_mutation_res =
-      std::get<ExtProcResponse::ResponseTrailers>(parsed->response).mutation;
-  EXPECT_THAT(header_mutation_res.set_headers,
-              ::testing::ElementsAre(IsHeaderValueOption(
-                  kMutatedKey, "",
-                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)));
+  EXPECT_FALSE(parsed.ok());
+  EXPECT_EQ(parsed.status(),
+            absl::InternalError("Failed to parse XdsHeaderValueOption: "
+                                "[field:header error:either value or raw_value "
+                                "must be set]"));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseTrailersHeaderMutationNull) {

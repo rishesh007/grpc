@@ -201,7 +201,6 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
   }
   size_t size;
   // request_attributes
-  // TODO(rishesh): Validate that these attributes are actually valid.
   const auto* request_attributes =
       envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_request_attributes(
           ext_proc, &size);
@@ -217,6 +216,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
     config->response_attributes.push_back(
         UpbStringToStdString(response_attributes[i]));
   }
+  // TODO(rishesh): Validate that these attributes are actually valid.
   // mutation_rules
   if (const auto* mutation_rules =
           envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_mutation_rules(

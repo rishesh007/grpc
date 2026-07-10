@@ -5801,6 +5801,7 @@ grpc_cc_library(
         "protobuf_struct_upb",
         "upb_utils",
         "xds_common_types",
+        "xds_common_types_parser",
         "//:grpc_base",
     ],
 )
