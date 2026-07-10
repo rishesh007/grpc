@@ -624,7 +624,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest, DisabledAtHcm) {
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
       hcm_filters = {MakeHcmFilter("filter1", "hcm", /*disabled=*/true)};
   XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
+      hcm_filters, registry_, builder_, nullptr, *transport_factory_,
+      *blackboard_);
   auto vhost = MakeVirtualHost();
   auto vhost_builder =
       route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
@@ -637,7 +638,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest, DisabledAtVhost) {
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
       hcm_filters = {MakeHcmFilter("filter1", "hcm")};
   XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
+      hcm_filters, registry_, builder_, nullptr, *transport_factory_,
+      *blackboard_);
   auto vhost =
       MakeVirtualHost({{"filter1", MakeOverride("vhost", /*disabled=*/true)}});
   auto vhost_builder =
@@ -651,7 +653,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest, DisabledAtRoute) {
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
       hcm_filters = {MakeHcmFilter("filter1", "hcm")};
   XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
+      hcm_filters, registry_, builder_, nullptr, *transport_factory_,
+      *blackboard_);
   auto vhost = MakeVirtualHost({{"filter1", MakeOverride("vhost")}});
   auto vhost_builder =
       route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
@@ -665,7 +668,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest, DisabledAtClusterWeight) {
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
       hcm_filters = {MakeHcmFilter("filter1", "hcm")};
   XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
+      hcm_filters, registry_, builder_, nullptr, *transport_factory_,
+      *blackboard_);
   auto vhost = MakeVirtualHost({{"filter1", MakeOverride("vhost")}});
   auto vhost_builder =
       route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
@@ -684,7 +688,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
       hcm_filters = {MakeHcmFilter("filter1", "hcm", /*disabled=*/true)};
   XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
+      hcm_filters, registry_, builder_, nullptr, *transport_factory_,
+      *blackboard_);
   auto vhost = MakeVirtualHost({{"filter1", MakeOverride("vhost")}});
   auto vhost_builder =
       route_config_builder.MakeVirtualHostFilterChainBuilder(vhost);
@@ -702,7 +707,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
       hcm_filters = {MakeHcmFilter("filter1", "hcm", /*disabled=*/true)};
   XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
+      hcm_filters, registry_, builder_, nullptr, *transport_factory_,
+      *blackboard_);
   auto vhost =
       MakeVirtualHost({{"filter1", MakeOverride("vhost", /*disabled=*/true)}});
   auto vhost_builder =
@@ -721,7 +727,8 @@ TEST_F(XdsRouteConfigFilterChainBuilderTest,
   std::vector<XdsListenerResource::HttpConnectionManager::HttpFilter>
       hcm_filters = {MakeHcmFilter("filter1", "hcm", /*disabled=*/true)};
   XdsRouting::RouteConfigFilterChainBuilder route_config_builder(
-      hcm_filters, registry_, builder_, nullptr, *blackboard_);
+      hcm_filters, registry_, builder_, nullptr, *transport_factory_,
+      *blackboard_);
   auto vhost =
       MakeVirtualHost({{"filter1", MakeOverride("vhost", /*disabled=*/true)}});
   auto vhost_builder =
