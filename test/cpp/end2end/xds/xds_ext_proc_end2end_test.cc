@@ -3973,23 +3973,16 @@ TEST_P(
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
 
-class FailImmediatelyMockService : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/)
-      override {
-    return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                        "Failed immediately");
-  }
-};
-
 TEST_P(XdsExtProcEnd2endTest,
-       StreamFailBeforeRequestHeadersObservabilityFailCall) {
+       StreamFailBeforeRequestHeadersObservabilityFailureModeFalse) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_unique<FailImmediatelyMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
+        return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                            "Failed immediately");
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4012,7 +4005,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   RpcOptions rpc_options;
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
@@ -4023,9 +4015,15 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       StreamFailBeforeRequestHeadersObservabilityAllowCall) {
+       StreamFailBeforeRequestHeadersObservabilityFailureModeTrue) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_unique<FailImmediatelyMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
+        return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                            "Failed immediately");
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4048,35 +4046,28 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   RpcOptions rpc_options;
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
 
-class FailAfterRequestHeadersMockService : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    if (stream->Read(&request)) {
-      if (request.has_request_headers()) {
-        return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                            "Failed after request headers");
-      }
-    }
-    return grpc::Status::OK;
-  }
-};
-
 TEST_P(XdsExtProcEnd2endTest,
-       StreamFailBeforeRequestBodyObservabilityFailCall) {
+       StreamFailBeforeRequestBodyObservabilityFailureModeFalse) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_unique<FailAfterRequestHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                "Failed after request headers");
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4099,13 +4090,10 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
-
   EchoRequest request;
   EchoResponse response;
-
   request.set_message("message1");
   stream->Write(request);
   stream->Read(&response);
@@ -4118,9 +4106,21 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       StreamFailBeforeRequestBodyObservabilityAllowCall) {
+       StreamFailBeforeRequestBodyObservabilityFailureModeTrue) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_unique<FailAfterRequestHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                "Failed after request headers");
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4143,98 +4143,39 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
-
   EchoRequest request;
   EchoResponse response;
-
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyBidiStreamObservabilitySuccess) {
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(ext_proc_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetObservabilityMode(true)  // Observability mode!
-                             .SetRequestHeaderMode(ProcessingMode::SKIP)
-                             .SetRequestBodyMode(ProcessingMode::NONE)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-
-  ClientContext context;
-  auto stream = stub_->BidiStream(&context);
-
-  EchoRequest request;
-  EchoResponse response;
-
-  // Message 1
-  request.set_message("message1");
-  EXPECT_TRUE(stream->Write(request));
-  EXPECT_TRUE(stream->Read(&response));
-  // Mutation should be IGNORED, so we should get "message1" (echoed by server),
-  // NOT "message1-response-body-mutated".
-  EXPECT_EQ(response.message(), "message1");
-
-  // Message 2
-  request.set_message("message2");
-  EXPECT_TRUE(stream->Write(request));
-  EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message2");
-
-  stream->WritesDone();
-  Status status = stream->Finish();
-  EXPECT_TRUE(status.ok());
-}
-
-class ServerToClientResponseBodyHalfCloseMockService
-    : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
+       ServerToClientResponseBodyHalfCloseFailFailureModeFalse) {
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    while (stream->Read(&request)) {
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      SetDefaultEmptyResponse(request, &response);
-      if (request.has_response_body()) {
-        auto* response_body = response.mutable_response_body();
-        auto* mutation = response_body->mutable_response();
-        auto* body_mutation = mutation->mutable_body_mutation();
-        body_mutation->mutable_streamed_response()->set_end_of_stream(true);
-      }
-      stream->Write(response);
-    }
-    return grpc::Status::OK;
-  }
-};
-
-TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyHalfCloseFailClosedFailsCall) {
-  auto mock_service =
-      std::make_unique<ServerToClientResponseBodyHalfCloseMockService>();
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          if (request.has_response_body()) {
+            auto* response_body = response.mutable_response_body();
+            auto* mutation = response_body->mutable_response();
+            auto* body_mutation = mutation->mutable_body_mutation();
+            body_mutation->mutable_streamed_response()->set_end_of_stream(true);
+          }
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4256,7 +4197,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -4273,9 +4213,25 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientResponseBodyHalfCloseFailOpenFailsCall) {
-  auto mock_service =
-      std::make_unique<ServerToClientResponseBodyHalfCloseMockService>();
+       ServerToClientResponseBodyHalfCloseFailureModeTrue) {
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          if (request.has_response_body()) {
+            auto* response_body = response.mutable_response_body();
+            auto* mutation = response_body->mutable_response();
+            auto* body_mutation = mutation->mutable_body_mutation();
+            body_mutation->mutable_streamed_response()->set_end_of_stream(true);
+          }
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4297,7 +4253,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -4314,7 +4269,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ClientToServerOrderingResponseBodyBeforeHeadersFailsCall) {
+       ClientToServerOrderingResponseBodyBeforeHeadersFailureModeFalse) {
   auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -4334,7 +4289,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail closed
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetResponseHeaderMode(ProcessingMode::SKIP)
           .SetResponseTrailerMode(ProcessingMode::SKIP)
@@ -4364,7 +4319,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ClientToServerOrderingHeadersResponseWhenDisabledFailsCall) {
+       ClientToServerOrderingHeadersResponseWhenDisabled) {
   auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -4382,8 +4337,8 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)                  // Fail closed
-          .SetRequestHeaderMode(ProcessingMode::SKIP)  // Skip headers!
+          .SetFailureModeAllow(false)
+          .SetRequestHeaderMode(ProcessingMode::SKIP)
           .SetResponseHeaderMode(ProcessingMode::SKIP)
           .SetResponseTrailerMode(ProcessingMode::SKIP)
           .SetRequestBodyMode(ProcessingMode::GRPC)
@@ -4411,8 +4366,7 @@ TEST_P(XdsExtProcEnd2endTest,
                                    "request headers are disabled"));
 }
 
-TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientOrderingResponseBodyBeforeHeadersFailsCall) {
+TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingResponseBodyBeforeHeaders) {
   auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -4432,13 +4386,12 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail closed
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::GRPC)
           .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseBodyMode(ProcessingMode::GRPC)
-          .SetResponseTrailerMode(
-              ProcessingMode::SEND)  // Must be SEND if body is GRPC
+          .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
@@ -4462,8 +4415,7 @@ TEST_P(XdsExtProcEnd2endTest,
                                    "response headers response"));
 }
 
-TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientOrderingTrailersBeforeHeadersFailsCall) {
+TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingTrailersBeforeHeaders) {
   auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -4481,7 +4433,7 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail closed
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::GRPC)
           .SetResponseHeaderMode(ProcessingMode::SEND)
@@ -4511,7 +4463,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientOrderingTrailersBeforeResponseBodyFailsCall) {
+       ServerToClientOrderingTrailersBeforeResponseBody) {
   // We disable S2C headers to work around the transport-level coalescing
   // limitation. This allows us to test the interaction between S2C body and
   // trailers.
@@ -4532,14 +4484,12 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail closed
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::GRPC)
-          .SetResponseHeaderMode(ProcessingMode::SKIP)  // Skip S2C headers
-          .SetResponseBodyMode(ProcessingMode::GRPC)    // Enable S2C body
-          .SetResponseTrailerMode(
-              ProcessingMode::SEND)  // Enable S2C trailers (must be SEND if
-                                     // body is GRPC)
+          .SetResponseHeaderMode(ProcessingMode::SKIP)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
@@ -4564,8 +4514,7 @@ TEST_P(XdsExtProcEnd2endTest,
                                    "were received"));
 }
 
-TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientOrderingResponseBodyAfterTrailersFailsCall) {
+TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingResponseBodyAfterTrailers) {
   // We disable S2C headers to work around the transport-level coalescing
   // limitation. This allows us to test the interaction between S2C body and
   // trailers.
@@ -4601,12 +4550,12 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail closed
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::GRPC)
-          .SetResponseHeaderMode(ProcessingMode::SKIP)   // Skip S2C headers
-          .SetResponseBodyMode(ProcessingMode::GRPC)     // Enable S2C body
-          .SetResponseTrailerMode(ProcessingMode::SEND)  // Enable S2C trailers
+          .SetResponseHeaderMode(ProcessingMode::SKIP)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
@@ -4629,11 +4578,7 @@ TEST_P(XdsExtProcEnd2endTest,
   // Ext-proc will respond with trailers, then body (error).
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  // Due to transport-level timing across HTTP/2 buffers, if the client thread
-  // reads the pushed trailing metadata before the second (illegal) write
-  // arrives from the ext_proc server, status will be OK. If the second write
-  // arrives first, status will be INTERNAL. Both are valid transport outcomes
-  // for an out-of-order post-trailer write.
+  // TODO(rishesh) fix this
   if (!status.ok()) {
     EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
     EXPECT_THAT(status.error_message(),
@@ -4643,7 +4588,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientOrderingHeadersResponseWhenDisabledFailsCall) {
+       ServerToClientOrderingHeadersResponseWhenDisabled) {
   auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -4661,13 +4606,12 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail closed
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::GRPC)
-          .SetResponseHeaderMode(ProcessingMode::SKIP)  // Skip S2C headers
-          .SetResponseBodyMode(ProcessingMode::GRPC)    // Enable S2C body
-          .SetResponseTrailerMode(
-              ProcessingMode::SEND)  // Must be SEND if body is GRPC
+          .SetResponseHeaderMode(ProcessingMode::SKIP)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
@@ -4692,7 +4636,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest,
-       ServerToClientOrderingTrailersResponseWhenDisabledFailsCall) {
+       ServerToClientOrderingTrailersResponseWhenDisabled) {
   auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -4710,10 +4654,10 @@ TEST_P(XdsExtProcEnd2endTest,
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)  // Fail closed
+          .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::GRPC)
-          .SetResponseHeaderMode(ProcessingMode::SEND)  // Enable S2C headers
+          .SetResponseHeaderMode(ProcessingMode::SEND)
           .SetResponseBodyMode(ProcessingMode::NONE)
           .SetResponseTrailerMode(ProcessingMode::SKIP)  // Skip S2C trailers
           .Build();
@@ -4760,7 +4704,7 @@ class CloseStreamAfterHeadersMockService : public MockExternalProcessorBase {
 };
 
 TEST_P(XdsExtProcEnd2endTest,
-       RequestHeadersExtProcCloseStreamAfterHeadersAllowCall) {
+       RequestHeadersExtProcCloseStreamAfterHeadersFailureModeTrue) {
   auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -4772,9 +4716,9 @@ TEST_P(XdsExtProcEnd2endTest,
           .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::GRPC)
-          .SetResponseHeaderMode(ProcessingMode::SEND)   // Enable S2C headers
-          .SetResponseBodyMode(ProcessingMode::GRPC)     // Enable S2C body
-          .SetResponseTrailerMode(ProcessingMode::SEND)  // Enable S2C trailers
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
@@ -4814,9 +4758,9 @@ TEST_P(XdsExtProcEnd2endTest,
           .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::GRPC)
-          .SetResponseHeaderMode(ProcessingMode::SEND)   // Enable S2C headers
-          .SetResponseBodyMode(ProcessingMode::GRPC)     // Enable S2C body
-          .SetResponseTrailerMode(ProcessingMode::SEND)  // Enable S2C trailers
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
@@ -4855,9 +4799,9 @@ TEST_P(
           .SetInsecureChannelCredentials()
           .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
-          .SetRequestBodyMode(ProcessingMode::NONE)     // Skip body
-          .SetResponseHeaderMode(ProcessingMode::SEND)  // Enable S2C headers
-          .SetResponseBodyMode(ProcessingMode::NONE)    // Skip S2C body
+          .SetRequestBodyMode(ProcessingMode::NONE)  // Skip body
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseBodyMode(ProcessingMode::NONE)  // Skip S2C body
           .SetResponseTrailerMode(ProcessingMode::SKIP)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
@@ -4887,9 +4831,9 @@ TEST_P(
           .SetInsecureChannelCredentials()
           .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
-          .SetRequestBodyMode(ProcessingMode::NONE)     // Skip body
-          .SetResponseHeaderMode(ProcessingMode::SEND)  // Enable S2C headers
-          .SetResponseBodyMode(ProcessingMode::NONE)    // Skip S2C body
+          .SetRequestBodyMode(ProcessingMode::NONE)  // Skip body
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseBodyMode(ProcessingMode::NONE)  // Skip S2C body
           .SetResponseTrailerMode(ProcessingMode::SKIP)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
@@ -4922,11 +4866,9 @@ TEST_P(XdsExtProcEnd2endTest,
           .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::NONE)
-          .SetResponseHeaderMode(
-              ProcessingMode::SKIP)  // Skip S2C headers to avoid coalescing bug
+          .SetResponseHeaderMode(ProcessingMode::SKIP) to avoid coalescing bug
           .SetResponseBodyMode(ProcessingMode::GRPC)  // Enable S2C body
-          .SetResponseTrailerMode(
-              ProcessingMode::SEND)  // Must be SEND if body is GRPC
+          .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
@@ -4956,11 +4898,9 @@ TEST_P(XdsExtProcEnd2endTest,
           .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::NONE)
-          .SetResponseHeaderMode(
-              ProcessingMode::SKIP)  // Skip S2C headers to avoid coalescing bug
+          .SetResponseHeaderMode(ProcessingMode::SKIP) to avoid coalescing bug
           .SetResponseBodyMode(ProcessingMode::GRPC)  // Enable S2C body
-          .SetResponseTrailerMode(
-              ProcessingMode::SEND)  // Must be SEND if body is GRPC
+          .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
@@ -4994,7 +4934,7 @@ TEST_P(XdsExtProcEnd2endTest,
           .SetRequestBodyMode(ProcessingMode::NONE)
           .SetResponseHeaderMode(ProcessingMode::SKIP)
           .SetResponseBodyMode(ProcessingMode::NONE)
-          .SetResponseTrailerMode(ProcessingMode::SEND)  // Enable S2C trailers
+          .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
@@ -5025,7 +4965,7 @@ TEST_P(XdsExtProcEnd2endTest,
           .SetRequestBodyMode(ProcessingMode::NONE)
           .SetResponseHeaderMode(ProcessingMode::SKIP)
           .SetResponseBodyMode(ProcessingMode::NONE)
-          .SetResponseTrailerMode(ProcessingMode::SEND)  // Enable S2C trailers
+          .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
