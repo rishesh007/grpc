@@ -525,14 +525,25 @@ class StatusMockService : public MockExternalProcessorBase {
       const ::envoy::service::ext_proc::v3::ProcessingRequest&,
       ::envoy::service::ext_proc::v3::ProcessingResponse*)>;
 
+  using StreamCallback = std::function<grpc::Status(
+      grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream)>;
+
   explicit StatusMockService(Callback callback)
       : callback_(std::move(callback)) {}
+
+  explicit StatusMockService(StreamCallback stream_callback)
+      : stream_callback_(std::move(stream_callback)) {}
 
   grpc::Status Process(
       grpc::ServerContext* /*context*/,
       grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
+    if (stream_callback_) {
+      return stream_callback_(stream);
+    }
     ::envoy::service::ext_proc::v3::ProcessingRequest request;
     while (stream->Read(&request)) {
       ::envoy::service::ext_proc::v3::ProcessingResponse response;
@@ -547,41 +558,7 @@ class StatusMockService : public MockExternalProcessorBase {
 
  private:
   Callback callback_;
-};
-
-class TrailersCloseMockService : public MockExternalProcessorBase {
- public:
-  enum class CloseStage {
-    kBeforeTrailers,
-    kDuringTrailers,
-  };
-
-  TrailersCloseMockService(CloseStage stage, grpc::Status status)
-      : stage_(stage), status_(status) {}
-
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    if (stage_ == CloseStage::kBeforeTrailers) {
-      return status_;
-    }
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    while (stream->Read(&request)) {
-      if (request.has_response_trailers()) {
-        return status_;
-      }
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      SetDefaultEmptyResponse(request, &response);
-      stream->Write(response);
-    }
-    return status_;
-  }
-
- private:
-  CloseStage stage_;
-  grpc::Status status_;
+  StreamCallback stream_callback_;
 };
 
 class XdsExtProcEnd2endTest : public XdsEnd2endTest {
@@ -751,7 +728,7 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
                              bool req_body, bool resp_body,
                              bool observability_mode = false);
   void RunTrailersOnlyTest(bool observability_mode);
-  void RunCloseTrailersTest(TrailersCloseMockService::CloseStage stage,
+  void RunCloseTrailersTest(bool close_before_trailers,
                             grpc::Status close_status, bool failure_mode_allow,
                             bool observability_mode,
                             grpc::StatusCode expected_status_code,
@@ -4587,41 +4564,36 @@ TEST_P(XdsExtProcEnd2endTest,
                                    "were received"));
 }
 
-class ResponseBodyAfterTrailersMockService : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    while (stream->Read(&request)) {
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      if (request.has_response_trailers()) {
-        // 1. Send response_trailers
-        response.mutable_response_trailers();
-        stream->Write(response);
-        // 2. Send response_body (out of order!)
-        response.Clear();
-        auto* body_response = response.mutable_response_body();
-        auto* common_response = body_response->mutable_response();
-        common_response->mutable_body_mutation()->mutable_streamed_response();
-        stream->Write(response);
-      } else {
-        SetDefaultEmptyResponse(request, &response);
-        stream->Write(response);
-      }
-    }
-    return grpc::Status::OK;
-  }
-};
-
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientOrderingResponseBodyAfterTrailersFailsCall) {
   // We disable S2C headers to work around the transport-level coalescing
   // limitation. This allows us to test the interaction between S2C body and
   // trailers.
-  auto mock_service = std::make_unique<ResponseBodyAfterTrailersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_response_trailers()) {
+            // 1. Send response_trailers
+            response.mutable_response_trailers();
+            stream->Write(response);
+            // 2. Send response_body (out of order!)
+            response.Clear();
+            auto* body_response = response.mutable_response_body();
+            auto* common_response = body_response->mutable_response();
+            common_response->mutable_body_mutation()
+                ->mutable_streamed_response();
+            stream->Write(response);
+          } else {
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4811,26 +4783,20 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
-
   EchoRequest request;
   EchoResponse response;
-
   request.set_message("hello1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "hello1");
-
   request.set_message("hello2");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "hello2");
-
   stream->WritesDone();
   EXPECT_FALSE(stream->Read(&response));  // Expect EOF
-
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
@@ -4859,20 +4825,16 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
-
   EchoRequest request;
   request.set_message("hello");
   // Write might succeed or fail depending on when the error is propagated.
   // But the stream should eventually fail.
   stream->Write(request);
   stream->WritesDone();
-
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
-
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
   EXPECT_THAT(status.error_code(),
@@ -4905,7 +4867,6 @@ TEST_P(
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   RpcOptions rpc_options;
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
@@ -4938,7 +4899,6 @@ TEST_P(
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   RpcOptions rpc_options;
   rpc_options.skip_cancelled_check = true;
   EchoResponse response;
@@ -4975,7 +4935,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   RpcOptions rpc_options;
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
@@ -5010,7 +4969,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   RpcOptions rpc_options;
   rpc_options.skip_cancelled_check = true;
   EchoResponse response;
@@ -5045,7 +5003,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   RpcOptions rpc_options;
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
@@ -5077,7 +5034,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   RpcOptions rpc_options;
   rpc_options.skip_cancelled_check = true;
   EchoResponse response;
@@ -5188,7 +5144,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5230,7 +5185,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5270,7 +5224,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5311,7 +5264,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5351,7 +5303,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5393,7 +5344,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5407,255 +5357,13 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
 
-class CleanCloseMockService : public MockExternalProcessorBase {
- public:
-  enum class CloseStage {
-    kBeforeRequestHeaders,
-    kAfterRequestHeaders,
-    kDuringRequestBody,
-    kDuringResponseHeaders,
-    kDuringResponseBody
-  };
-
-  explicit CleanCloseMockService(CloseStage stage,
-                                 int close_after_n_messages = 0,
-                                 bool close_before_responding = false)
-      : stage_(stage),
-        close_after_n_messages_(close_after_n_messages),
-        close_before_responding_(close_before_responding) {}
-
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    if (stage_ == CloseStage::kBeforeRequestHeaders) {
-      return grpc::Status::OK;
-    }
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    int body_messages_received = 0;
-    while (stream->Read(&request)) {
-      if (request.has_request_headers() &&
-          stage_ == CloseStage::kAfterRequestHeaders) {
-        ::envoy::service::ext_proc::v3::ProcessingResponse response;
-        SetDefaultEmptyResponse(request, &response);
-        stream->Write(response);
-        return grpc::Status::OK;
-      }
-      if (request.has_request_body() &&
-          stage_ == CloseStage::kDuringRequestBody) {
-        body_messages_received++;
-        if (close_before_responding_ &&
-            body_messages_received == close_after_n_messages_) {
-          return grpc::Status::OK;
-        }
-        if (!close_before_responding_ &&
-            body_messages_received > close_after_n_messages_) {
-          return grpc::Status::OK;
-        }
-      }
-      if (request.has_response_headers() &&
-          stage_ == CloseStage::kDuringResponseHeaders) {
-        return grpc::Status::OK;
-      }
-      if (request.has_response_body() &&
-          stage_ == CloseStage::kDuringResponseBody) {
-        body_messages_received++;
-        if (close_before_responding_ &&
-            body_messages_received == close_after_n_messages_) {
-          return grpc::Status::OK;
-        }
-        if (!close_before_responding_ &&
-            body_messages_received > close_after_n_messages_) {
-          return grpc::Status::OK;
-        }
-      }
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      if (request.has_request_body()) {
-        auto* body_mutation = response.mutable_request_body()
-                                  ->mutable_response()
-                                  ->mutable_body_mutation();
-        body_mutation->mutable_streamed_response()->set_body(
-            request.request_body().body());
-      } else if (request.has_response_body()) {
-        auto* body_mutation = response.mutable_response_body()
-                                  ->mutable_response()
-                                  ->mutable_body_mutation();
-        body_mutation->mutable_streamed_response()->set_body(
-            request.response_body().body());
-      } else {
-        SetDefaultEmptyResponse(request, &response);
-      }
-      stream->Write(response);
-      if (request.has_request_body() &&
-          stage_ == CloseStage::kDuringRequestBody &&
-          !close_before_responding_ &&
-          body_messages_received == close_after_n_messages_) {
-        return grpc::Status::OK;
-      }
-      if (request.has_response_body() &&
-          stage_ == CloseStage::kDuringResponseBody &&
-          !close_before_responding_ &&
-          body_messages_received == close_after_n_messages_) {
-        return grpc::Status::OK;
-      }
-    }
-    return grpc::Status::OK;
-  }
-
- private:
-  CloseStage stage_;
-  int close_after_n_messages_;
-  bool close_before_responding_;
-};
-
-class DrainMockService : public MockExternalProcessorBase {
- public:
-  enum class TriggerPoint {
-    kRequestHeaders,
-    kClientBody,
-    kResponseHeaders,
-    kServerBody,
-    kResponseTrailers,
-  };
-
-  DrainMockService(TriggerPoint trigger_point, int trigger_after_n_messages)
-      : trigger_point_(trigger_point),
-        trigger_after_n_messages_(trigger_after_n_messages) {}
-
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    std::cout << "DrainMockService: Process started" << std::endl;
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    int message_count = 0;
-    bool drain_triggered = false;
-
-    while (stream->Read(&request)) {
-      std::cout << "DrainMockService: Received request" << std::endl;
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      bool should_trigger = false;
-
-      if (request.has_request_headers() &&
-          trigger_point_ == TriggerPoint::kRequestHeaders) {
-        message_count++;
-        std::cout << "DrainMockService: Request headers count: "
-                  << message_count << std::endl;
-        if (message_count == trigger_after_n_messages_) {
-          should_trigger = true;
-        }
-      } else if (request.has_response_headers() &&
-                 trigger_point_ == TriggerPoint::kResponseHeaders) {
-        message_count++;
-        std::cout << "DrainMockService: Response headers count: "
-                  << message_count << std::endl;
-        if (message_count == trigger_after_n_messages_) {
-          should_trigger = true;
-        }
-      } else if (request.has_request_body() &&
-                 trigger_point_ == TriggerPoint::kClientBody) {
-        message_count++;
-        std::cout << "DrainMockService: Request body count: " << message_count
-                  << std::endl;
-        if (message_count == trigger_after_n_messages_) {
-          should_trigger = true;
-        }
-      } else if (request.has_response_body() &&
-                 trigger_point_ == TriggerPoint::kServerBody) {
-        message_count++;
-        std::cout << "DrainMockService: Response body count: " << message_count
-                  << std::endl;
-        if (message_count == trigger_after_n_messages_) {
-          should_trigger = true;
-        }
-      } else if (request.has_response_trailers() &&
-                 trigger_point_ == TriggerPoint::kResponseTrailers) {
-        message_count++;
-        std::cout << "DrainMockService: Response trailers count: "
-                  << message_count << std::endl;
-        if (message_count == trigger_after_n_messages_) {
-          should_trigger = true;
-        }
-      }
-
-      if (should_trigger) {
-        std::cout << "DrainMockService: Triggering drain" << std::endl;
-        response.set_request_drain(true);
-      }
-
-      // Echo back
-      if (request.has_request_headers()) {
-        std::cout << "DrainMockService: Echoing request headers" << std::endl;
-        SetDefaultEmptyResponse(request, &response);
-      } else if (request.has_response_headers()) {
-        std::cout << "DrainMockService: Echoing response headers" << std::endl;
-        SetDefaultEmptyResponse(request, &response);
-      } else if (request.has_request_body()) {
-        std::cout << "DrainMockService: Echoing request body" << std::endl;
-        auto* body_mutation = response.mutable_request_body()
-                                  ->mutable_response()
-                                  ->mutable_body_mutation();
-        if (!drain_triggered) {
-          grpc::testing::EchoRequest proto_req;
-          if (proto_req.ParseFromString(request.request_body().body())) {
-            proto_req.set_message(proto_req.message() + "_modified");
-            body_mutation->mutable_streamed_response()->set_body(
-                proto_req.SerializeAsString());
-          } else {
-            body_mutation->mutable_streamed_response()->set_body(
-                request.request_body().body() + "_modified");
-          }
-        } else {
-          body_mutation->mutable_streamed_response()->set_body(
-              request.request_body().body());
-        }
-      } else if (request.has_response_body()) {
-        std::cout << "DrainMockService: Echoing response body" << std::endl;
-        auto* body_mutation = response.mutable_response_body()
-                                  ->mutable_response()
-                                  ->mutable_body_mutation();
-        if (!drain_triggered) {
-          grpc::testing::EchoResponse proto_resp;
-          if (proto_resp.ParseFromString(request.response_body().body())) {
-            proto_resp.set_message(proto_resp.message() + "_modified");
-            body_mutation->mutable_streamed_response()->set_body(
-                proto_resp.SerializeAsString());
-          } else {
-            body_mutation->mutable_streamed_response()->set_body(
-                request.response_body().body() + "_modified");
-          }
-        } else {
-          body_mutation->mutable_streamed_response()->set_body(
-              request.response_body().body());
-        }
-      } else if (request.has_response_trailers()) {
-        std::cout << "DrainMockService: Echoing response trailers" << std::endl;
-        SetDefaultEmptyResponse(request, &response);
-      } else {
-        std::cout << "DrainMockService: Echoing other" << std::endl;
-        SetDefaultEmptyResponse(request, &response);
-      }
-
-      stream->Write(response);
-      if (should_trigger) {
-        drain_triggered = true;
-      }
-    }
-    std::cout << "DrainMockService: Process exiting (Read returned false)"
-              << std::endl;
-    return grpc::Status::OK;
-  }
-
- private:
-  TriggerPoint trigger_point_;
-  int trigger_after_n_messages_;
-};
-
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailClosed) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kBeforeRequestHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5676,7 +5384,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailClosed) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5691,8 +5398,12 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailClosed) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailOpen) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kBeforeRequestHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5713,7 +5424,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailOpen) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5729,8 +5439,12 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailOpen) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeRequestHeadersObservabilityFailClosed) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kBeforeRequestHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5751,7 +5465,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5767,8 +5480,12 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeRequestHeadersObservabilityFailOpen) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kBeforeRequestHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5789,7 +5506,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5804,8 +5520,21 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseAfterRequestHeaders) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kAfterRequestHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+            return grpc::Status::OK;
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5825,7 +5554,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseAfterRequestHeaders) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5841,8 +5569,21 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseAfterRequestHeaders) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseAfterRequestHeadersObservability) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kAfterRequestHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+            return grpc::Status::OK;
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5863,7 +5604,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5878,8 +5618,21 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailClosed) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_headers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5899,7 +5652,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailClosed) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5914,8 +5666,21 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailClosed) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailOpen) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_headers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5935,7 +5700,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailOpen) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5951,8 +5715,21 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailOpen) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersObservabilityFailClosed) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_headers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5973,7 +5750,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -5989,8 +5765,21 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersObservabilityFailOpen) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_headers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6011,7 +5800,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6027,8 +5815,21 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersWithActiveClient) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_headers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6049,7 +5850,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6057,7 +5857,6 @@ TEST_P(XdsExtProcEnd2endTest,
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_FALSE(stream->Read(&response));
-
   // Do NOT call WritesDone() to keep client active (committed).
   // The stream will close during response headers.
   // Since we are committed, the RPC should fail.
@@ -6069,8 +5868,21 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyBeforeAnyMessage) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kAfterRequestHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+            return grpc::Status::OK;
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6091,7 +5903,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6108,8 +5919,21 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyBeforeAnyMessageObservability) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kAfterRequestHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+            return grpc::Status::OK;
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6131,7 +5955,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6146,8 +5969,21 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyNoInFlight) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringRequestBody, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_request_body()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6168,7 +6004,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyNoInFlight) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6183,8 +6018,21 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyNoInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyNoInFlightObservability) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringRequestBody, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_request_body()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6206,7 +6054,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6215,7 +6062,6 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   // Stream closes cleanly. In observability mode, we can still send more
   // messages.
   request.set_message("message2");
@@ -6228,11 +6074,29 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyWithInFlight) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringRequestBody, 0);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_body()) {
+            auto* body_mutation = response.mutable_request_body()
+                                      ->mutable_response()
+                                      ->mutable_body_mutation();
+            body_mutation->mutable_streamed_response()->set_body(
+                request.request_body().body());
+            stream->Write(response);
+            return grpc::Status::OK;
+          }
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -6251,7 +6115,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyWithInFlight) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6266,11 +6129,29 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyWithInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyWithInFlightObservability) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringRequestBody, 0);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_body()) {
+            auto* body_mutation = response.mutable_request_body()
+                                      ->mutable_response()
+                                      ->mutable_body_mutation();
+            body_mutation->mutable_streamed_response()->set_body(
+                request.request_body().body());
+            stream->Write(response);
+            return grpc::Status::OK;
+          }
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -6290,7 +6171,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6299,7 +6179,6 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   // Stream closed. In observability mode, we can still send more messages.
   request.set_message("message2");
   EXPECT_TRUE(stream->Write(request));
@@ -6311,11 +6190,28 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 void XdsExtProcEnd2endTest::RunCloseTrailersTest(
-    TrailersCloseMockService::CloseStage stage, grpc::Status close_status,
+    bool close_before_trailers, grpc::Status close_status,
     bool failure_mode_allow, bool observability_mode,
     grpc::StatusCode expected_status_code, std::string expected_error_message) {
-  auto mock_service =
-      std::make_unique<TrailersCloseMockService>(stage, close_status);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [close_before_trailers, close_status](
+          grpc::ServerReaderWriter<
+              ::envoy::service::ext_proc::v3::ProcessingResponse,
+              ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        if (close_before_trailers) {
+          return close_status;
+        }
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_trailers()) {
+            return close_status;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return close_status;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6349,62 +6245,62 @@ void XdsExtProcEnd2endTest::RunCloseTrailersTest(
 // S1: Clean Close Before Trailers, Fail Closed -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeResponseTrailersFailClosed) {
-  RunCloseTrailersTest(TrailersCloseMockService::CloseStage::kBeforeTrailers,
-                       grpc::Status::OK, /*failure_mode_allow=*/false,
+  RunCloseTrailersTest(/*close_before_trailers=*/true, grpc::Status::OK,
+                       /*failure_mode_allow=*/false,
                        /*observability_mode=*/false, StatusCode::OK);
 }
 
 // S2: Clean Close Before Trailers, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeResponseTrailersFailOpen) {
-  RunCloseTrailersTest(TrailersCloseMockService::CloseStage::kBeforeTrailers,
-                       grpc::Status::OK, /*failure_mode_allow=*/true,
+  RunCloseTrailersTest(/*close_before_trailers=*/true, grpc::Status::OK,
+                       /*failure_mode_allow=*/true,
                        /*observability_mode=*/false, StatusCode::OK);
 }
 
 // S3: Clean Close Before Trailers, Observability, Fail Closed -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeResponseTrailersObservabilityFailClosed) {
-  RunCloseTrailersTest(TrailersCloseMockService::CloseStage::kBeforeTrailers,
-                       grpc::Status::OK, /*failure_mode_allow=*/false,
+  RunCloseTrailersTest(/*close_before_trailers=*/true, grpc::Status::OK,
+                       /*failure_mode_allow=*/false,
                        /*observability_mode=*/true, StatusCode::OK);
 }
 
 // S4: Clean Close Before Trailers, Observability, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeResponseTrailersObservabilityFailOpen) {
-  RunCloseTrailersTest(TrailersCloseMockService::CloseStage::kBeforeTrailers,
-                       grpc::Status::OK, /*failure_mode_allow=*/true,
+  RunCloseTrailersTest(/*close_before_trailers=*/true, grpc::Status::OK,
+                       /*failure_mode_allow=*/true,
                        /*observability_mode=*/true, StatusCode::OK);
 }
 
 // S5: Clean Close During Trailers, Fail Closed -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseTrailersFailClosed) {
-  RunCloseTrailersTest(TrailersCloseMockService::CloseStage::kDuringTrailers,
-                       grpc::Status::OK, /*failure_mode_allow=*/false,
+  RunCloseTrailersTest(/*close_before_trailers=*/false, grpc::Status::OK,
+                       /*failure_mode_allow=*/false,
                        /*observability_mode=*/false, StatusCode::OK);
 }
 
 // S6: Clean Close During Trailers, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseTrailersFailOpen) {
-  RunCloseTrailersTest(TrailersCloseMockService::CloseStage::kDuringTrailers,
-                       grpc::Status::OK, /*failure_mode_allow=*/true,
+  RunCloseTrailersTest(/*close_before_trailers=*/false, grpc::Status::OK,
+                       /*failure_mode_allow=*/true,
                        /*observability_mode=*/false, StatusCode::OK);
 }
 
 // S7: Clean Close During Trailers, Observability, Fail Closed -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseTrailersObservabilityFailClosed) {
-  RunCloseTrailersTest(TrailersCloseMockService::CloseStage::kDuringTrailers,
-                       grpc::Status::OK, /*failure_mode_allow=*/false,
+  RunCloseTrailersTest(/*close_before_trailers=*/false, grpc::Status::OK,
+                       /*failure_mode_allow=*/false,
                        /*observability_mode=*/true, StatusCode::OK);
 }
 
 // S8: Clean Close During Trailers, Observability, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseTrailersObservabilityFailOpen) {
-  RunCloseTrailersTest(TrailersCloseMockService::CloseStage::kDuringTrailers,
-                       grpc::Status::OK, /*failure_mode_allow=*/true,
+  RunCloseTrailersTest(/*close_before_trailers=*/false, grpc::Status::OK,
+                       /*failure_mode_allow=*/true,
                        /*observability_mode=*/true, StatusCode::OK);
 }
 
@@ -6412,7 +6308,7 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorCloseBeforeResponseTrailersFailClosed) {
   RunCloseTrailersTest(
-      TrailersCloseMockService::CloseStage::kBeforeTrailers,
+      /*close_before_trailers=*/true,
       grpc::Status(grpc::StatusCode::ABORTED, "Aborted before trailers"),
       /*failure_mode_allow=*/false, /*observability_mode=*/false,
       StatusCode::ABORTED, "Aborted before trailers");
@@ -6421,7 +6317,7 @@ TEST_P(XdsExtProcEnd2endTest,
 // S10: Error Close Before Trailers, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest, StreamErrorCloseBeforeResponseTrailersFailOpen) {
   RunCloseTrailersTest(
-      TrailersCloseMockService::CloseStage::kBeforeTrailers,
+      /*close_before_trailers=*/true,
       grpc::Status(grpc::StatusCode::ABORTED, "Aborted before trailers"),
       /*failure_mode_allow=*/true, /*observability_mode=*/false,
       StatusCode::OK);
@@ -6431,7 +6327,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamErrorCloseBeforeResponseTrailersFailOpen) {
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorCloseDuringResponseTrailersFailClosed) {
   RunCloseTrailersTest(
-      TrailersCloseMockService::CloseStage::kDuringTrailers,
+      /*close_before_trailers=*/false,
       grpc::Status(grpc::StatusCode::ABORTED, "Aborted during trailers"),
       /*failure_mode_allow=*/false, /*observability_mode=*/false,
       StatusCode::ABORTED, "Aborted during trailers");
@@ -6440,15 +6336,28 @@ TEST_P(XdsExtProcEnd2endTest,
 // S12: Error Close During Trailers, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest, StreamErrorCloseDuringResponseTrailersFailOpen) {
   RunCloseTrailersTest(
-      TrailersCloseMockService::CloseStage::kDuringTrailers,
+      /*close_before_trailers=*/false,
       grpc::Status(grpc::StatusCode::ABORTED, "Aborted during trailers"),
       /*failure_mode_allow=*/true, /*observability_mode=*/false,
       StatusCode::OK);
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseBody, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+          if (request.has_response_body()) {
+            return grpc::Status::OK;
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6471,18 +6380,15 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-
   // Send request 1, should get response 1.
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   // At this point, the first response body has been processed.
   // The mock service will close the stream cleanly on the next message or when
   // it receives it. Now we send request 2.
@@ -6502,8 +6408,21 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyNoInFlightObservability) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseBody, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+          if (request.has_response_body()) {
+            return grpc::Status::OK;
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6527,37 +6446,48 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-
   // Send request 1, should get response 1.
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   // Stream closes cleanly. In observability mode, we can still send/receive
   // more messages.
   request.set_message("message2");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message2");
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseBody, 2,
-      /*close_before_responding=*/true);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        int response_body_count = 0;
+        while (stream->Read(&request)) {
+          if (request.has_response_body()) {
+            response_body_count++;
+            if (response_body_count == 2) {
+              return grpc::Status::OK;
+            }
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -6578,7 +6508,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6587,7 +6516,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
   EchoResponse response;
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   // Send second message. It will be sent to ext_proc, and stream will close
   // before ext_proc responds. Since the filter is committed, the RPC should
   // fail.
@@ -6596,7 +6524,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
     // Read should fail because the RPC will be failed.
     EXPECT_FALSE(stream->Read(&response));
   }
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
@@ -6606,9 +6533,25 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyWithInFlightObservability) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseBody, 2,
-      /*close_before_responding=*/true);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        int response_body_count = 0;
+        while (stream->Read(&request)) {
+          if (request.has_response_body()) {
+            response_body_count++;
+            if (response_body_count == 2) {
+              return grpc::Status::OK;
+            }
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
@@ -6633,18 +6576,15 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-
   // Send message1.
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   // Send message2. It will be sent to ext_proc, and stream will close
   // before ext_proc responds. In observability mode, this should not fail the
   // RPC. The message should be forwarded.
@@ -6652,13 +6592,11 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message2");
-
   // Send message3. Stream is closed, should be bypassed.
   request.set_message("message3");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message3");
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -6666,8 +6604,21 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersWithBodyFailClosed) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_headers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6690,7 +6641,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6707,8 +6657,21 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersWithBodyFailOpen) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseHeaders);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_headers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6731,7 +6694,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6747,11 +6709,23 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyNoInFlightWithFailureModeAllow) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseBody, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+          if (request.has_response_body()) {
+            return grpc::Status::OK;
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -6772,7 +6746,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6781,14 +6754,12 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   // Send second message. It should fail because the stream was closed
   // after the first message, and the filter is committed.
   request.set_message("message2");
   if (stream->Write(request)) {
     EXPECT_FALSE(stream->Read(&response));
   }
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
@@ -6799,11 +6770,23 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamCleanCloseDuringResponseBodyNoInFlightObservabilityWithFailureModeAllow) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseBody, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+          if (request.has_response_body()) {
+            return grpc::Status::OK;
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -6825,25 +6808,21 @@ TEST_P(
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-
   // Send request 1, should get response 1.
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   // Stream closes cleanly. In observability mode, we can still send/receive
   // more messages.
   request.set_message("message2");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message2");
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -6851,9 +6830,25 @@ TEST_P(
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyWithInFlightWithFailureModeAllow) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseBody, 2,
-      /*close_before_responding=*/true);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        int response_body_count = 0;
+        while (stream->Read(&request)) {
+          if (request.has_response_body()) {
+            response_body_count++;
+            if (response_body_count == 2) {
+              return grpc::Status::OK;
+            }
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
 
@@ -6877,7 +6872,6 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
@@ -6886,7 +6880,6 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   // Send second message. It will be sent to ext_proc, and stream will close
   // before ext_proc responds. Since the filter is committed, the RPC should
   // fail.
@@ -6895,7 +6888,6 @@ TEST_P(XdsExtProcEnd2endTest,
     // Read should fail because the RPC will be failed.
     EXPECT_FALSE(stream->Read(&response));
   }
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
@@ -6906,12 +6898,27 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamCleanCloseDuringResponseBodyWithInFlightObservabilityWithFailureModeAllow) {
-  auto mock_service = std::make_unique<CleanCloseMockService>(
-      CleanCloseMockService::CloseStage::kDuringResponseBody, 2,
-      /*close_before_responding=*/true);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        int response_body_count = 0;
+        while (stream->Read(&request)) {
+          if (request.has_response_body()) {
+            response_body_count++;
+            if (response_body_count == 2) {
+              return grpc::Status::OK;
+            }
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -6933,18 +6940,15 @@ TEST_P(
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-
   // Send message1.
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   // Send message2. It will be sent to ext_proc, and stream will close
   // before ext_proc responds. In observability mode, this should not fail the
   // RPC. The message should be forwarded.
@@ -6965,11 +6969,48 @@ TEST_P(
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
-  auto mock_service = std::make_unique<DrainMockService>(
-      DrainMockService::TriggerPoint::kClientBody, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        bool drain_triggered = false;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_headers()) {
+            SetDefaultEmptyResponse(request, &response);
+          } else if (request.has_request_body()) {
+            if (!drain_triggered) {
+              response.set_request_drain(true);
+              drain_triggered = true;
+              auto* body_mutation = response.mutable_request_body()
+                                        ->mutable_response()
+                                        ->mutable_body_mutation();
+              grpc::testing::EchoRequest proto_req;
+              if (proto_req.ParseFromString(request.request_body().body())) {
+                proto_req.set_message(proto_req.message() + "_modified");
+                body_mutation->mutable_streamed_response()->set_body(
+                    proto_req.SerializeAsString());
+              } else {
+                body_mutation->mutable_streamed_response()->set_body(
+                    request.request_body().body() + "_modified");
+              }
+            } else {
+              auto* body_mutation = response.mutable_request_body()
+                                        ->mutable_response()
+                                        ->mutable_body_mutation();
+              body_mutation->mutable_streamed_response()->set_body(
+                  request.request_body().body());
+            }
+          } else {
+            SetDefaultEmptyResponse(request, &response);
+          }
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -6988,19 +7029,16 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-
   // Send message1. It should be modified by ext_proc.
   // The response to message1 will also trigger drain.
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1_modified");
-
   // Send message2. Since drain was triggered on message1, the ext_proc stream
   // should be closed by now, and message2 should bypass ext_proc (not
   // modified).
@@ -7008,18 +7046,54 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message2");
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainServerBody) {
-  auto mock_service = std::make_unique<DrainMockService>(
-      DrainMockService::TriggerPoint::kServerBody, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        bool drain_triggered = false;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_headers() || request.has_response_headers()) {
+            SetDefaultEmptyResponse(request, &response);
+          } else if (request.has_response_body()) {
+            if (!drain_triggered) {
+              response.set_request_drain(true);
+              drain_triggered = true;
+              auto* body_mutation = response.mutable_response_body()
+                                        ->mutable_response()
+                                        ->mutable_body_mutation();
+              grpc::testing::EchoResponse proto_resp;
+              if (proto_resp.ParseFromString(request.response_body().body())) {
+                proto_resp.set_message(proto_resp.message() + "_modified");
+                body_mutation->mutable_streamed_response()->set_body(
+                    proto_resp.SerializeAsString());
+              } else {
+                body_mutation->mutable_streamed_response()->set_body(
+                    request.response_body().body() + "_modified");
+              }
+            } else {
+              auto* body_mutation = response.mutable_response_body()
+                                        ->mutable_response()
+                                        ->mutable_body_mutation();
+              body_mutation->mutable_streamed_response()->set_body(
+                  request.response_body().body());
+            }
+          } else {
+            SetDefaultEmptyResponse(request, &response);
+          }
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -7039,35 +7113,45 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainServerBody) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-
   // Send request1. Response1 should be modified.
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1_modified");
-
   // Send request2. Response2 should bypass ext_proc.
   request.set_message("message2");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message2");
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestHeaders) {
-  auto mock_service = std::make_unique<DrainMockService>(
-      DrainMockService::TriggerPoint::kRequestHeaders, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_headers()) {
+            response.set_request_drain(true);
+            SetDefaultEmptyResponse(request, &response);
+          } else {
+            SetDefaultEmptyResponse(request, &response);
+          }
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -7088,12 +7172,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestHeaders) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-
   // Send message1. Since drain was triggered immediately on request headers,
   // the ext_proc stream should be half-closed/draining by now, and message1
   // should bypass ext_proc (not modified).
@@ -7101,18 +7183,46 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestHeaders) {
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1");
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseHeaders) {
-  auto mock_service = std::make_unique<DrainMockService>(
-      DrainMockService::TriggerPoint::kResponseHeaders, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_headers()) {
+            SetDefaultEmptyResponse(request, &response);
+          } else if (request.has_request_body()) {
+            auto* body_mutation = response.mutable_request_body()
+                                      ->mutable_response()
+                                      ->mutable_body_mutation();
+            grpc::testing::EchoRequest proto_req;
+            if (proto_req.ParseFromString(request.request_body().body())) {
+              proto_req.set_message(proto_req.message() + "_modified");
+              body_mutation->mutable_streamed_response()->set_body(
+                  proto_req.SerializeAsString());
+            } else {
+              body_mutation->mutable_streamed_response()->set_body(
+                  request.request_body().body() + "_modified");
+            }
+          } else if (request.has_response_headers()) {
+            response.set_request_drain(true);
+            SetDefaultEmptyResponse(request, &response);
+          } else {
+            SetDefaultEmptyResponse(request, &response);
+          }
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -7133,12 +7243,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseHeaders) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
@@ -7148,11 +7256,53 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseHeaders) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseTrailers) {
-  auto mock_service = std::make_unique<DrainMockService>(
-      DrainMockService::TriggerPoint::kResponseTrailers, 1);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_headers() || request.has_response_headers()) {
+            SetDefaultEmptyResponse(request, &response);
+          } else if (request.has_request_body()) {
+            auto* body_mutation = response.mutable_request_body()
+                                      ->mutable_response()
+                                      ->mutable_body_mutation();
+            grpc::testing::EchoRequest proto_req;
+            if (proto_req.ParseFromString(request.request_body().body())) {
+              proto_req.set_message(proto_req.message() + "_modified");
+              body_mutation->mutable_streamed_response()->set_body(
+                  proto_req.SerializeAsString());
+            } else {
+              body_mutation->mutable_streamed_response()->set_body(
+                  request.request_body().body() + "_modified");
+            }
+          } else if (request.has_response_body()) {
+            auto* body_mutation = response.mutable_response_body()
+                                      ->mutable_response()
+                                      ->mutable_body_mutation();
+            grpc::testing::EchoResponse proto_resp;
+            if (proto_resp.ParseFromString(request.response_body().body())) {
+              proto_resp.set_message(proto_resp.message() + "_modified");
+              body_mutation->mutable_streamed_response()->set_body(
+                  proto_resp.SerializeAsString());
+            } else {
+              body_mutation->mutable_streamed_response()->set_body(
+                  request.response_body().body() + "_modified");
+            }
+          } else if (request.has_response_trailers()) {
+            response.set_request_drain(true);
+            SetDefaultEmptyResponse(request, &response);
+          } else {
+            SetDefaultEmptyResponse(request, &response);
+          }
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -7173,12 +7323,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseTrailers) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-
   request.set_message("message1");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
