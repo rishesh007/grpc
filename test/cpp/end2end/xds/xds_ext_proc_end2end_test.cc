@@ -280,8 +280,6 @@ class MockExternalProcessorService : public MockExternalProcessorBase {
             body_mutation->mutable_streamed_response()->set_body(
                 request.response_body().body());
           }
-        } else if (request.has_request_trailers()) {
-          response.mutable_request_trailers()->mutable_header_mutation();
         } else if (request.has_response_trailers()) {
           counts_.response_trailers++;
           auto* mutation =
@@ -494,33 +492,6 @@ void SetDefaultEmptyResponse(
 
 class GenericMockService : public MockExternalProcessorBase {
  public:
-  using Callback = std::function<void(
-      const ::envoy::service::ext_proc::v3::ProcessingRequest&,
-      ::envoy::service::ext_proc::v3::ProcessingResponse*)>;
-
-  explicit GenericMockService(Callback callback)
-      : callback_(std::move(callback)) {}
-
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    while (stream->Read(&request)) {
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      callback_(request, &response);
-      stream->Write(response);
-    }
-    return grpc::Status::OK;
-  }
-
- private:
-  Callback callback_;
-};
-
-class StatusMockService : public MockExternalProcessorBase {
- public:
   using Callback = std::function<grpc::Status(
       const ::envoy::service::ext_proc::v3::ProcessingRequest&,
       ::envoy::service::ext_proc::v3::ProcessingResponse*)>;
@@ -530,10 +501,10 @@ class StatusMockService : public MockExternalProcessorBase {
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream)>;
 
-  explicit StatusMockService(Callback callback)
+  explicit GenericMockService(Callback callback)
       : callback_(std::move(callback)) {}
 
-  explicit StatusMockService(StreamCallback stream_callback)
+  explicit GenericMockService(StreamCallback stream_callback)
       : stream_callback_(std::move(stream_callback)) {}
 
   grpc::Status Process(
@@ -1808,6 +1779,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersContinueAndReplaceFails) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -1851,6 +1823,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersInvalidHeaderMutationFails) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -1900,6 +1873,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersRequestAttributesSent) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -2004,6 +1978,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersContinueAndReplaceFails) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -2047,6 +2022,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersInvalidHeaderMutationFails) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -2265,6 +2241,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseTrailersInvalidHeaderMutationFails) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -2407,7 +2384,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        RequestBodyExtProcConnectionErrorFailureModeFalse) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
@@ -2448,7 +2425,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        RequestBodyExtProcConnectionErrorFailureModeTrue) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
@@ -2492,7 +2469,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        RequestBodyObservabilityExtProcConnectionErrorFailureModeFalse) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
@@ -2533,7 +2510,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        RequestBodyObservabilityExtProcConnectionErrorFailureModeTrue) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
@@ -2573,7 +2550,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ResponseBodyObservabilityExtProcConnectionErrorFailureModeFalse) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -2620,7 +2597,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ResponseBodyObservabilityExtProcConnectionErrorFailureModeTrue) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -2658,40 +2635,21 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(status.ok()) << "Expected OK, got: " << status.error_message();
 }
 
-class DuplicateResponseMockService : public MockExternalProcessorBase {
- public:
-  explicit DuplicateResponseMockService(
-      std::function<
-          bool(const ::envoy::service::ext_proc::v3::ProcessingRequest&)>
-          duplicate_cond)
-      : duplicate_cond_(std::move(duplicate_cond)) {}
-
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    while (stream->Read(&request)) {
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      SetDefaultEmptyResponse(request, &response);
-      stream->Write(response);
-      if (duplicate_cond_(request)) {
-        stream->Write(response);
-      }
-    }
-    return grpc::Status::OK;
-  }
-
- private:
-  std::function<bool(const ::envoy::service::ext_proc::v3::ProcessingRequest&)>
-      duplicate_cond_;
-};
-
 TEST_P(XdsExtProcEnd2endTest, DuplicateRequestBodyResponseFailsCall) {
-  auto mock_service = std::make_unique<DuplicateResponseMockService>(
-      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request) {
-        return request.has_request_body();
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+          if (request.has_request_body()) {
+            stream->Write(response);
+          }
+        }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -2813,6 +2771,7 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithMessageFailure) {
             ADD_FAILURE() << "Processor received message after half-close";
           }
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(ext_proc_service));
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -2878,6 +2837,7 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithoutMessageFailure) {
             ADD_FAILURE() << "Processor received message after half-close";
           }
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(ext_proc_service));
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -2950,6 +2910,7 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamNormalHalfCloseSuccess) {
                 body_req.body());
           }
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(ext_proc_service));
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -3001,7 +2962,7 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamNormalHalfCloseSuccess) {
 TEST_P(XdsExtProcEnd2endTest,
        BidiStreamRequestBodyExtProcConnectionErrorFailureModeFalse) {
   auto body_count = std::make_shared<int>(0);
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [body_count](
           const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3053,7 +3014,7 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        BidiStreamRequestBodyExtProcConnectionErrorFailureModeTrue) {
   auto body_count = std::make_shared<int>(0);
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [body_count](
           const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3110,7 +3071,7 @@ TEST_P(
     BidiStreamRequestBodyObservabilityExtProcConnectionErrorFailureModeFalse) {
   ResetStubWithUniqueArg();
   auto body_count = std::make_shared<int>(0);
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [body_count](
           const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3166,7 +3127,7 @@ TEST_P(
     BidiStreamRequestBodyObservabilityExtProcConnectionErrorFailureModeTrue) {
   ResetStubWithUniqueArg();
   auto body_count = std::make_shared<int>(0);
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [body_count](
           const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
           ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -3242,6 +3203,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -3289,6 +3251,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestBodyContinueAndReplaceFailureModeFalse) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -3334,6 +3297,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestBodyContinueAndReplaceFailureModeTrue) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -3382,6 +3346,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -3426,6 +3391,7 @@ TEST_P(XdsExtProcEnd2endTest, RequestBodyGrpcMessageCompressedFailureModeTrue) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -3475,6 +3441,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -3526,6 +3493,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -3579,6 +3547,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -3629,6 +3598,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -3727,9 +3697,20 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        BidiStreamResponseBodyDuplicateResponseFailsCall) {
-  auto mock_service = std::make_unique<DuplicateResponseMockService>(
-      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request) {
-        return request.has_response_body();
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+          if (request.has_response_body()) {
+            stream->Write(response);
+          }
+        }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -3770,7 +3751,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        BidiStreamResponseBodyExtProcConnectionErrorFailureModeFalse) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -3817,7 +3798,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        BidiStreamResponseBodyExtProcConnectionErrorFailureModeTrue) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -3869,7 +3850,7 @@ TEST_P(
     XdsExtProcEnd2endTest,
     BidiStreamResponseBodyObservabilityExtProcConnectionErrorFailureModeFalse) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -3922,7 +3903,7 @@ TEST_P(
     XdsExtProcEnd2endTest,
     BidiStreamResponseBodyObservabilityExtProcConnectionErrorFailureModeTrue) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
@@ -3971,7 +3952,7 @@ TEST_P(
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeRequestHeadersObservabilityFailureModeFalse) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
@@ -4012,7 +3993,7 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeRequestHeadersObservabilityFailureModeTrue) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
@@ -4050,7 +4031,7 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeRequestBodyObservabilityFailureModeFalse) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4103,7 +4084,7 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeRequestBodyObservabilityFailureModeTrue) {
   ResetStubWithUniqueArg();
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4153,7 +4134,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyHalfCloseFailFailureModeFalse) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4209,7 +4190,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        ServerToClientResponseBodyHalfCloseFailureModeTrue) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4276,6 +4257,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -4324,6 +4306,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -4373,6 +4356,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingResponseBodyBeforeHeaders) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -4420,6 +4404,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingTrailersBeforeHeaders) {
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -4471,6 +4456,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -4513,7 +4499,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingResponseBodyAfterTrailers) {
   // We disable S2C headers to work around the transport-level coalescing
   // limitation. This allows us to test the interaction between S2C body and
   // trailers.
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4593,6 +4579,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -4641,6 +4628,7 @@ TEST_P(XdsExtProcEnd2endTest,
         } else {
           SetDefaultEmptyResponse(request, response);
         }
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -4680,7 +4668,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        RequestHeadersExtProcCloseStreamAfterHeadersFailureModeTrue) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4735,7 +4723,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        RequestHeadersExtProcCloseStreamAfterHeadersFailCall) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4788,7 +4776,7 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamErrorAfterRequestHeaderResponseBeforeResponseHeaderCallWhenFailureModeAllowIsTrue) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4833,7 +4821,7 @@ TEST_P(
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamErrorAfterRequestHeaderResponseBeforeResponseHeaderCallWhenFailureModeAllowIsFalse) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4878,7 +4866,7 @@ TEST_P(
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseBodyCallWhenFailureModeAllowIsTrue) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4924,7 +4912,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseBodyCallWhenFailureModeAllowIsFalse) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -4969,7 +4957,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseTrailerCallWhenFailureModeAllowIsTrue) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5013,7 +5001,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseTrailerCallWhenFailureModeAllowIsFalse) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5058,7 +5046,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseHeadersObservabilityFailCall) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5113,7 +5101,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseHeadersObservabilityAllowCall) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5167,7 +5155,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseBodyObservabilityFailCall) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5225,7 +5213,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseBodyObservabilityAllowCall) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5282,7 +5270,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseTrailersObservabilityFailCall) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5344,7 +5332,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseTrailersObservabilityAllowCall) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5403,7 +5391,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
@@ -5443,7 +5431,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailClosed) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
@@ -5484,7 +5472,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeRequestHeadersFailOpen) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeRequestHeadersObservabilityFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
@@ -5525,7 +5513,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeRequestHeadersObservabilityFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* /*stream*/) {
@@ -5565,7 +5553,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseAfterRequestHeaders) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5614,7 +5602,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseAfterRequestHeaders) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseAfterRequestHeadersObservability) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5663,7 +5651,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5711,7 +5699,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailClosed) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5760,7 +5748,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseHeadersFailOpen) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersObservabilityFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5810,7 +5798,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersObservabilityFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5860,7 +5848,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersWithActiveClient) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5913,7 +5901,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyBeforeAnyMessage) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -5964,7 +5952,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyBeforeAnyMessageObservability) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6014,7 +6002,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyNoInFlight) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6063,7 +6051,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyNoInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyNoInFlightObservability) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6119,7 +6107,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyWithInFlight) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6174,7 +6162,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringRequestBodyWithInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringRequestBodyWithInFlightObservability) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6236,7 +6224,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeResponseTrailersFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6268,7 +6256,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeResponseTrailersFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6301,7 +6289,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeResponseTrailersFailOpen) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeResponseTrailersObservabilityFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6334,7 +6322,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeResponseTrailersObservabilityFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6367,7 +6355,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseTrailersFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6408,7 +6396,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseTrailersFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6450,7 +6438,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseTrailersFailOpen) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseTrailersObservabilityFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6492,7 +6480,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseTrailersObservabilityFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6534,7 +6522,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorCloseBeforeResponseTrailersFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6569,7 +6557,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamErrorCloseBeforeResponseTrailersFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6603,7 +6591,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamErrorCloseBeforeResponseTrailersFailOpen) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorCloseDuringResponseTrailersFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6648,7 +6636,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamErrorCloseDuringResponseTrailersFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6691,7 +6679,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamErrorCloseDuringResponseTrailersFailOpen) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6756,7 +6744,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyNoInFlightObservability) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6815,7 +6803,7 @@ TEST_P(XdsExtProcEnd2endTest,
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6881,7 +6869,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyWithInFlight) {
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyWithInFlightObservability) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -6952,7 +6940,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersWithBodyFailClosed) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -7005,7 +6993,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseHeadersWithBodyFailOpen) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -7057,7 +7045,7 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyNoInFlightWithFailureModeAllow) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -7118,7 +7106,7 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamCleanCloseDuringResponseBodyNoInFlightObservabilityWithFailureModeAllow) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -7178,7 +7166,7 @@ TEST_P(
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseBodyWithInFlightWithFailureModeAllow) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -7245,7 +7233,7 @@ TEST_P(XdsExtProcEnd2endTest,
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamCleanCloseDuringResponseBodyWithInFlightObservabilityWithFailureModeAllow) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -7314,7 +7302,7 @@ TEST_P(
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -7393,7 +7381,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainServerBody) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -7470,7 +7458,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainServerBody) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestHeaders) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -7526,7 +7514,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestHeaders) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseHeaders) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
@@ -7607,7 +7595,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseHeaders) {
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseTrailers) {
-  auto mock_service = std::make_unique<StatusMockService>(
+  auto mock_service = std::make_unique<GenericMockService>(
       [](grpc::ServerReaderWriter<
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
