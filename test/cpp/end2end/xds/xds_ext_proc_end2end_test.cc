@@ -7199,7 +7199,6 @@ TEST_P(XdsExtProcEnd2endTest,
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
-
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -7304,13 +7303,11 @@ TEST_P(
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message2");
-
   // Send message3. Stream is closed, should be bypassed.
   request.set_message("message3");
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message3");
-
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -7328,27 +7325,23 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainClientBody) {
           if (request.has_request_headers()) {
             SetDefaultEmptyResponse(request, &response);
           } else if (request.has_request_body()) {
-            if (!drain_triggered) {
-              response.set_request_drain(true);
-              drain_triggered = true;
-              auto* body_mutation = response.mutable_request_body()
-                                        ->mutable_response()
-                                        ->mutable_body_mutation();
-              grpc::testing::EchoRequest proto_req;
-              if (proto_req.ParseFromString(request.request_body().body())) {
-                proto_req.set_message(proto_req.message() + "_modified");
-                body_mutation->mutable_streamed_response()->set_body(
-                    proto_req.SerializeAsString());
-              } else {
-                body_mutation->mutable_streamed_response()->set_body(
-                    request.request_body().body() + "_modified");
-              }
-            } else {
-              auto* body_mutation = response.mutable_request_body()
-                                        ->mutable_response()
-                                        ->mutable_body_mutation();
+            if (drain_triggered) {
+              return grpc::Status(grpc::StatusCode::INTERNAL,
+                                  "Received request body after drain");
+            }
+            response.set_request_drain(true);
+            drain_triggered = true;
+            auto* body_mutation = response.mutable_request_body()
+                                      ->mutable_response()
+                                      ->mutable_body_mutation();
+            grpc::testing::EchoRequest proto_req;
+            if (proto_req.ParseFromString(request.request_body().body())) {
+              proto_req.set_message(proto_req.message() + "_modified");
               body_mutation->mutable_streamed_response()->set_body(
-                  request.request_body().body());
+                  proto_req.SerializeAsString());
+            } else {
+              body_mutation->mutable_streamed_response()->set_body(
+                  request.request_body().body() + "_modified");
             }
           } else {
             SetDefaultEmptyResponse(request, &response);
@@ -7411,27 +7404,23 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainServerBody) {
           if (request.has_request_headers() || request.has_response_headers()) {
             SetDefaultEmptyResponse(request, &response);
           } else if (request.has_response_body()) {
-            if (!drain_triggered) {
-              response.set_request_drain(true);
-              drain_triggered = true;
-              auto* body_mutation = response.mutable_response_body()
-                                        ->mutable_response()
-                                        ->mutable_body_mutation();
-              grpc::testing::EchoResponse proto_resp;
-              if (proto_resp.ParseFromString(request.response_body().body())) {
-                proto_resp.set_message(proto_resp.message() + "_modified");
-                body_mutation->mutable_streamed_response()->set_body(
-                    proto_resp.SerializeAsString());
-              } else {
-                body_mutation->mutable_streamed_response()->set_body(
-                    request.response_body().body() + "_modified");
-              }
-            } else {
-              auto* body_mutation = response.mutable_response_body()
-                                        ->mutable_response()
-                                        ->mutable_body_mutation();
+            if (drain_triggered) {
+              return grpc::Status(grpc::StatusCode::INTERNAL,
+                                  "Received response body after drain");
+            }
+            response.set_request_drain(true);
+            drain_triggered = true;
+            auto* body_mutation = response.mutable_response_body()
+                                      ->mutable_response()
+                                      ->mutable_body_mutation();
+            grpc::testing::EchoResponse proto_resp;
+            if (proto_resp.ParseFromString(request.response_body().body())) {
+              proto_resp.set_message(proto_resp.message() + "_modified");
               body_mutation->mutable_streamed_response()->set_body(
-                  request.response_body().body());
+                  proto_resp.SerializeAsString());
+            } else {
+              body_mutation->mutable_streamed_response()->set_body(
+                  request.response_body().body() + "_modified");
             }
           } else {
             SetDefaultEmptyResponse(request, &response);
@@ -7542,6 +7531,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseHeaders) {
           ::envoy::service::ext_proc::v3::ProcessingResponse,
           ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
         ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        bool drain_triggered = false;
         while (stream->Read(&request)) {
           ::envoy::service::ext_proc::v3::ProcessingResponse response;
           if (request.has_request_headers()) {
@@ -7561,6 +7551,19 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainResponseHeaders) {
             }
           } else if (request.has_response_headers()) {
             response.set_request_drain(true);
+            drain_triggered = true;
+            SetDefaultEmptyResponse(request, &response);
+          } else if (request.has_response_body()) {
+            if (drain_triggered) {
+              return grpc::Status(grpc::StatusCode::INTERNAL,
+                                  "Received response body after drain");
+            }
+            SetDefaultEmptyResponse(request, &response);
+          } else if (request.has_response_trailers()) {
+            if (drain_triggered) {
+              return grpc::Status(grpc::StatusCode::INTERNAL,
+                                  "Received response trailers after drain");
+            }
             SetDefaultEmptyResponse(request, &response);
           } else {
             SetDefaultEmptyResponse(request, &response);
