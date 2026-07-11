@@ -728,11 +728,6 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
                              bool req_body, bool resp_body,
                              bool observability_mode = false);
   void RunTrailersOnlyTest(bool observability_mode);
-  void RunCloseTrailersTest(bool close_before_trailers,
-                            grpc::Status close_status, bool failure_mode_allow,
-                            bool observability_mode,
-                            grpc::StatusCode expected_status_code,
-                            std::string expected_error_message = "");
 
   std::unique_ptr<ExtProcServer<MockExternalProcessorService>> ext_proc_server_;
   std::unique_ptr<ExtProcServer<ImmediateResponseMockService>>
@@ -4683,29 +4678,22 @@ TEST_P(XdsExtProcEnd2endTest,
                                    "response trailers are disabled"));
 }
 
-class CloseStreamAfterHeadersMockService : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    if (stream->Read(&request)) {
-      if (request.has_request_headers()) {
-        ::envoy::service::ext_proc::v3::ProcessingResponse response;
-        SetDefaultEmptyResponse(request, &response);
-        stream->Write(response);
-      }
-    }
-    // Returning an error ensures the filter detects the failure.
-    return grpc::Status(grpc::StatusCode::ABORTED, "Closed after headers");
-  }
-};
-
 TEST_P(XdsExtProcEnd2endTest,
        RequestHeadersExtProcCloseStreamAfterHeadersFailureModeTrue) {
-  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+          }
+        }
+        return grpc::Status(grpc::StatusCode::ABORTED, "Closed after headers");
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4747,7 +4735,20 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        RequestHeadersExtProcCloseStreamAfterHeadersFailCall) {
-  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+          }
+        }
+        return grpc::Status(grpc::StatusCode::ABORTED, "Closed after headers");
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4781,15 +4782,26 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED,
-                               StatusCode::ABORTED));
+  EXPECT_EQ(status.error_code(), StatusCode::ABORTED);
 }
 
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamErrorAfterRequestHeaderResponseBeforeResponseHeaderCallWhenFailureModeAllowIsTrue) {
-  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+          }
+        }
+        return grpc::Status(grpc::StatusCode::ABORTED, "Closed after headers");
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4821,7 +4833,20 @@ TEST_P(
 TEST_P(
     XdsExtProcEnd2endTest,
     StreamErrorAfterRequestHeaderResponseBeforeResponseHeaderCallWhenFailureModeAllowIsFalse) {
-  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+          }
+        }
+        return grpc::Status(grpc::StatusCode::ABORTED, "Closed after headers");
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4848,14 +4873,25 @@ TEST_P(
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED,
-                               StatusCode::ABORTED));
+  EXPECT_EQ(status.error_code(), StatusCode::ABORTED);
 }
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseBodyCallWhenFailureModeAllowIsTrue) {
-  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+          }
+        }
+        return grpc::Status(grpc::StatusCode::ABORTED, "Closed after headers");
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4866,7 +4902,8 @@ TEST_P(XdsExtProcEnd2endTest,
           .SetFailureModeAllow(true)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::NONE)
-          .SetResponseHeaderMode(ProcessingMode::SKIP) to avoid coalescing bug
+          .SetResponseHeaderMode(
+              ProcessingMode::SKIP)                   // to avoid coalescing bug
           .SetResponseBodyMode(ProcessingMode::GRPC)  // Enable S2C body
           .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
@@ -4887,7 +4924,20 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseBodyCallWhenFailureModeAllowIsFalse) {
-  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+          }
+        }
+        return grpc::Status(grpc::StatusCode::ABORTED, "Closed after headers");
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4898,8 +4948,8 @@ TEST_P(XdsExtProcEnd2endTest,
           .SetFailureModeAllow(false)
           .SetRequestHeaderMode(ProcessingMode::SEND)
           .SetRequestBodyMode(ProcessingMode::NONE)
-          .SetResponseHeaderMode(ProcessingMode::SKIP) to avoid coalescing bug
-          .SetResponseBodyMode(ProcessingMode::GRPC)  // Enable S2C body
+          .SetResponseHeaderMode(ProcessingMode::SKIP)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
           .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
@@ -4914,14 +4964,25 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED,
-                               StatusCode::ABORTED));
+  EXPECT_EQ(status.error_code(), StatusCode::ABORTED);
 }
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseTrailerCallWhenFailureModeAllowIsTrue) {
-  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+          }
+        }
+        return grpc::Status(grpc::StatusCode::ABORTED, "Closed after headers");
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4952,7 +5013,20 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorBeforeResponseTrailerCallWhenFailureModeAllowIsFalse) {
-  auto mock_service = std::make_unique<CloseStreamAfterHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            SetDefaultEmptyResponse(request, &response);
+            stream->Write(response);
+          }
+        }
+        return grpc::Status(grpc::StatusCode::ABORTED, "Closed after headers");
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -4979,88 +5053,27 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
   EXPECT_FALSE(status.ok());
-  EXPECT_THAT(status.error_code(),
-              ::testing::AnyOf(StatusCode::UNAVAILABLE, StatusCode::CANCELLED,
-                               StatusCode::ABORTED));
+  EXPECT_EQ(status.error_code(), StatusCode::ABORTED);
 }
-
-class FailAfterRequestHeadersAllowedMockService
-    : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    if (stream->Read(&request)) {
-      if (request.has_request_headers()) {
-        ::envoy::service::ext_proc::v3::ProcessingResponse response;
-        response.mutable_request_headers();
-        stream->Write(response);
-        return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                            "Failed after request headers allowed");
-      }
-    }
-    return grpc::Status::OK;
-  }
-};
-
-class FailAfterResponseHeadersMockService : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    while (stream->Read(&request)) {
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      if (request.has_request_headers()) {
-        response.mutable_request_headers();
-        stream->Write(response);
-      } else if (request.has_response_headers()) {
-        response.mutable_response_headers();
-        stream->Write(response);
-        return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                            "Failed after response headers");
-      }
-    }
-    return grpc::Status::OK;
-  }
-};
-
-class FailAfterResponseBodyMockService : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    while (stream->Read(&request)) {
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      if (request.has_request_headers()) {
-        response.mutable_request_headers();
-        stream->Write(response);
-      } else if (request.has_response_headers()) {
-        response.mutable_response_headers();
-        stream->Write(response);
-      } else if (request.has_response_body()) {
-        response.mutable_response_body();
-        stream->Write(response);
-        return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                            "Failed after response body");
-      }
-    }
-    return grpc::Status::OK;
-  }
-};
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseHeadersObservabilityFailCall) {
-  auto mock_service =
-      std::make_unique<FailAfterRequestHeadersAllowedMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            response.mutable_request_headers();
+            stream->Write(response);
+            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                "Failed after request headers allowed");
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5100,8 +5113,22 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseHeadersObservabilityAllowCall) {
-  auto mock_service =
-      std::make_unique<FailAfterRequestHeadersAllowedMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        if (stream->Read(&request)) {
+          if (request.has_request_headers()) {
+            ::envoy::service::ext_proc::v3::ProcessingResponse response;
+            response.mutable_request_headers();
+            stream->Write(response);
+            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                "Failed after request headers allowed");
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5140,7 +5167,25 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseBodyObservabilityFailCall) {
-  auto mock_service = std::make_unique<FailAfterResponseHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_headers()) {
+            response.mutable_request_headers();
+            stream->Write(response);
+          } else if (request.has_response_headers()) {
+            response.mutable_response_headers();
+            stream->Write(response);
+            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                "Failed after response headers");
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5180,7 +5225,25 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseBodyObservabilityAllowCall) {
-  auto mock_service = std::make_unique<FailAfterResponseHeadersMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_headers()) {
+            response.mutable_request_headers();
+            stream->Write(response);
+          } else if (request.has_response_headers()) {
+            response.mutable_response_headers();
+            stream->Write(response);
+            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                "Failed after response headers");
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5219,7 +5282,28 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseTrailersObservabilityFailCall) {
-  auto mock_service = std::make_unique<FailAfterResponseBodyMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_headers()) {
+            response.mutable_request_headers();
+            stream->Write(response);
+          } else if (request.has_response_headers()) {
+            response.mutable_response_headers();
+            stream->Write(response);
+          } else if (request.has_response_body()) {
+            response.mutable_response_body();
+            stream->Write(response);
+            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                "Failed after response body");
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -5260,7 +5344,28 @@ TEST_P(XdsExtProcEnd2endTest,
 
 TEST_P(XdsExtProcEnd2endTest,
        StreamFailBeforeResponseTrailersObservabilityAllowCall) {
-  auto mock_service = std::make_unique<FailAfterResponseBodyMockService>();
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          if (request.has_request_headers()) {
+            response.mutable_request_headers();
+            stream->Write(response);
+          } else if (request.has_response_headers()) {
+            response.mutable_response_headers();
+            stream->Write(response);
+          } else if (request.has_response_body()) {
+            response.mutable_response_body();
+            stream->Write(response);
+            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                "Failed after response body");
+          }
+        }
+        return grpc::Status::OK;
+      });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   ResetStubWithUniqueArg();
@@ -6129,28 +6234,13 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(status.ok()) << status.error_message();
 }
 
-void XdsExtProcEnd2endTest::RunCloseTrailersTest(
-    bool close_before_trailers, grpc::Status close_status,
-    bool failure_mode_allow, bool observability_mode,
-    grpc::StatusCode expected_status_code, std::string expected_error_message) {
+TEST_P(XdsExtProcEnd2endTest,
+       StreamCleanCloseBeforeResponseTrailersFailClosed) {
   auto mock_service = std::make_unique<StatusMockService>(
-      [close_before_trailers, close_status](
-          grpc::ServerReaderWriter<
-              ::envoy::service::ext_proc::v3::ProcessingResponse,
-              ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
-        if (close_before_trailers) {
-          return close_status;
-        }
-        ::envoy::service::ext_proc::v3::ProcessingRequest request;
-        while (stream->Read(&request)) {
-          if (request.has_response_trailers()) {
-            return close_status;
-          }
-          ::envoy::service::ext_proc::v3::ProcessingResponse response;
-          SetDefaultEmptyResponse(request, &response);
-          stream->Write(response);
-        }
-        return close_status;
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
@@ -6160,8 +6250,8 @@ void XdsExtProcEnd2endTest::RunCloseTrailersTest(
       ExternalProcessorBuilder()
           .SetTargetUri(alternative_ext_proc_server_->target())
           .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(failure_mode_allow)
-          .SetObservabilityMode(observability_mode)
+          .SetFailureModeAllow(false)
+          .SetObservabilityMode(false)
           .SetResponseTrailerMode(ProcessingMode::SEND)
           .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
@@ -6174,112 +6264,430 @@ void XdsExtProcEnd2endTest::RunCloseTrailersTest(
   RpcOptions rpc_options;
   EchoResponse response;
   Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_EQ(status.error_code(), expected_status_code);
-  if (expected_status_code != StatusCode::OK &&
-      !expected_error_message.empty()) {
-    EXPECT_THAT(status.error_message(),
-                ::testing::HasSubstr(expected_error_message));
-  }
+  EXPECT_EQ(status.error_code(), StatusCode::OK);
 }
 
-// S1: Clean Close Before Trailers, Fail Closed -> Succeeds
-TEST_P(XdsExtProcEnd2endTest,
-       StreamCleanCloseBeforeResponseTrailersFailClosed) {
-  RunCloseTrailersTest(/*close_before_trailers=*/true, grpc::Status::OK,
-                       /*failure_mode_allow=*/false,
-                       /*observability_mode=*/false, StatusCode::OK);
-}
-
-// S2: Clean Close Before Trailers, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseBeforeResponseTrailersFailOpen) {
-  RunCloseTrailersTest(/*close_before_trailers=*/true, grpc::Status::OK,
-                       /*failure_mode_allow=*/true,
-                       /*observability_mode=*/false, StatusCode::OK);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(true)
+          .SetObservabilityMode(false)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::OK);
 }
 
-// S3: Clean Close Before Trailers, Observability, Fail Closed -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeResponseTrailersObservabilityFailClosed) {
-  RunCloseTrailersTest(/*close_before_trailers=*/true, grpc::Status::OK,
-                       /*failure_mode_allow=*/false,
-                       /*observability_mode=*/true, StatusCode::OK);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(false)
+          .SetObservabilityMode(true)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::OK);
 }
 
-// S4: Clean Close Before Trailers, Observability, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseBeforeResponseTrailersObservabilityFailOpen) {
-  RunCloseTrailersTest(/*close_before_trailers=*/true, grpc::Status::OK,
-                       /*failure_mode_allow=*/true,
-                       /*observability_mode=*/true, StatusCode::OK);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(true)
+          .SetObservabilityMode(true)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::OK);
 }
 
-// S5: Clean Close During Trailers, Fail Closed -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseTrailersFailClosed) {
-  RunCloseTrailersTest(/*close_before_trailers=*/false, grpc::Status::OK,
-                       /*failure_mode_allow=*/false,
-                       /*observability_mode=*/false, StatusCode::OK);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_trailers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(false)
+          .SetObservabilityMode(false)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::OK);
 }
 
-// S6: Clean Close During Trailers, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseTrailersFailOpen) {
-  RunCloseTrailersTest(/*close_before_trailers=*/false, grpc::Status::OK,
-                       /*failure_mode_allow=*/true,
-                       /*observability_mode=*/false, StatusCode::OK);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_trailers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(true)
+          .SetObservabilityMode(false)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::OK);
 }
 
-// S7: Clean Close During Trailers, Observability, Fail Closed -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseTrailersObservabilityFailClosed) {
-  RunCloseTrailersTest(/*close_before_trailers=*/false, grpc::Status::OK,
-                       /*failure_mode_allow=*/false,
-                       /*observability_mode=*/true, StatusCode::OK);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_trailers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(false)
+          .SetObservabilityMode(true)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::OK);
 }
 
-// S8: Clean Close During Trailers, Observability, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest,
        StreamCleanCloseDuringResponseTrailersObservabilityFailOpen) {
-  RunCloseTrailersTest(/*close_before_trailers=*/false, grpc::Status::OK,
-                       /*failure_mode_allow=*/true,
-                       /*observability_mode=*/true, StatusCode::OK);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_trailers()) {
+            return grpc::Status::OK;
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(true)
+          .SetObservabilityMode(true)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::OK);
 }
 
-// S9: Error Close Before Trailers, Fail Closed -> Fails
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorCloseBeforeResponseTrailersFailClosed) {
-  RunCloseTrailersTest(
-      /*close_before_trailers=*/true,
-      grpc::Status(grpc::StatusCode::ABORTED, "Aborted before trailers"),
-      /*failure_mode_allow=*/false, /*observability_mode=*/false,
-      StatusCode::ABORTED, "Aborted before trailers");
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        return grpc::Status(grpc::StatusCode::ABORTED,
+                            "Aborted before trailers");
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(false)
+          .SetObservabilityMode(false)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::ABORTED);
+  EXPECT_THAT(status.error_message(),
+              ::testing::HasSubstr("Aborted before trailers"));
 }
 
-// S10: Error Close Before Trailers, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest, StreamErrorCloseBeforeResponseTrailersFailOpen) {
-  RunCloseTrailersTest(
-      /*close_before_trailers=*/true,
-      grpc::Status(grpc::StatusCode::ABORTED, "Aborted before trailers"),
-      /*failure_mode_allow=*/true, /*observability_mode=*/false,
-      StatusCode::OK);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        return grpc::Status(grpc::StatusCode::ABORTED,
+                            "Aborted before trailers");
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(true)
+          .SetObservabilityMode(false)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::OK);
 }
 
-// S11: Error Close During Trailers, Fail Closed -> Fails
 TEST_P(XdsExtProcEnd2endTest,
        StreamErrorCloseDuringResponseTrailersFailClosed) {
-  RunCloseTrailersTest(
-      /*close_before_trailers=*/false,
-      grpc::Status(grpc::StatusCode::ABORTED, "Aborted during trailers"),
-      /*failure_mode_allow=*/false, /*observability_mode=*/false,
-      StatusCode::ABORTED, "Aborted during trailers");
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_trailers()) {
+            return grpc::Status(grpc::StatusCode::ABORTED,
+                                "Aborted during trailers");
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status(grpc::StatusCode::ABORTED,
+                            "Aborted during trailers");
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(false)
+          .SetObservabilityMode(false)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::ABORTED);
+  EXPECT_THAT(status.error_message(),
+              ::testing::HasSubstr("Aborted during trailers"));
 }
 
-// S12: Error Close During Trailers, Fail Open -> Succeeds
 TEST_P(XdsExtProcEnd2endTest, StreamErrorCloseDuringResponseTrailersFailOpen) {
-  RunCloseTrailersTest(
-      /*close_before_trailers=*/false,
-      grpc::Status(grpc::StatusCode::ABORTED, "Aborted during trailers"),
-      /*failure_mode_allow=*/true, /*observability_mode=*/false,
-      StatusCode::OK);
+  auto mock_service = std::make_unique<StatusMockService>(
+      [](grpc::ServerReaderWriter<
+          ::envoy::service::ext_proc::v3::ProcessingResponse,
+          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
+        ::envoy::service::ext_proc::v3::ProcessingRequest request;
+        while (stream->Read(&request)) {
+          if (request.has_response_trailers()) {
+            return grpc::Status(grpc::StatusCode::ABORTED,
+                                "Aborted during trailers");
+          }
+          ::envoy::service::ext_proc::v3::ProcessingResponse response;
+          SetDefaultEmptyResponse(request, &response);
+          stream->Write(response);
+        }
+        return grpc::Status(grpc::StatusCode::ABORTED,
+                            "Aborted during trailers");
+      });
+  StartAlternativeServer(std::move(mock_service));
+  CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetFailureModeAllow(true)
+          .SetObservabilityMode(false)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_EQ(status.error_code(), StatusCode::OK);
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseDuringResponseBodyNoInFlight) {
