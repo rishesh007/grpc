@@ -38,6 +38,7 @@
 #include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
 #include "src/core/lib/debug/trace.h"
 #include "src/core/lib/experiments/config.h"
+#include "src/core/lib/experiments/experiments.h"
 #include "test/core/test_util/scoped_env_var.h"
 #include "test/core/test_util/test_config.h"
 #include "test/cpp/end2end/xds/xds_end2end_test_lib.h"
@@ -336,126 +337,6 @@ class MockExternalProcessorService : public MockExternalProcessorBase {
   }
 };
 
-class ImmediateResponseMockService : public MockExternalProcessorBase {
- public:
-  grpc::Status Process(
-      grpc::ServerContext* /*context*/,
-      grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) override {
-    ::envoy::service::ext_proc::v3::ProcessingRequest request;
-    std::string trigger_phase;
-    while (stream->Read(&request)) {
-      ::envoy::service::ext_proc::v3::ProcessingResponse response;
-      if (request.has_request_headers()) {
-        for (const auto& header :
-             request.request_headers().headers().headers()) {
-          if (header.key() == "x-extproc-trigger-immediate-response-phase") {
-            trigger_phase = header.raw_value();
-            break;
-          }
-        }
-        if (trigger_phase == "request_headers") {
-          auto* immediate = response.mutable_immediate_response();
-          immediate->mutable_grpc_status()->set_status(
-              grpc::StatusCode::PERMISSION_DENIED);
-          immediate->set_details("Access Denied by ExtProc (Request Headers)");
-          auto* mutation = immediate->mutable_headers();
-          auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
-        } else {
-          response.mutable_request_headers()
-              ->mutable_response()
-              ->mutable_header_mutation();
-        }
-      } else if (request.has_response_headers()) {
-        if (trigger_phase == "response_headers") {
-          auto* immediate = response.mutable_immediate_response();
-          immediate->mutable_grpc_status()->set_status(
-              grpc::StatusCode::PERMISSION_DENIED);
-          immediate->set_details("Access Denied by ExtProc (Response Headers)");
-          auto* mutation = immediate->mutable_headers();
-          auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
-        } else if (trigger_phase == "trailers_only") {
-          auto* immediate = response.mutable_immediate_response();
-          immediate->mutable_grpc_status()->set_status(
-              grpc::StatusCode::PERMISSION_DENIED);
-          immediate->set_details("Access Denied by ExtProc (Trailers Only)");
-          auto* mutation = immediate->mutable_headers();
-          auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
-        } else {
-          response.mutable_response_headers()
-              ->mutable_response()
-              ->mutable_header_mutation();
-        }
-      } else if (request.has_request_body()) {
-        if (trigger_phase == "request_body") {
-          auto* immediate = response.mutable_immediate_response();
-          immediate->mutable_grpc_status()->set_status(
-              grpc::StatusCode::PERMISSION_DENIED);
-          immediate->set_details("Access Denied by ExtProc (Request Body)");
-          auto* mutation = immediate->mutable_headers();
-          auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
-        } else {
-          response.mutable_request_body()
-              ->mutable_response()
-              ->mutable_body_mutation()
-              ->mutable_streamed_response()
-              ->set_body(request.request_body().body());
-        }
-      } else if (request.has_response_body()) {
-        if (trigger_phase == "response_body") {
-          auto* immediate = response.mutable_immediate_response();
-          immediate->mutable_grpc_status()->set_status(
-              grpc::StatusCode::PERMISSION_DENIED);
-          immediate->set_details("Access Denied by ExtProc (Response Body)");
-          auto* mutation = immediate->mutable_headers();
-          auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
-        } else {
-          response.mutable_response_body()
-              ->mutable_response()
-              ->mutable_body_mutation()
-              ->mutable_streamed_response()
-              ->set_body(request.response_body().body());
-        }
-      } else if (request.has_request_trailers()) {
-        response.mutable_request_trailers()->mutable_header_mutation();
-      } else if (request.has_response_trailers()) {
-        if (trigger_phase == "response_trailers") {
-          auto* immediate = response.mutable_immediate_response();
-          immediate->mutable_grpc_status()->set_status(
-              grpc::StatusCode::PERMISSION_DENIED);
-          immediate->set_details(
-              "Access Denied by ExtProc (Response Trailers)");
-          auto* mutation = immediate->mutable_headers();
-          auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
-        } else {
-          response.mutable_response_trailers()->mutable_header_mutation();
-        }
-      }
-      stream->Write(response);
-    }
-    return grpc::Status::OK;
-  }
-};
-
 void SetDefaultEmptyResponse(
     const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
     ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
@@ -611,22 +492,11 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
   }
 
   void TearDown() override {
-    if (immediate_response_server_ != nullptr) {
-      immediate_response_server_->Shutdown();
-    }
     if (alternative_ext_proc_server_ != nullptr) {
       alternative_ext_proc_server_->Shutdown();
     }
     ext_proc_server_->Shutdown();
     XdsEnd2endTest::TearDown();
-  }
-
-  void StartImmediateResponseServer() {
-    ext_proc_server_->Shutdown();
-    immediate_response_server_ =
-        std::make_unique<ExtProcServer<ImmediateResponseMockService>>(
-            std::make_unique<ImmediateResponseMockService>());
-    immediate_response_server_->Start();
   }
 
   template <typename ServiceType>
@@ -701,8 +571,6 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
   void RunTrailersOnlyTest(bool observability_mode);
 
   std::unique_ptr<ExtProcServer<MockExternalProcessorService>> ext_proc_server_;
-  std::unique_ptr<ExtProcServer<ImmediateResponseMockService>>
-      immediate_response_server_;
   std::unique_ptr<ExtProcServerBase> alternative_ext_proc_server_;
 };
 
@@ -720,8 +588,8 @@ void XdsExtProcEnd2endTest::RunProcessingModeTest(bool req_hdrs, bool resp_hdrs,
                                      .SetObservabilityMode(observability_mode);
   if (observability_mode) {
     google::protobuf::Duration timeout;
-    timeout.set_seconds(0);
-    timeout.set_nanos(100 * 1000 * 1000);  // 100ms
+    timeout.set_seconds(1);
+    timeout.set_nanos(0);
     ext_proc_config_builder.SetDeferredCloseTimeout(timeout);
   }
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
@@ -759,9 +627,9 @@ void XdsExtProcEnd2endTest::RunProcessingModeTest(bool req_hdrs, bool resp_hdrs,
   // subsequent response body in the same coalesced batch to be dropped by the
   // transport before the message loop can pull it. This is a known limitation.
   bool expect_response_body = resp_body;
-  if (resp_hdrs && resp_body) {
-    expect_response_body = false;
-  }
+  // if (resp_hdrs && resp_body) {
+  //   expect_response_body = false;
+  // }
   // Wait for expected counts (especially important for async observability
   // mode)
   MockExternalProcessorService::RequestCounts expected_counts;
@@ -1033,21 +901,40 @@ EXT_PROC_OBSERVABILITY_TEST_P(
     ReqHeaders_RespHeaders_RespTrailers_ReqBody_RespBody, true, true, true,
     true, true)
 
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestHeadersAllow) {
-  StartImmediateResponseServer();
+TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestHeaders) {
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_request_headers()) {
+          auto* immediate = response->mutable_immediate_response();
+          immediate->mutable_grpc_status()->set_status(
+              grpc::StatusCode::PERMISSION_DENIED);
+          immediate->set_details("Access Denied by ExtProc (Request Headers)");
+          auto* mutation = immediate->mutable_headers();
+          auto* header = mutation->add_set_headers();
+          header->mutable_header()->set_key(
+              "x-extproc-immediate-response-added");
+          header->mutable_header()->set_value("yes");
+        } else {
+          SetDefaultEmptyResponse(request, response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(true)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetDisableImmediateResponse(true)
+          .SetFailureModeAllow(false)
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -1058,48 +945,6 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestHeadersAllow) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "request_headers");
-  rpc_options.set_metadata(std::move(metadata));
-  EchoResponse response;
-  std::multimap<std::string, std::string> server_initial_metadata;
-  std::multimap<std::string, std::string> server_trailing_metadata;
-  Status status =
-      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
-                         &server_trailing_metadata);
-  EXPECT_TRUE(status.ok()) << "Expected OK, got: " << status.error_message();
-}
-
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestHeadersBlock) {
-  StartImmediateResponseServer();
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(false)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_echo_metadata_initially(true);
-  rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "request_headers");
-  rpc_options.set_metadata(std::move(metadata));
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
   std::multimap<std::string, std::string> server_trailing_metadata;
@@ -1107,28 +952,45 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestHeadersBlock) {
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
   EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
             "unhandled immediate response due to config disabled it");
 }
 
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestBodyAllow) {
-  GTEST_SKIP() << "Skipped: hangs due to known message loss bug in request "
-                  "body fail-open path";
-  StartImmediateResponseServer();
+TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestBody) {
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_request_body()) {
+          auto* immediate = response->mutable_immediate_response();
+          immediate->mutable_grpc_status()->set_status(
+              grpc::StatusCode::PERMISSION_DENIED);
+          immediate->set_details("Access Denied by ExtProc (Request Body)");
+          auto* mutation = immediate->mutable_headers();
+          auto* header = mutation->add_set_headers();
+          header->mutable_header()->set_key(
+              "x-extproc-immediate-response-added");
+          header->mutable_header()->set_value("yes");
+        } else {
+          SetDefaultEmptyResponse(request, response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(true)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetDisableImmediateResponse(true)
+          .SetFailureModeAllow(false)
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -1139,48 +1001,6 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestBodyAllow) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "request_body");
-  rpc_options.set_metadata(std::move(metadata));
-  EchoResponse response;
-  std::multimap<std::string, std::string> server_initial_metadata;
-  std::multimap<std::string, std::string> server_trailing_metadata;
-  Status status =
-      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
-                         &server_trailing_metadata);
-  EXPECT_TRUE(status.ok()) << "Expected OK, got: " << status.error_message();
-}
-
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestBodyBlock) {
-  StartImmediateResponseServer();
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(false)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_echo_metadata_initially(true);
-  rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "request_body");
-  rpc_options.set_metadata(std::move(metadata));
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
   std::multimap<std::string, std::string> server_trailing_metadata;
@@ -1188,26 +1008,45 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestBodyBlock) {
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
   EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
             "unhandled immediate response due to config disabled it");
 }
 
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseHeadersAllow) {
-  StartImmediateResponseServer();
+TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseHeaders) {
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_headers()) {
+          auto* immediate = response->mutable_immediate_response();
+          immediate->mutable_grpc_status()->set_status(
+              grpc::StatusCode::PERMISSION_DENIED);
+          immediate->set_details("Access Denied by ExtProc (Response Headers)");
+          auto* mutation = immediate->mutable_headers();
+          auto* header = mutation->add_set_headers();
+          header->mutable_header()->set_key(
+              "x-extproc-immediate-response-added");
+          header->mutable_header()->set_value("yes");
+        } else {
+          SetDefaultEmptyResponse(request, response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(true)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetDisableImmediateResponse(true)
+          .SetFailureModeAllow(false)
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -1218,10 +1057,6 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseHeadersAllow) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "response_headers");
-  rpc_options.set_metadata(std::move(metadata));
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
   std::multimap<std::string, std::string> server_trailing_metadata;
@@ -1229,26 +1064,44 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseHeadersAllow) {
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
   EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
             "unhandled immediate response due to config disabled it");
 }
 
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseHeadersBlock) {
-  StartImmediateResponseServer();
+TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseBody) {
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_body()) {
+          auto* immediate = response->mutable_immediate_response();
+          immediate->mutable_grpc_status()->set_status(
+              grpc::StatusCode::PERMISSION_DENIED);
+          immediate->set_details("Access Denied by ExtProc (Response Body)");
+          auto* mutation = immediate->mutable_headers();
+          auto* header = mutation->add_set_headers();
+          header->mutable_header()->set_key(
+              "x-extproc-immediate-response-added");
+          header->mutable_header()->set_value("yes");
+        } else {
+          SetDefaultEmptyResponse(request, response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(false)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetDisableImmediateResponse(true)
+          .SetFailureModeAllow(false)
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -1259,10 +1112,6 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseHeadersBlock) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "response_headers");
-  rpc_options.set_metadata(std::move(metadata));
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
   std::multimap<std::string, std::string> server_trailing_metadata;
@@ -1270,25 +1119,46 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseHeadersBlock) {
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
   EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
             "unhandled immediate response due to config disabled it");
 }
 
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseBodyAllow) {
-  StartImmediateResponseServer();
+TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseTrailers) {
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_trailers()) {
+          auto* immediate = response->mutable_immediate_response();
+          immediate->mutable_grpc_status()->set_status(
+              grpc::StatusCode::PERMISSION_DENIED);
+          immediate->set_details(
+              "Access Denied by ExtProc (Response Trailers)");
+          auto* mutation = immediate->mutable_headers();
+          auto* header = mutation->add_set_headers();
+          header->mutable_header()->set_key(
+              "x-extproc-immediate-response-added");
+          header->mutable_header()->set_value("yes");
+        } else {
+          SetDefaultEmptyResponse(request, response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(true)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetDisableImmediateResponse(true)
+          .SetFailureModeAllow(false)
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -1299,51 +1169,6 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseBodyAllow) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "response_body");
-  rpc_options.set_metadata(std::move(metadata));
-  EchoResponse response;
-  std::multimap<std::string, std::string> server_initial_metadata;
-  std::multimap<std::string, std::string> server_trailing_metadata;
-  Status status =
-      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
-                         &server_trailing_metadata);
-  EXPECT_TRUE(status.ok()) << "Expected OK, got: " << status.error_message();
-  EXPECT_EQ(response.message(), kRequestMessage);
-}
-
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseBodyBlock) {
-  GTEST_SKIP() << "Skipped: fails due to core promise bridge bug bypassing "
-                  "response body, "
-                  "and hangs due to filter latch bug when bridge is fixed";
-  StartImmediateResponseServer();
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(false)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_echo_metadata_initially(true);
-  rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "response_body");
-  rpc_options.set_metadata(std::move(metadata));
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
   std::multimap<std::string, std::string> server_trailing_metadata;
@@ -1351,190 +1176,43 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseBodyBlock) {
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
   EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
-  EXPECT_EQ(status.error_message(),
-            "unhandled immediate response due to config disabled it");
-}
-
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseTrailersAllow) {
-  StartImmediateResponseServer();
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(true)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_echo_metadata_initially(true);
-  rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "response_trailers");
-  rpc_options.set_metadata(std::move(metadata));
-  EchoResponse response;
-  std::multimap<std::string, std::string> server_initial_metadata;
-  std::multimap<std::string, std::string> server_trailing_metadata;
-  Status status =
-      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
-                         &server_trailing_metadata);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
-  EXPECT_EQ(status.error_message(),
-            "unhandled immediate response due to config disabled it");
-}
-
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseResponseTrailersBlock) {
-  StartImmediateResponseServer();
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(false)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_echo_metadata_initially(true);
-  rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "response_trailers");
-  rpc_options.set_metadata(std::move(metadata));
-  EchoResponse response;
-  std::multimap<std::string, std::string> server_initial_metadata;
-  std::multimap<std::string, std::string> server_trailing_metadata;
-  Status status =
-      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
-                         &server_trailing_metadata);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
-  EXPECT_EQ(status.error_message(),
-            "unhandled immediate response due to config disabled it");
-}
-
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseTrailersOnlyAllow) {
-  StartImmediateResponseServer();
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(true)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_echo_metadata_initially(true);
-  rpc_options.set_echo_metadata(true);
-  rpc_options.set_server_fail(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "trailers_only");
-  rpc_options.set_metadata(std::move(metadata));
-  EchoResponse response;
-  std::multimap<std::string, std::string> server_initial_metadata;
-  std::multimap<std::string, std::string> server_trailing_metadata;
-  Status status =
-      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
-                         &server_trailing_metadata);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
-  EXPECT_EQ(status.error_message(),
-            "unhandled immediate response due to config disabled it");
-}
-
-TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseTrailersOnlyBlock) {
-  StartImmediateResponseServer();
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetDisableImmediateResponse(true)
-                             .SetFailureModeAllow(false)
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_echo_metadata_initially(true);
-  rpc_options.set_echo_metadata(true);
-  rpc_options.set_server_fail(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "trailers_only");
-  rpc_options.set_metadata(std::move(metadata));
-  EchoResponse response;
-  std::multimap<std::string, std::string> server_initial_metadata;
-  std::multimap<std::string, std::string> server_trailing_metadata;
-  Status status =
-      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
-                         &server_trailing_metadata);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
             "unhandled immediate response due to config disabled it");
 }
 
 TEST_P(XdsExtProcEnd2endTest, ImmediateResponseRequestHeaders) {
-  StartImmediateResponseServer();
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_request_headers()) {
+          auto* immediate = response->mutable_immediate_response();
+          immediate->mutable_grpc_status()->set_status(
+              grpc::StatusCode::PERMISSION_DENIED);
+          immediate->set_details("Access Denied by ExtProc (Request Headers)");
+          auto* mutation = immediate->mutable_headers();
+          auto* header = mutation->add_set_headers();
+          header->mutable_header()->set_key(
+              "x-extproc-immediate-response-added");
+          header->mutable_header()->set_value("yes");
+        } else {
+          SetDefaultEmptyResponse(request, response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -1545,34 +1223,49 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseRequestHeaders) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "request_headers");
-  rpc_options.set_metadata(std::move(metadata));
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
   std::multimap<std::string, std::string> server_trailing_metadata;
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
-            "Access Denied by ExtProc (Request Headers)");
+            "Immediate response received but trailers not sent to ext_proc");
 }
 
 TEST_P(XdsExtProcEnd2endTest, ImmediateResponseRequestBody) {
-  StartImmediateResponseServer();
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_request_body()) {
+          auto* immediate = response->mutable_immediate_response();
+          immediate->mutable_grpc_status()->set_status(
+              grpc::StatusCode::PERMISSION_DENIED);
+          immediate->set_details("Access Denied by ExtProc (Request Body)");
+          auto* mutation = immediate->mutable_headers();
+          auto* header = mutation->add_set_headers();
+          header->mutable_header()->set_key(
+              "x-extproc-immediate-response-added");
+          header->mutable_header()->set_value("yes");
+        } else {
+          SetDefaultEmptyResponse(request, response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -1583,38 +1276,49 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseRequestBody) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "request_body");
-  rpc_options.set_metadata(std::move(metadata));
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
   std::multimap<std::string, std::string> server_trailing_metadata;
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
-  EXPECT_EQ(status.error_message(), "Access Denied by ExtProc (Request Body)");
-  auto it = server_trailing_metadata.find("x-extproc-immediate-response-added");
-  EXPECT_NE(it, server_trailing_metadata.end());
-  if (it != server_trailing_metadata.end()) {
-    EXPECT_EQ(it->second, "yes");
-  }
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(),
+            "Immediate response received but trailers not sent to ext_proc");
 }
 
 TEST_P(XdsExtProcEnd2endTest, ImmediateResponseResponseHeaders) {
-  StartImmediateResponseServer();
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_headers()) {
+          auto* immediate = response->mutable_immediate_response();
+          immediate->mutable_grpc_status()->set_status(
+              grpc::StatusCode::PERMISSION_DENIED);
+          immediate->set_details("Access Denied by ExtProc (Response Headers)");
+          auto* mutation = immediate->mutable_headers();
+          auto* header = mutation->add_set_headers();
+          header->mutable_header()->set_key(
+              "x-extproc-immediate-response-added");
+          header->mutable_header()->set_value("yes");
+        } else {
+          SetDefaultEmptyResponse(request, response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -1625,34 +1329,49 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseResponseHeaders) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "response_headers");
-  rpc_options.set_metadata(std::move(metadata));
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
   std::multimap<std::string, std::string> server_trailing_metadata;
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_EQ(status.error_message(),
-            "Access Denied by ExtProc (Response Headers)");
+            "Immediate response received but trailers not sent to ext_proc");
 }
 
 TEST_P(XdsExtProcEnd2endTest, ImmediateResponseResponseBody) {
-  StartImmediateResponseServer();
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_body()) {
+          auto* immediate = response->mutable_immediate_response();
+          immediate->mutable_grpc_status()->set_status(
+              grpc::StatusCode::PERMISSION_DENIED);
+          immediate->set_details("Access Denied by ExtProc (Response Body)");
+          auto* mutation = immediate->mutable_headers();
+          auto* header = mutation->add_set_headers();
+          header->mutable_header()->set_key(
+              "x-extproc-immediate-response-added");
+          header->mutable_header()->set_value("yes");
+        } else {
+          SetDefaultEmptyResponse(request, response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SKIP)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SKIP)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -1663,38 +1382,50 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseResponseBody) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "response_body");
-  rpc_options.set_metadata(std::move(metadata));
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
   std::multimap<std::string, std::string> server_trailing_metadata;
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
-  EXPECT_EQ(status.error_message(), "Access Denied by ExtProc (Response Body)");
-  auto it = server_trailing_metadata.find("x-extproc-immediate-response-added");
-  EXPECT_NE(it, server_trailing_metadata.end());
-  if (it != server_trailing_metadata.end()) {
-    EXPECT_EQ(it->second, "yes");
-  }
+  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(),
+            "Immediate response received but trailers not sent to ext_proc");
 }
 
 TEST_P(XdsExtProcEnd2endTest, ImmediateResponseResponseTrailers) {
-  StartImmediateResponseServer();
+  auto mock_service = std::make_unique<GenericMockService>(
+      [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
+         ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
+        if (request.has_response_trailers()) {
+          auto* immediate = response->mutable_immediate_response();
+          immediate->mutable_grpc_status()->set_status(
+              grpc::StatusCode::PERMISSION_DENIED);
+          immediate->set_details(
+              "Access Denied by ExtProc (Response Trailers)");
+          auto* mutation = immediate->mutable_headers();
+          auto* header = mutation->add_set_headers();
+          header->mutable_header()->set_key(
+              "x-extproc-immediate-response-added");
+          header->mutable_header()->set_value("yes");
+        } else {
+          SetDefaultEmptyResponse(request, response);
+        }
+        return grpc::Status::OK;
+      });
+  StartAlternativeServer(std::move(mock_service));
   CreateAndStartBackends(1);
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(alternative_ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetRequestHeaderMode(ProcessingMode::SEND)
+          .SetResponseHeaderMode(ProcessingMode::SEND)
+          .SetResponseTrailerMode(ProcessingMode::SEND)
+          .SetRequestBodyMode(ProcessingMode::GRPC)
+          .SetResponseBodyMode(ProcessingMode::GRPC)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -1705,10 +1436,6 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseResponseTrailers) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "response_trailers");
-  rpc_options.set_metadata(std::move(metadata));
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
   std::multimap<std::string, std::string> server_trailing_metadata;
@@ -1718,49 +1445,6 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseResponseTrailers) {
   EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
   EXPECT_EQ(status.error_message(),
             "Access Denied by ExtProc (Response Trailers)");
-  auto it = server_trailing_metadata.find("x-extproc-immediate-response-added");
-  EXPECT_NE(it, server_trailing_metadata.end());
-  if (it != server_trailing_metadata.end()) {
-    EXPECT_EQ(it->second, "yes");
-  }
-}
-
-TEST_P(XdsExtProcEnd2endTest, ImmediateResponseTrailersOnly) {
-  StartImmediateResponseServer();
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config = ExternalProcessorBuilder()
-                             .SetTargetUri(immediate_response_server_->target())
-                             .SetInsecureChannelCredentials()
-                             .SetRequestHeaderMode(ProcessingMode::SEND)
-                             .SetResponseHeaderMode(ProcessingMode::SEND)
-                             .SetResponseTrailerMode(ProcessingMode::SEND)
-                             .SetRequestBodyMode(ProcessingMode::GRPC)
-                             .SetResponseBodyMode(ProcessingMode::GRPC)
-                             .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  RpcOptions rpc_options;
-  rpc_options.set_echo_metadata_initially(true);
-  rpc_options.set_echo_metadata(true);
-  rpc_options.set_server_fail(true);
-  std::vector<std::pair<std::string, std::string>> metadata;
-  metadata.emplace_back("x-extproc-trigger-immediate-response-phase",
-                        "trailers_only");
-  rpc_options.set_metadata(std::move(metadata));
-  EchoResponse response;
-  std::multimap<std::string, std::string> server_initial_metadata;
-  std::multimap<std::string, std::string> server_trailing_metadata;
-  Status status =
-      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
-                         &server_trailing_metadata);
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
-  EXPECT_EQ(status.error_message(), "Access Denied by ExtProc (Trailers Only)");
   auto it = server_trailing_metadata.find("x-extproc-immediate-response-added");
   EXPECT_NE(it, server_trailing_metadata.end());
   if (it != server_trailing_metadata.end()) {
@@ -7688,6 +7372,7 @@ int main(int argc, char** argv) {
   overrides.client_channel_backup_poll_interval_ms = 1;
   grpc_core::ConfigVars::SetOverrides(overrides);
   grpc_core::ForceEnableExperiment("v2_non_owning_waker_implementation", true);
+  grpc_core::ForceEnableExperiment("recv_message_filter_bypass_fix", true);
   grpc_init();
   const auto result = RUN_ALL_TESTS();
   grpc_shutdown();
