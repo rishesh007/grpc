@@ -267,7 +267,7 @@ StringMatcher StringMatcherParse(
   return StringMatcherParseInternal(proto_accessor, errors);
 }
 
-std::vector<StringMatcher> ListStringMatcherParse(
+std::vector<StringMatcher> XdsListStringMatcherParse(
     const XdsResourceType::DecodeContext& context,
     const envoy_type_matcher_v3_ListStringMatcher* list_matcher,
     ValidationErrors* errors) {

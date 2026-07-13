@@ -57,10 +57,7 @@ class GrpcXdsServerTarget final : public GrpcXdsServerInterface {
 
   bool Equals(const XdsServerTarget& other) const override;
   std::string Key() const override;
-  // Returns a key that uniquely identifies the gRPC service configuration
-  // (URI, channel credentials, and call credentials) for channel sharing,
-  // excluding channel/stream parameters like timeout and initial metadata.
-  std::string XdsGrpcServiceKey() const;
+
   const std::string& server_uri() const override { return server_uri_; }
   RefCountedPtr<const ChannelCredsConfig> channel_creds_config()
       const override {

@@ -193,6 +193,25 @@ absl::StatusOr<std::string> CreateExtProcServerTrailersRequest(
     ::google_protobuf_Struct* attributes, bool observability_mode,
     std::optional<ExtProcProcessingMode> processing_mode);
 
+// Creates a protobuf Struct message (::google_protobuf_Struct*) containing
+// connection and request metadata attributes requested by the external
+// processor configuration.
+//
+// Parameters:
+//  - arena: The upb arena used for allocating the Struct message and its
+//  fields.
+//  - requested_attributes: A list of attribute names (e.g., "request.path",
+//  "request.method", "request.host") to extract and populate.
+//  - metadata: The gRPC metadata batch from which attribute values (like
+//  authority, method, path, or headers) are extracted.
+//
+// Returns:
+//  A pointer to the newly created ::google_protobuf_Struct message on the
+//  arena, or nullptr if no requested attributes were matched or populated.
+::google_protobuf_Struct* CreateExtProcAttributesProtoStruct(
+    upb_Arena* arena, const std::vector<std::string>& requested_attributes,
+    const grpc_metadata_batch& metadata);
+
 // Represents the parsed response from an external processor, corresponding to
 // envoy.service.ext_proc.v3.ProcessingResponse in gRFC A93.
 struct ExtProcResponse {
@@ -272,25 +291,6 @@ struct ExtProcResponse {
   static absl::StatusOr<ExtProcResponse> Parse(
       absl::string_view serialized_response);
 };
-
-// Creates a protobuf Struct message (::google_protobuf_Struct*) containing
-// connection and request metadata attributes requested by the external
-// processor configuration.
-//
-// Parameters:
-//  - arena: The upb arena used for allocating the Struct message and its
-//  fields.
-//  - requested_attributes: A list of attribute names (e.g., "request.path",
-//  "request.method", "request.host") to extract and populate.
-//  - metadata: The gRPC metadata batch from which attribute values (like
-//  authority, method, path, or headers) are extracted.
-//
-// Returns:
-//  A pointer to the newly created ::google_protobuf_Struct message on the
-//  arena, or nullptr if no requested attributes were matched or populated.
-::google_protobuf_Struct* CreateExtProcAttributesProtoStruct(
-    upb_Arena* arena, const std::vector<std::string>& requested_attributes,
-    const grpc_metadata_batch& metadata);
 
 }  // namespace grpc_core
 

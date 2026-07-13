@@ -75,20 +75,16 @@ const grpc_channel_filter* XdsHttpExtProcFilter::channel_filter() const {
 
 namespace {
 
-bool ParseHeaderProcessingMode(int32_t value, bool default_value,
-                               ValidationErrors* errors) {
+bool ParseHeaderProcessingMode(int32_t value, ValidationErrors* errors) {
   switch (value) {
     case envoy_extensions_filters_http_ext_proc_v3_ProcessingMode_SEND:
       return true;
     case envoy_extensions_filters_http_ext_proc_v3_ProcessingMode_SKIP:
       return false;
-    case envoy_extensions_filters_http_ext_proc_v3_ProcessingMode_DEFAULT:
-      errors->AddError("DEFAULT header processing mode is not supported");
-      return default_value;
     default:
       errors->AddError(
           absl::StrCat("unsupported header processing mode value: ", value));
-      return default_value;
+      return false;
   }
 }
 
@@ -118,21 +114,21 @@ ExtProcFilter::ProcessingMode ParseProcessingMode(
     processing_mode.send_request_headers = ParseHeaderProcessingMode(
         envoy_extensions_filters_http_ext_proc_v3_ProcessingMode_request_header_mode(
             proto),
-        /*default_value=*/true, errors);
+        errors);
   }
   {
     ValidationErrors::ScopedField field(errors, ".response_header_mode");
     processing_mode.send_response_headers = ParseHeaderProcessingMode(
         envoy_extensions_filters_http_ext_proc_v3_ProcessingMode_response_header_mode(
             proto),
-        /*default_value=*/true, errors);
+        errors);
   }
   {
     ValidationErrors::ScopedField field(errors, ".response_trailer_mode");
     processing_mode.send_response_trailers = ParseHeaderProcessingMode(
         envoy_extensions_filters_http_ext_proc_v3_ProcessingMode_response_trailer_mode(
             proto),
-        /*default_value=*/false, errors);
+        errors);
   }
   {
     ValidationErrors::ScopedField field(errors, ".request_body_mode");
@@ -200,6 +196,8 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
         errors);
   }
   size_t size;
+  // TODO(rishesh): Validate that request_attributes and response_attributes are
+  // actually valid.
   // request_attributes
   const auto* request_attributes =
       envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_request_attributes(
@@ -216,7 +214,6 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
     config->response_attributes.push_back(
         UpbStringToStdString(response_attributes[i]));
   }
-  // TODO(rishesh): Validate that these attributes are actually valid.
   // mutation_rules
   if (const auto* mutation_rules =
           envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_mutation_rules(
@@ -237,7 +234,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
       ValidationErrors::ScopedField field(errors,
                                           ".forwarding_rules.allowed_headers");
       config->forwarding_allowed_headers =
-          ListStringMatcherParse(context, allowed_headers, errors);
+          XdsListStringMatcherParse(context, allowed_headers, errors);
     }
     const auto* disallowed_headers =
         envoy_extensions_filters_http_ext_proc_v3_HeaderForwardingRules_disallowed_headers(
@@ -246,7 +243,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
       ValidationErrors::ScopedField field(
           errors, ".forwarding_rules.disallowed_headers");
       config->forwarding_disallowed_headers =
-          ListStringMatcherParse(context, disallowed_headers, errors);
+          XdsListStringMatcherParse(context, disallowed_headers, errors);
     }
   }
   // disable_immediate_response
@@ -314,8 +311,9 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
     ValidationErrors::ScopedField field(errors, ".grpc_service");
     config->grpc_service = ParseXdsGrpcService(context, grpc_service, errors);
   }
+  // TODO(rishesh): Validate that request_attributes and response_attributes are
+  // actually valid.
   // request_attributes
-  // TODO(rishesh): Validate that these attributes are actually valid.
   size_t size;
   const auto* request_attributes =
       envoy_extensions_filters_http_ext_proc_v3_ExtProcOverrides_request_attributes(
@@ -404,7 +402,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
   }
   // Blackboard handling
   if (config->grpc_service.has_value()) {
-    std::string key = config->grpc_service->XdsGrpcServiceKey();
+    std::string key = config->grpc_service->Key();
     config->channel =
         blackboard.GetOrSet<ExtProcFilter::ExtProcChannel>(key, [&]() {
           std::shared_ptr<const XdsBootstrap::XdsServerTarget> target_shared =
