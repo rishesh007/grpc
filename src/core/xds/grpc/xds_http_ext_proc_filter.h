@@ -27,6 +27,7 @@
 #include "src/core/xds/grpc/xds_http_filter.h"
 #include "src/core/xds/grpc/xds_server_grpc.h"
 #include "src/core/xds/xds_client/xds_resource_type.h"
+#include "src/core/xds/xds_client/xds_transport.h"
 #include "upb/reflection/def.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
@@ -79,10 +80,10 @@ class XdsHttpExtProcFilter final : public XdsHttpFilterImpl {
       RefCountedPtr<const FilterConfig> virtual_host_override_config,
       RefCountedPtr<const FilterConfig> route_override_config,
       RefCountedPtr<const FilterConfig> cluster_weight_override_config,
+      XdsTransportFactory& transport_factory,
       Blackboard& blackboard) const override;
   bool IsSupportedOnClients() const override { return true; }
   bool IsSupportedOnServers() const override { return false; }
-  bool IsSupportedDisablingOnLdsRds() const override { return true; }
 };
 
 }  // namespace grpc_core

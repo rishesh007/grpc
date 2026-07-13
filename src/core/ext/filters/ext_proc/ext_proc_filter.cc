@@ -59,20 +59,30 @@ namespace grpc_core {
 std::string ExtProcFilter::Config::ToString() const {
   std::string result = "{";
   bool is_first = true;
-  if (grpc_service.has_value()) {
+  if (std::holds_alternative<GrpcXdsServerTarget>(channel_info)) {
     StrAppend(result, "grpc_service=");
-    StrAppend(result, grpc_service->Key());
+    StrAppend(result, std::get<GrpcXdsServerTarget>(channel_info).Key());
     is_first = false;
+  } else if (std::holds_alternative<RefCountedPtr<ExtProcChannel>>(
+                 channel_info)) {
+    const auto& channel = std::get<RefCountedPtr<ExtProcChannel>>(channel_info);
+    if (channel != nullptr) {
+      StrAppend(result, "grpc_service=");
+      StrAppend(result, channel->server()->Key());
+      is_first = false;
+    }
   }
-  if (failure_mode_allow) {
+  if (failure_mode_allow.value_or(false)) {
     if (!is_first) StrAppend(result, ", ");
     StrAppend(result, "failure_mode_allow=true");
     is_first = false;
   }
-  if (!is_first) StrAppend(result, ", ");
-  StrAppend(result, "processing_mode=");
-  StrAppend(result, processing_mode.ToString());
-  is_first = false;
+  if (processing_mode.has_value()) {
+    if (!is_first) StrAppend(result, ", ");
+    StrAppend(result, "processing_mode=");
+    StrAppend(result, processing_mode->ToString());
+    is_first = false;
+  }
   if (!request_attributes.empty()) {
     if (!is_first) StrAppend(result, ", ");
     StrAppend(result, "request_attributes=[");
@@ -149,6 +159,8 @@ ExtProcFilter::ExtProcChannel::ExtProcChannel(
   absl::Status status;
   transport_ = transport_factory->GetTransport(*server_, &status);
   GRPC_CHECK(transport_ != nullptr);
+  // TODO(rishesh): Return an error if channel construction fails instead of
+  // just logging a message.
   if (!status.ok()) {
     LOG(ERROR) << "Error creating ext_proc channel to " << server_->server_uri()
                << ": " << status;
@@ -706,9 +718,9 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         return;
       }
       // Push the message to the pipe BEFORE decrementing the outstanding count.
-      // This prevents a race where SetServerToClientWritesDone() runs concurrently,
-      // sees the outstanding count is 0, and closes the pipe before we can push
-      // this last message.
+      // This prevents a race where SetServerToClientWritesDone() runs
+      // concurrently, sees the outstanding count is 0, and closes the pipe
+      // before we can push this last message.
       response_body_pipe_.sender.Push(std::move(parsed_response))();
       bool should_close = false;
       DecrementOutstandingServerToClientMessages(&should_close);

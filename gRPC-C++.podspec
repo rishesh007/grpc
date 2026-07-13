@@ -22,7 +22,7 @@
 Pod::Spec.new do |s|
   s.name     = 'gRPC-C++'
   # TODO (mxyan): use version that match gRPC version when pod is stabilized
-  version = '1.83.0-dev'
+  version = '1.84.0-dev'
   s.version  = version
   s.summary  = 'gRPC C++ library'
   s.homepage = 'https://grpc.io'
@@ -1411,7 +1411,6 @@ Pod::Spec.new do |s|
                       'src/core/util/json/json_channel_args.h',
                       'src/core/util/json/json_object_loader.h',
                       'src/core/util/json/json_reader.h',
-                      'src/core/util/json/json_util.h',
                       'src/core/util/json/json_writer.h',
                       'src/core/util/latent_see.h',
                       'src/core/util/load_file.h',
@@ -1468,6 +1467,7 @@ Pod::Spec.new do |s|
                       'src/core/xds/grpc/file_watcher_certificate_provider_factory.h',
                       'src/core/xds/grpc/xds_audit_logger_registry.h',
                       'src/core/xds/grpc/xds_bootstrap_grpc.h',
+                      'src/core/xds/grpc/xds_bootstrap_grpc_builder.h',
                       'src/core/xds/grpc/xds_certificate_provider.h',
                       'src/core/xds/grpc/xds_client_grpc.h',
                       'src/core/xds/grpc/xds_cluster.h',
@@ -1478,6 +1478,7 @@ Pod::Spec.new do |s|
                       'src/core/xds/grpc/xds_enabled_server.h',
                       'src/core/xds/grpc/xds_endpoint.h',
                       'src/core/xds/grpc/xds_endpoint_parser.h',
+                      'src/core/xds/grpc/xds_grpc_service_parser.h',
                       'src/core/xds/grpc/xds_health_status.h',
                       'src/core/xds/grpc/xds_http_composite_filter.h',
                       'src/core/xds/grpc/xds_http_ext_proc_filter.h',
@@ -1502,6 +1503,8 @@ Pod::Spec.new do |s|
                       'src/core/xds/grpc/xds_routing.h',
                       'src/core/xds/grpc/xds_server_grpc.h',
                       'src/core/xds/grpc/xds_server_grpc_interface.h',
+                      'src/core/xds/grpc/xds_tls_context.h',
+                      'src/core/xds/grpc/xds_tls_context_parser.h',
                       'src/core/xds/grpc/xds_transport_grpc.h',
                       'src/core/xds/xds_client/lrs_client.h',
                       'src/core/xds/xds_client/serialized_streaming_call.h',
@@ -2866,7 +2869,6 @@ Pod::Spec.new do |s|
                               'src/core/util/json/json_channel_args.h',
                               'src/core/util/json/json_object_loader.h',
                               'src/core/util/json/json_reader.h',
-                              'src/core/util/json/json_util.h',
                               'src/core/util/json/json_writer.h',
                               'src/core/util/latent_see.h',
                               'src/core/util/load_file.h',
@@ -2923,6 +2925,7 @@ Pod::Spec.new do |s|
                               'src/core/xds/grpc/file_watcher_certificate_provider_factory.h',
                               'src/core/xds/grpc/xds_audit_logger_registry.h',
                               'src/core/xds/grpc/xds_bootstrap_grpc.h',
+                              'src/core/xds/grpc/xds_bootstrap_grpc_builder.h',
                               'src/core/xds/grpc/xds_certificate_provider.h',
                               'src/core/xds/grpc/xds_client_grpc.h',
                               'src/core/xds/grpc/xds_cluster.h',
@@ -2933,6 +2936,7 @@ Pod::Spec.new do |s|
                               'src/core/xds/grpc/xds_enabled_server.h',
                               'src/core/xds/grpc/xds_endpoint.h',
                               'src/core/xds/grpc/xds_endpoint_parser.h',
+                              'src/core/xds/grpc/xds_grpc_service_parser.h',
                               'src/core/xds/grpc/xds_health_status.h',
                               'src/core/xds/grpc/xds_http_composite_filter.h',
                               'src/core/xds/grpc/xds_http_ext_proc_filter.h',
@@ -2957,6 +2961,8 @@ Pod::Spec.new do |s|
                               'src/core/xds/grpc/xds_routing.h',
                               'src/core/xds/grpc/xds_server_grpc.h',
                               'src/core/xds/grpc/xds_server_grpc_interface.h',
+                              'src/core/xds/grpc/xds_tls_context.h',
+                              'src/core/xds/grpc/xds_tls_context_parser.h',
                               'src/core/xds/grpc/xds_transport_grpc.h',
                               'src/core/xds/xds_client/lrs_client.h',
                               'src/core/xds/xds_client/serialized_streaming_call.h',

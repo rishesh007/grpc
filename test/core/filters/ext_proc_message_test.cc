@@ -33,11 +33,6 @@ constexpr absl::string_view kKey2 = "key2";
 constexpr absl::string_view kVal2 = "val2";
 constexpr absl::string_view kKey3 = "key3";
 constexpr absl::string_view kVal3 = "val3";
-constexpr absl::string_view kMutatedKey = "x-mutated-key";
-constexpr absl::string_view kMutatedVal = "mutated-val";
-constexpr absl::string_view kRemovedKey = "x-removed-key";
-constexpr absl::string_view kInvalidHeaderKey = ":path";
-constexpr absl::string_view kBearer = "Bearer";
 
 MATCHER_P3(IsHeaderValueOption, key, value, append_action, "") {
   return ::testing::ExplainMatchResult(::testing::Pair(key, value), arg.header,
@@ -63,8 +58,6 @@ class CreateExtProcRequestTest : public ::testing::Test {
     EXPECT_TRUE(parsed.ParseFromString(serialized));
     return parsed;
   }
-
-  ExtProcProcessingMode processing_mode_;
 };
 
 TEST_F(CreateExtProcRequestTest, RequestHeadersNeitherAllowedNorDisallowedSet) {
@@ -184,12 +177,13 @@ TEST_F(CreateExtProcRequestTest, RequestHeadersObservability) {
 TEST_F(CreateExtProcRequestTest, RequestHeadersProtocolConfig) {
   upb::Arena arena;
   grpc_metadata_batch batch;
-  processing_mode_.send_request_body = true;
-  processing_mode_.send_response_body = true;
+  ExtProcProcessingMode processing_mode;
+  processing_mode.send_request_body = true;
+  processing_mode.send_response_body = true;
   std::string serialized =
       CreateExtProcClientHeadersRequest(arena.ptr(), &batch, {}, {}, {},
                                         /*observability_mode=*/false,
-                                        /*processing_mode=*/processing_mode_)
+                                        /*processing_mode=*/processing_mode)
           .value();
   auto parsed = ParseRequest(serialized);
   ASSERT_TRUE(parsed.has_protocol_config());
@@ -323,12 +317,13 @@ TEST_F(CreateExtProcRequestTest, ResponseHeadersObservability) {
 TEST_F(CreateExtProcRequestTest, ResponseHeadersProtocolConfig) {
   upb::Arena arena;
   grpc_metadata_batch batch;
-  processing_mode_.send_request_body = true;
-  processing_mode_.send_response_body = true;
+  ExtProcProcessingMode processing_mode;
+  processing_mode.send_request_body = true;
+  processing_mode.send_response_body = true;
   std::string serialized =
       CreateExtProcServerHeadersRequest(arena.ptr(), &batch, {}, {}, {},
                                         /*observability_mode=*/false,
-                                        /*processing_mode=*/processing_mode_,
+                                        /*processing_mode=*/processing_mode,
                                         /*end_of_stream=*/false)
           .value();
   auto parsed = ParseRequest(serialized);
@@ -455,12 +450,13 @@ TEST_F(CreateExtProcRequestTest, ResponseTrailersObservability) {
 TEST_F(CreateExtProcRequestTest, ResponseTrailersProtocolConfig) {
   upb::Arena arena;
   grpc_metadata_batch batch;
-  processing_mode_.send_request_body = true;
-  processing_mode_.send_response_body = true;
+  ExtProcProcessingMode processing_mode;
+  processing_mode.send_request_body = true;
+  processing_mode.send_response_body = true;
   std::string serialized =
       CreateExtProcServerTrailersRequest(arena.ptr(), &batch, {}, {}, {},
                                          /*observability_mode=*/false,
-                                         /*processing_mode=*/processing_mode_)
+                                         /*processing_mode=*/processing_mode)
           .value();
   auto parsed = ParseRequest(serialized);
   ASSERT_TRUE(parsed.has_protocol_config());
@@ -474,9 +470,9 @@ TEST_F(CreateExtProcRequestTest, ResponseTrailersProtocolConfig) {
 
 TEST_F(CreateExtProcRequestTest, RequestBodyPayloadValid) {
   upb::Arena arena;
-  std::string body_data = "test request body data";
+  constexpr absl::string_view kBodyData = "test request body data";
   std::string serialized =
-      CreateExtProcClientBodyRequest(arena.ptr(), body_data, {},
+      CreateExtProcClientBodyRequest(arena.ptr(), kBodyData, {},
                                      /*observability_mode=*/false,
                                      /*processing_mode=*/std::nullopt,
                                      /*end_of_stream=*/false,
@@ -484,15 +480,15 @@ TEST_F(CreateExtProcRequestTest, RequestBodyPayloadValid) {
           .value();
   auto parsed = ParseRequest(serialized);
   ASSERT_TRUE(parsed.has_request_body());
-  EXPECT_EQ(parsed.request_body().body(), body_data);
+  EXPECT_EQ(parsed.request_body().body(), kBodyData);
   EXPECT_FALSE(parsed.request_body().end_of_stream());
 }
 
 TEST_F(CreateExtProcRequestTest, RequestBodyEndOfStream) {
   upb::Arena arena;
-  std::string body_data = "data";
+  constexpr absl::string_view kBodyData = "data";
   std::string serialized =
-      CreateExtProcClientBodyRequest(arena.ptr(), body_data, {},
+      CreateExtProcClientBodyRequest(arena.ptr(), kBodyData, {},
                                      /*observability_mode=*/false,
                                      /*processing_mode=*/std::nullopt,
                                      /*end_of_stream=*/true,
@@ -500,7 +496,7 @@ TEST_F(CreateExtProcRequestTest, RequestBodyEndOfStream) {
           .value();
   auto parsed = ParseRequest(serialized);
   ASSERT_TRUE(parsed.has_request_body());
-  EXPECT_EQ(parsed.request_body().body(), body_data);
+  EXPECT_EQ(parsed.request_body().body(), kBodyData);
   EXPECT_TRUE(parsed.request_body().end_of_stream());
 }
 
@@ -534,12 +530,13 @@ TEST_F(CreateExtProcRequestTest, RequestBodyObservability) {
 
 TEST_F(CreateExtProcRequestTest, RequestBodyProtocolConfig) {
   upb::Arena arena;
-  processing_mode_.send_request_body = true;
-  processing_mode_.send_response_body = true;
+  ExtProcProcessingMode processing_mode;
+  processing_mode.send_request_body = true;
+  processing_mode.send_response_body = true;
   std::string serialized =
       CreateExtProcClientBodyRequest(arena.ptr(), "", {},
                                      /*observability_mode=*/false,
-                                     /*processing_mode=*/processing_mode_,
+                                     /*processing_mode=*/processing_mode,
                                      /*end_of_stream=*/false,
                                      /*end_of_stream_without_message=*/false)
           .value();
@@ -555,15 +552,15 @@ TEST_F(CreateExtProcRequestTest, RequestBodyProtocolConfig) {
 
 TEST_F(CreateExtProcRequestTest, ResponseBodyPayloadValid) {
   upb::Arena arena;
-  std::string body_data = "test response body data";
+  constexpr absl::string_view kBodyData = "test response body data";
   std::string serialized =
-      CreateExtProcServerBodyRequest(arena.ptr(), body_data, {},
+      CreateExtProcServerBodyRequest(arena.ptr(), kBodyData, {},
                                      /*observability_mode=*/false,
                                      /*processing_mode=*/std::nullopt)
           .value();
   auto parsed = ParseRequest(serialized);
   ASSERT_TRUE(parsed.has_response_body());
-  EXPECT_EQ(parsed.response_body().body(), body_data);
+  EXPECT_EQ(parsed.response_body().body(), kBodyData);
   EXPECT_FALSE(parsed.response_body().end_of_stream());
 }
 
@@ -580,12 +577,13 @@ TEST_F(CreateExtProcRequestTest, ResponseBodyObservability) {
 
 TEST_F(CreateExtProcRequestTest, ResponseBodyProtocolConfig) {
   upb::Arena arena;
-  processing_mode_.send_request_body = true;
-  processing_mode_.send_response_body = true;
+  ExtProcProcessingMode processing_mode;
+  processing_mode.send_request_body = true;
+  processing_mode.send_response_body = true;
   std::string serialized =
       CreateExtProcServerBodyRequest(arena.ptr(), "", {},
                                      /*observability_mode=*/false,
-                                     /*processing_mode=*/processing_mode_)
+                                     /*processing_mode=*/processing_mode)
           .value();
   auto parsed = ParseRequest(serialized);
   ASSERT_TRUE(parsed.has_protocol_config());
@@ -601,17 +599,16 @@ TEST_F(CreateExtProcRequestTest, AttributesPayload) {
   upb::Arena arena;
   ::google_protobuf_Struct* struct_msg =
       google_protobuf_Struct_new(arena.ptr());
-  absl::string_view key = kKey1;
-  absl::string_view val = kVal1;
   ::google_protobuf_Value* val_msg = ::google_protobuf_Value_new(arena.ptr());
   ::google_protobuf_Value_set_string_value(
-      val_msg, upb_StringView{val.data(), val.size()});
+      val_msg, upb_StringView{kVal1.data(), kVal1.size()});
   ::google_protobuf_Struct_fields_set(
-      struct_msg, upb_StringView{key.data(), key.size()}, val_msg, arena.ptr());
-  std::string body_data = "test data";
+      struct_msg, upb_StringView{kKey1.data(), kKey1.size()}, val_msg,
+      arena.ptr());
+  constexpr absl::string_view kBodyData = "test data";
   std::string serialized =
       CreateExtProcClientBodyRequest(
-          arena.ptr(), body_data, struct_msg, /*observability_mode=*/false,
+          arena.ptr(), kBodyData, struct_msg, /*observability_mode=*/false,
           /*processing_mode=*/std::nullopt, /*end_of_stream=*/false,
           /*end_of_stream_without_message=*/false)
           .value();
@@ -740,8 +737,7 @@ TEST_F(CreateExtProcAttributesProtoStructTest, AttributesRequestHeaders) {
 class ParseExtProcResponseTest : public ::testing::Test {
  protected:
   absl::StatusOr<ExtProcResponse> ParseResponse(
-      const envoy::service::ext_proc::v3::ProcessingResponse& response,
-      upb_Arena* /*arena*/) {
+      const envoy::service::ext_proc::v3::ProcessingResponse& response) {
     std::string serialized;
     EXPECT_TRUE(response.SerializeToString(&serialized));
     return ExtProcResponse::Parse(serialized);
@@ -751,16 +747,16 @@ class ParseExtProcResponseTest : public ::testing::Test {
 TEST_F(ParseExtProcResponseTest, ResponseInvalid) {
   // Field 1 (length-delimited) with length 255, but no data.
   auto parsed = ExtProcResponse::Parse("\x0a\xff");
-  EXPECT_EQ(parsed.status().code(), absl::StatusCode::kInternal);
-  EXPECT_EQ(parsed.status().message(), "Failed to parse ProcessingResponse");
+  EXPECT_EQ(parsed.status(),
+            absl::InternalError("Failed to parse ProcessingResponse"));
 }
 
 TEST_F(ParseExtProcResponseTest, RequestDrain) {
   upb::Arena arena;
   envoy::service::ext_proc::v3::ProcessingResponse response;
   response.set_request_drain(true);
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
   EXPECT_TRUE(parsed->request_drain);
 }
 
@@ -768,12 +764,10 @@ TEST_F(ParseExtProcResponseTest, UnsupportedResponseCaseRequestTrailers) {
   upb::Arena arena;
   envoy::service::ext_proc::v3::ProcessingResponse response;
   response.mutable_request_trailers();
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
-  EXPECT_EQ(parsed.status().code(), absl::StatusCode::kInternal);
-  EXPECT_THAT(
-      parsed.status().message(),
-      ::testing::StartsWith("Unsupported ProcessingResponse response case:"));
+  auto parsed = ParseResponse(response);
+  EXPECT_EQ(
+      parsed.status(),
+      absl::InternalError("Unsupported ProcessingResponse response case: 5"));
 }
 
 TEST_F(ParseExtProcResponseTest, RequestHeadersMutation) {
@@ -785,21 +779,23 @@ TEST_F(ParseExtProcResponseTest, RequestHeadersMutation) {
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE);
   auto* header_mutation = common_response->mutable_header_mutation();
   auto* set_header = header_mutation->add_set_headers();
-  set_header->mutable_header()->set_key(kMutatedKey);
-  set_header->mutable_header()->set_raw_value(kMutatedVal);
-  header_mutation->add_remove_headers(kRemovedKey);
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::RequestHeaders>(
-      parsed->response));
-  const auto& header_mutation_res =
-      std::get<ExtProcResponse::RequestHeaders>(parsed->response).mutation;
-  EXPECT_THAT(header_mutation_res.set_headers,
-              ::testing::ElementsAre(IsHeaderValueOption(
-                  kMutatedKey, kMutatedVal,
-                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)));
-  ASSERT_EQ(header_mutation_res.remove_headers.size(), 1);
-  EXPECT_EQ(header_mutation_res.remove_headers[0], kRemovedKey);
+  set_header->mutable_header()->set_key(kKey1);
+  set_header->mutable_header()->set_raw_value(kVal1);
+  header_mutation->add_remove_headers(kKey2);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_THAT(
+      parsed->response,
+      ::testing::VariantWith<ExtProcResponse::RequestHeaders>(::testing::Field(
+          &ExtProcResponse::RequestHeaders::mutation,
+          ::testing::AllOf(
+              ::testing::Field(&ExtProcResponse::HeaderMutation::set_headers,
+                               ::testing::ElementsAre(IsHeaderValueOption(
+                                   kKey1, kVal1,
+                                   XdsHeaderValueOption::AppendAction::
+                                       kAppendIfExistsOrAdd))),
+              ::testing::Field(&ExtProcResponse::HeaderMutation::remove_headers,
+                               ::testing::ElementsAre(kKey2))))));
 }
 
 TEST_F(ParseExtProcResponseTest, RequestHeadersUnsupportedStatus) {
@@ -809,8 +805,7 @@ TEST_F(ParseExtProcResponseTest, RequestHeadersUnsupportedStatus) {
   auto* common_response = headers_response->mutable_response();
   common_response->set_status(
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE_AND_REPLACE);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(),
             absl::InternalError("CONTINUE_AND_REPLACE is not supported"));
 }
@@ -824,17 +819,12 @@ TEST_F(ParseExtProcResponseTest, RequestHeadersHeaderMutationEmptyValue) {
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE);
   auto* header_mutation = common_response->mutable_header_mutation();
   auto* set_header = header_mutation->add_set_headers();
-  set_header->mutable_header()->set_key(kMutatedKey);
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::RequestHeaders>(
-      parsed->response));
-  const auto& header_mutation_res =
-      std::get<ExtProcResponse::RequestHeaders>(parsed->response).mutation;
-  EXPECT_THAT(header_mutation_res.set_headers,
-              ::testing::ElementsAre(IsHeaderValueOption(
-                  kMutatedKey, "",
-                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)));
+  set_header->mutable_header()->set_key(kKey1);
+  auto parsed = ParseResponse(response);
+  EXPECT_EQ(parsed.status(),
+            absl::InternalError("Failed to parse XdsHeaderValueOption: "
+                                "[field:header error:either value or raw_value "
+                                "must be set]"));
 }
 
 TEST_F(ParseExtProcResponseTest, RequestHeadersMixedHeaderMutation) {
@@ -848,19 +838,23 @@ TEST_F(ParseExtProcResponseTest, RequestHeadersMixedHeaderMutation) {
   auto* set_header1 = header_mutation->add_set_headers();
   set_header1->mutable_header()->set_key("x-valid-key");
   set_header1->mutable_header()->set_raw_value("valid-val");
+  constexpr absl::string_view kInvalidHeaderKey = ":path";
   auto* set_header2 = header_mutation->add_set_headers();
   set_header2->mutable_header()->set_key(kInvalidHeaderKey);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
-  EXPECT_EQ(parsed.status().code(), absl::StatusCode::kInternal);
+  auto parsed = ParseResponse(response);
+  EXPECT_EQ(parsed.status(),
+            absl::InternalError(
+                "Failed to parse XdsHeaderValueOption: "
+                "[field:header error:either value or raw_value "
+                "must be set; field:header.key error:header \":path\" "
+                "not allowed]"));
 }
 
 TEST_F(ParseExtProcResponseTest, RequestHeadersCommonResponseNull) {
   upb::Arena arena;
   envoy::service::ext_proc::v3::ProcessingResponse response;
   response.mutable_request_headers();
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(), absl::InternalError("common_response is not set"));
 }
 
@@ -873,21 +867,23 @@ TEST_F(ParseExtProcResponseTest, ResponseHeadersMutation) {
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE);
   auto* header_mutation = common_response->mutable_header_mutation();
   auto* set_header = header_mutation->add_set_headers();
-  set_header->mutable_header()->set_key(kMutatedKey);
-  set_header->mutable_header()->set_raw_value(kMutatedVal);
-  header_mutation->add_remove_headers(kRemovedKey);
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::ResponseHeaders>(
-      parsed->response));
-  const auto& header_mutation_res =
-      std::get<ExtProcResponse::ResponseHeaders>(parsed->response).mutation;
-  EXPECT_THAT(header_mutation_res.set_headers,
-              ::testing::ElementsAre(IsHeaderValueOption(
-                  kMutatedKey, kMutatedVal,
-                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)));
-  ASSERT_EQ(header_mutation_res.remove_headers.size(), 1);
-  EXPECT_EQ(header_mutation_res.remove_headers[0], kRemovedKey);
+  set_header->mutable_header()->set_key(kKey1);
+  set_header->mutable_header()->set_raw_value(kVal1);
+  header_mutation->add_remove_headers(kKey2);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_THAT(
+      parsed->response,
+      ::testing::VariantWith<ExtProcResponse::ResponseHeaders>(::testing::Field(
+          &ExtProcResponse::ResponseHeaders::mutation,
+          ::testing::AllOf(
+              ::testing::Field(&ExtProcResponse::HeaderMutation::set_headers,
+                               ::testing::ElementsAre(IsHeaderValueOption(
+                                   kKey1, kVal1,
+                                   XdsHeaderValueOption::AppendAction::
+                                       kAppendIfExistsOrAdd))),
+              ::testing::Field(&ExtProcResponse::HeaderMutation::remove_headers,
+                               ::testing::ElementsAre(kKey2))))));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseHeadersUnsupportedStatus) {
@@ -897,8 +893,7 @@ TEST_F(ParseExtProcResponseTest, ResponseHeadersUnsupportedStatus) {
   auto* common_response = headers_response->mutable_response();
   common_response->set_status(
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE_AND_REPLACE);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(),
             absl::InternalError("CONTINUE_AND_REPLACE is not supported"));
 }
@@ -912,25 +907,19 @@ TEST_F(ParseExtProcResponseTest, ResponseHeadersHeaderMutationEmptyValue) {
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE);
   auto* header_mutation = common_response->mutable_header_mutation();
   auto* set_header = header_mutation->add_set_headers();
-  set_header->mutable_header()->set_key(kMutatedKey);
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::ResponseHeaders>(
-      parsed->response));
-  const auto& header_mutation_res =
-      std::get<ExtProcResponse::ResponseHeaders>(parsed->response).mutation;
-  EXPECT_THAT(header_mutation_res.set_headers,
-              ::testing::ElementsAre(IsHeaderValueOption(
-                  kMutatedKey, "",
-                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)));
+  set_header->mutable_header()->set_key(kKey1);
+  auto parsed = ParseResponse(response);
+  EXPECT_EQ(parsed.status(),
+            absl::InternalError("Failed to parse XdsHeaderValueOption: "
+                                "[field:header error:either value or raw_value "
+                                "must be set]"));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseHeadersCommonResponseNull) {
   upb::Arena arena;
   envoy::service::ext_proc::v3::ProcessingResponse response;
   response.mutable_response_headers();
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(), absl::InternalError("common_response is not set"));
 }
 
@@ -946,15 +935,20 @@ TEST_F(ParseExtProcResponseTest, RequestBodyMutation) {
   streamed_response->set_body("test request body");
   streamed_response->set_end_of_stream(true);
   streamed_response->set_end_of_stream_without_message(false);
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(
-      std::holds_alternative<ExtProcResponse::RequestBody>(parsed->response));
-  const auto& body_mutation_res =
-      std::get<ExtProcResponse::RequestBody>(parsed->response).mutation;
-  EXPECT_EQ(body_mutation_res.body, "test request body");
-  EXPECT_TRUE(body_mutation_res.end_of_stream);
-  EXPECT_FALSE(body_mutation_res.end_of_stream_without_message);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_THAT(
+      parsed->response,
+      ::testing::VariantWith<ExtProcResponse::RequestBody>(::testing::Field(
+          &ExtProcResponse::RequestBody::mutation,
+          ::testing::AllOf(
+              ::testing::Field(&ExtProcResponse::BodyMutation::body,
+                               "test request body"),
+              ::testing::Field(&ExtProcResponse::BodyMutation::end_of_stream,
+                               true),
+              ::testing::Field(
+                  &ExtProcResponse::BodyMutation::end_of_stream_without_message,
+                  false)))));
 }
 
 TEST_F(ParseExtProcResponseTest, RequestBodyUnsupportedStatus) {
@@ -964,8 +958,7 @@ TEST_F(ParseExtProcResponseTest, RequestBodyUnsupportedStatus) {
   auto* common_response = body_response->mutable_response();
   common_response->set_status(
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE_AND_REPLACE);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(),
             absl::InternalError("CONTINUE_AND_REPLACE is not supported"));
 }
@@ -981,8 +974,7 @@ TEST_F(ParseExtProcResponseTest, RequestBodyCompressedMessageUnsupported) {
   auto* streamed_response = body_mutation->mutable_streamed_response();
   streamed_response->set_body("test request body");
   streamed_response->set_grpc_message_compressed(true);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(),
             absl::InternalError("grpc_message_compressed is not supported"));
 }
@@ -991,8 +983,7 @@ TEST_F(ParseExtProcResponseTest, RequestBodyCommonResponseNull) {
   upb::Arena arena;
   envoy::service::ext_proc::v3::ProcessingResponse response;
   response.mutable_request_body();
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(), absl::InternalError("common_response is not set"));
 }
 
@@ -1003,8 +994,7 @@ TEST_F(ParseExtProcResponseTest, RequestBodyBodyMutationNull) {
   auto* common_response = body_response->mutable_response();
   common_response->set_status(
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(), absl::InternalError("body_mutation is not set"));
 }
 
@@ -1016,8 +1006,7 @@ TEST_F(ParseExtProcResponseTest, RequestBodyStreamedResponseNull) {
   common_response->set_status(
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE);
   common_response->mutable_body_mutation();
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(),
             absl::InternalError("streamed_response is not set"));
 }
@@ -1034,15 +1023,20 @@ TEST_F(ParseExtProcResponseTest, ResponseBodyMutation) {
   streamed_response->set_body("test response body");
   streamed_response->set_end_of_stream(false);
   streamed_response->set_end_of_stream_without_message(false);
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(
-      std::holds_alternative<ExtProcResponse::ResponseBody>(parsed->response));
-  const auto& body_mutation_res =
-      std::get<ExtProcResponse::ResponseBody>(parsed->response).mutation;
-  EXPECT_EQ(body_mutation_res.body, "test response body");
-  EXPECT_FALSE(body_mutation_res.end_of_stream);
-  EXPECT_FALSE(body_mutation_res.end_of_stream_without_message);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_THAT(
+      parsed->response,
+      ::testing::VariantWith<ExtProcResponse::ResponseBody>(::testing::Field(
+          &ExtProcResponse::ResponseBody::mutation,
+          ::testing::AllOf(
+              ::testing::Field(&ExtProcResponse::BodyMutation::body,
+                               "test response body"),
+              ::testing::Field(&ExtProcResponse::BodyMutation::end_of_stream,
+                               false),
+              ::testing::Field(
+                  &ExtProcResponse::BodyMutation::end_of_stream_without_message,
+                  false)))));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseBodyEndOfStreamRejected) {
@@ -1056,12 +1050,10 @@ TEST_F(ParseExtProcResponseTest, ResponseBodyEndOfStreamRejected) {
   auto* streamed_response = body_mutation->mutable_streamed_response();
   streamed_response->set_body("test response body");
   streamed_response->set_end_of_stream(true);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
-  EXPECT_EQ(parsed.status().code(), absl::StatusCode::kInternal);
-  EXPECT_EQ(parsed.status().message(),
-            "end_of_stream / end_of_stream_without_message is not supported "
-            "for response_body");
+  auto parsed = ParseResponse(response);
+  EXPECT_EQ(parsed.status(),
+            absl::InternalError("end_of_stream / end_of_stream_without_message "
+                                "is not supported for response_body"));
 }
 
 TEST_F(ParseExtProcResponseTest,
@@ -1075,12 +1067,10 @@ TEST_F(ParseExtProcResponseTest,
   auto* body_mutation = common_response->mutable_body_mutation();
   auto* streamed_response = body_mutation->mutable_streamed_response();
   streamed_response->set_end_of_stream_without_message(true);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
-  EXPECT_EQ(parsed.status().code(), absl::StatusCode::kInternal);
-  EXPECT_EQ(parsed.status().message(),
-            "end_of_stream / end_of_stream_without_message is not supported "
-            "for response_body");
+  auto parsed = ParseResponse(response);
+  EXPECT_EQ(parsed.status(),
+            absl::InternalError("end_of_stream / end_of_stream_without_message "
+                                "is not supported for response_body"));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseBodyUnsupportedStatus) {
@@ -1090,8 +1080,7 @@ TEST_F(ParseExtProcResponseTest, ResponseBodyUnsupportedStatus) {
   auto* common_response = body_response->mutable_response();
   common_response->set_status(
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE_AND_REPLACE);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(),
             absl::InternalError("CONTINUE_AND_REPLACE is not supported"));
 }
@@ -1107,8 +1096,7 @@ TEST_F(ParseExtProcResponseTest, ResponseBodyCompressedMessageUnsupported) {
   auto* streamed_response = body_mutation->mutable_streamed_response();
   streamed_response->set_body("test response body");
   streamed_response->set_grpc_message_compressed(true);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(),
             absl::InternalError("grpc_message_compressed is not supported"));
 }
@@ -1117,8 +1105,7 @@ TEST_F(ParseExtProcResponseTest, ResponseBodyCommonResponseNull) {
   upb::Arena arena;
   envoy::service::ext_proc::v3::ProcessingResponse response;
   response.mutable_response_body();
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(), absl::InternalError("common_response is not set"));
 }
 
@@ -1129,8 +1116,7 @@ TEST_F(ParseExtProcResponseTest, ResponseBodyBodyMutationNull) {
   auto* common_response = body_response->mutable_response();
   common_response->set_status(
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE);
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(), absl::InternalError("body_mutation is not set"));
 }
 
@@ -1142,8 +1128,7 @@ TEST_F(ParseExtProcResponseTest, ResponseBodyStreamedResponseNull) {
   common_response->set_status(
       envoy::service::ext_proc::v3::CommonResponse::CONTINUE);
   common_response->mutable_body_mutation();
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(),
             absl::InternalError("streamed_response is not set"));
 }
@@ -1154,21 +1139,25 @@ TEST_F(ParseExtProcResponseTest, ResponseTrailersMutation) {
   auto* trailers_response = response.mutable_response_trailers();
   auto* header_mutation = trailers_response->mutable_header_mutation();
   auto* set_header = header_mutation->add_set_headers();
-  set_header->mutable_header()->set_key(kMutatedKey);
-  set_header->mutable_header()->set_raw_value(kMutatedVal);
-  header_mutation->add_remove_headers(kRemovedKey);
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::ResponseTrailers>(
-      parsed->response));
-  const auto& header_mutation_res =
-      std::get<ExtProcResponse::ResponseTrailers>(parsed->response).mutation;
-  EXPECT_THAT(header_mutation_res.set_headers,
-              ::testing::ElementsAre(IsHeaderValueOption(
-                  kMutatedKey, kMutatedVal,
-                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)));
-  ASSERT_EQ(header_mutation_res.remove_headers.size(), 1);
-  EXPECT_EQ(header_mutation_res.remove_headers[0], kRemovedKey);
+  set_header->mutable_header()->set_key(kKey1);
+  set_header->mutable_header()->set_raw_value(kVal1);
+  header_mutation->add_remove_headers(kKey2);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_THAT(parsed->response,
+              ::testing::VariantWith<ExtProcResponse::ResponseTrailers>(
+                  ::testing::Field(
+                      &ExtProcResponse::ResponseTrailers::mutation,
+                      ::testing::AllOf(
+                          ::testing::Field(
+                              &ExtProcResponse::HeaderMutation::set_headers,
+                              ::testing::ElementsAre(IsHeaderValueOption(
+                                  kKey1, kVal1,
+                                  XdsHeaderValueOption::AppendAction::
+                                      kAppendIfExistsOrAdd))),
+                          ::testing::Field(
+                              &ExtProcResponse::HeaderMutation::remove_headers,
+                              ::testing::ElementsAre(kKey2))))));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseTrailersHeaderMutationEmptyValue) {
@@ -1177,31 +1166,31 @@ TEST_F(ParseExtProcResponseTest, ResponseTrailersHeaderMutationEmptyValue) {
   auto* trailers_response = response.mutable_response_trailers();
   auto* header_mutation = trailers_response->mutable_header_mutation();
   auto* set_header = header_mutation->add_set_headers();
-  set_header->mutable_header()->set_key(kMutatedKey);
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::ResponseTrailers>(
-      parsed->response));
-  const auto& header_mutation_res =
-      std::get<ExtProcResponse::ResponseTrailers>(parsed->response).mutation;
-  EXPECT_THAT(header_mutation_res.set_headers,
-              ::testing::ElementsAre(IsHeaderValueOption(
-                  kMutatedKey, "",
-                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)));
+  set_header->mutable_header()->set_key(kKey1);
+  auto parsed = ParseResponse(response);
+  EXPECT_EQ(parsed.status(),
+            absl::InternalError("Failed to parse XdsHeaderValueOption: "
+                                "[field:header error:either value or raw_value "
+                                "must be set]"));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseTrailersHeaderMutationNull) {
   upb::Arena arena;
   envoy::service::ext_proc::v3::ProcessingResponse response;
   response.mutable_response_trailers();
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::ResponseTrailers>(
-      parsed->response));
-  const auto& header_mutation_res =
-      std::get<ExtProcResponse::ResponseTrailers>(parsed->response).mutation;
-  EXPECT_TRUE(header_mutation_res.set_headers.empty());
-  EXPECT_TRUE(header_mutation_res.remove_headers.empty());
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_THAT(parsed->response,
+              ::testing::VariantWith<ExtProcResponse::ResponseTrailers>(
+                  ::testing::Field(
+                      &ExtProcResponse::ResponseTrailers::mutation,
+                      ::testing::AllOf(
+                          ::testing::Field(
+                              &ExtProcResponse::HeaderMutation::set_headers,
+                              ::testing::IsEmpty()),
+                          ::testing::Field(
+                              &ExtProcResponse::HeaderMutation::remove_headers,
+                              ::testing::IsEmpty())))));
 }
 
 TEST_F(ParseExtProcResponseTest, ImmediateResponse) {
@@ -1212,20 +1201,26 @@ TEST_F(ParseExtProcResponseTest, ImmediateResponse) {
   immediate->set_details("invalid credentials");
   auto* header_mutation = immediate->mutable_headers();
   auto* set_header = header_mutation->add_set_headers();
-  set_header->mutable_header()->set_key("www-authenticate");
-  set_header->mutable_header()->set_raw_value(kBearer);
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::ImmediateResponse>(
-      parsed->response));
-  const auto& immediate_res =
-      std::get<ExtProcResponse::ImmediateResponse>(parsed->response);
-  EXPECT_EQ(immediate_res.status, 16);
-  EXPECT_EQ(immediate_res.details, "invalid credentials");
-  EXPECT_THAT(immediate_res.header_mutation.set_headers,
-              ::testing::ElementsAre(IsHeaderValueOption(
-                  "www-authenticate", kBearer,
-                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)));
+  set_header->mutable_header()->set_key(kKey1);
+  set_header->mutable_header()->set_raw_value(kVal1);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_THAT(
+      parsed->response,
+      ::testing::VariantWith<ExtProcResponse::ImmediateResponse>(
+          ::testing::AllOf(
+              ::testing::Field(&ExtProcResponse::ImmediateResponse::status,
+                               GRPC_STATUS_UNAUTHENTICATED),
+              ::testing::Field(&ExtProcResponse::ImmediateResponse::details,
+                               "invalid credentials"),
+              ::testing::Field(
+                  &ExtProcResponse::ImmediateResponse::header_mutation,
+                  ::testing::Field(
+                      &ExtProcResponse::HeaderMutation::set_headers,
+                      ::testing::ElementsAre(IsHeaderValueOption(
+                          kKey1, kVal1,
+                          XdsHeaderValueOption::AppendAction::
+                              kAppendIfExistsOrAdd)))))));
 }
 
 TEST_F(ParseExtProcResponseTest, ImmediateResponseHeaderMutationNull) {
@@ -1234,16 +1229,25 @@ TEST_F(ParseExtProcResponseTest, ImmediateResponseHeaderMutationNull) {
   auto* immediate = response.mutable_immediate_response();
   immediate->mutable_grpc_status()->set_status(16);
   immediate->set_details("invalid credentials");
-  auto parsed = ParseResponse(response, arena.ptr());
-  ASSERT_TRUE(parsed.ok()) << parsed.status().ToString();
-  ASSERT_TRUE(std::holds_alternative<ExtProcResponse::ImmediateResponse>(
-      parsed->response));
-  const auto& immediate_res =
-      std::get<ExtProcResponse::ImmediateResponse>(parsed->response);
-  EXPECT_EQ(immediate_res.status, 16);
-  EXPECT_EQ(immediate_res.details, "invalid credentials");
-  EXPECT_TRUE(immediate_res.header_mutation.set_headers.empty());
-  EXPECT_TRUE(immediate_res.header_mutation.remove_headers.empty());
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_THAT(
+      parsed->response,
+      ::testing::VariantWith<ExtProcResponse::ImmediateResponse>(
+          ::testing::AllOf(
+              ::testing::Field(&ExtProcResponse::ImmediateResponse::status,
+                               GRPC_STATUS_UNAUTHENTICATED),
+              ::testing::Field(&ExtProcResponse::ImmediateResponse::details,
+                               "invalid credentials"),
+              ::testing::Field(
+                  &ExtProcResponse::ImmediateResponse::header_mutation,
+                  ::testing::AllOf(
+                      ::testing::Field(
+                          &ExtProcResponse::HeaderMutation::set_headers,
+                          ::testing::IsEmpty()),
+                      ::testing::Field(
+                          &ExtProcResponse::HeaderMutation::remove_headers,
+                          ::testing::IsEmpty()))))));
 }
 
 TEST_F(ParseExtProcResponseTest, ImmediateResponseStatusMissing) {
@@ -1251,8 +1255,7 @@ TEST_F(ParseExtProcResponseTest, ImmediateResponseStatusMissing) {
   envoy::service::ext_proc::v3::ProcessingResponse response;
   auto* immediate = response.mutable_immediate_response();
   immediate->set_details("invalid credentials");
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(parsed.status(),
             absl::InternalError("grpc_status is not set in ImmediateResponse"));
 }
@@ -1263,8 +1266,7 @@ TEST_F(ParseExtProcResponseTest, ImmediateResponseStatusInvalid) {
   auto* immediate = response.mutable_immediate_response();
   immediate->mutable_grpc_status()->set_status(99);
   immediate->set_details("invalid credentials");
-  auto parsed = ParseResponse(response, arena.ptr());
-  EXPECT_FALSE(parsed.ok());
+  auto parsed = ParseResponse(response);
   EXPECT_EQ(
       parsed.status(),
       absl::InternalError("Invalid grpc status code in ImmediateResponse"));

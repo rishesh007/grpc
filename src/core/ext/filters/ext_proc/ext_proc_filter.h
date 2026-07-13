@@ -26,6 +26,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 #include "src/core/ext/filters/ext_proc/ext_proc_messages.h"
@@ -55,7 +56,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
     bool Equals(const FilterConfig& other) const override {
       const auto& o = DownCast<const Config&>(other);
-      return grpc_service == o.grpc_service &&
+      return channel_info == o.channel_info &&
              failure_mode_allow == o.failure_mode_allow &&
              processing_mode == o.processing_mode &&
              request_attributes == o.request_attributes &&
@@ -65,9 +66,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
              forwarding_disallowed_headers == o.forwarding_disallowed_headers &&
              disable_immediate_response == o.disable_immediate_response &&
              observability_mode == o.observability_mode &&
-             deferred_close_timeout == o.deferred_close_timeout &&
-             transport_factory == o.transport_factory &&
-             instance_name == o.instance_name && channel == o.channel;
+             deferred_close_timeout == o.deferred_close_timeout;
     }
 
     std::string ToString() const override;
@@ -75,19 +74,23 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     // The gRPC service configuration (target URI, credentials, timeout)
     // used to establish the side-channel connection to the external processor
     // server as described in gRFC A102.
-    // Wrapped in std::optional because GrpcXdsServerTarget lacks a default
-    // constructor (requiring explicit URI and credentials arguments), allowing
-    // ExtProcFilter::Config to be default-constructed when instantiated.
-    std::optional<GrpcXdsServerTarget> grpc_service;
+    // Or, a ref-counted handle to the persistent gRPC side-channel
+    // (ExtProcChannel) used to communicate with the external processing server
+    // across multiple data plane RPCs.
+    // Holds std::monostate when neither is set (e.g. in an empty override
+    // config).
+    std::variant<std::monostate, GrpcXdsServerTarget,
+                 RefCountedPtr<ExtProcChannel>>
+        channel_info;
     // If true, when an ext_proc stream fails or terminates with a non-OK
     // status, the data plane RPC is allowed to continue without error if the
     // filter is in observability mode or has not yet sent message bodies (body
     // send mode is NONE). Defaults to false (failing the RPC with INTERNAL).
-    bool failure_mode_allow;
+    std::optional<bool> failure_mode_allow;
     // Specifies which data plane events (request/response headers, body chunks,
     // and trailers) should be forwarded to the external processing server. In
     // gRPC, body chunks are sent in GRPC mode.
-    ProcessingMode processing_mode;
+    std::optional<ProcessingMode> processing_mode;
     // List of request attribute names (e.g., "request.path", "request.method",
     // "request.host") to extract from metadata and include in client request
     // header events.
@@ -117,17 +120,13 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     // The maximum duration to wait for the external processor to close or drain
     // its stream before forcibly closing the side-channel stream.
     Duration deferred_close_timeout;
-    // Factory used to create and manage underlying transport connections for
-    // the side-channel gRPC client talking to the external processing server.
-    RefCountedPtr<XdsTransportFactory> transport_factory;
-    // The unique identifier or instance name of the xDS client/ext_proc filter
-    // configuration, used for logging, metrics, or resource retention across
-    // xDS updates.
-    std::string instance_name;
-    // Ref-counted handle to the persistent gRPC side-channel (ExtProcChannel)
-    // used to communicate with the external processing server across multiple
-    // data plane RPCs.
-    RefCountedPtr<ExtProcChannel> channel;
+
+    RefCountedPtr<ExtProcChannel> channel() const {
+      if (std::holds_alternative<RefCountedPtr<ExtProcChannel>>(channel_info)) {
+        return std::get<RefCountedPtr<ExtProcChannel>>(channel_info);
+      }
+      return nullptr;
+    }
   };
 
   static const grpc_channel_filter kFilterVtable;
@@ -141,7 +140,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
                 ChannelFilter::Args filter_args);
 
   RefCountedPtr<const Config> config() const { return config_; }
-  RefCountedPtr<ExtProcChannel> channel() const { return channel_; }
+  RefCountedPtr<ExtProcChannel> channel() const { return config_->channel(); }
 
   class ExtProcChannel final : public Blackboard::Entry {
    public:
@@ -179,10 +178,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
   void InterceptCall(UnstartedCallHandler unstarted_call_handler) override;
 
-  RefCountedPtr<XdsTransportFactory> transport_factory_;
   RefCountedPtr<const Config> config_;
-  RefCountedPtr<ExtProcChannel> channel_;
-
   Slice default_authority_;
 };
 

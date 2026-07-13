@@ -57,6 +57,7 @@ class GrpcXdsServerTarget final : public GrpcXdsServerInterface {
 
   bool Equals(const XdsServerTarget& other) const override;
   std::string Key() const override;
+
   const std::string& server_uri() const override { return server_uri_; }
   RefCountedPtr<const ChannelCredsConfig> channel_creds_config()
       const override {

@@ -34,6 +34,7 @@
 #include "src/core/lib/experiments/config.h"
 #include "src/core/lib/experiments/experiments.h"
 #include "src/core/util/json/json_object_loader.h"
+#include "src/core/xds/grpc/xds_bootstrap_grpc_builder.h"
 #include "src/core/xds/grpc/xds_http_filter.h"
 #include "src/core/xds/grpc/xds_http_filter_registry.h"
 #include "test/core/test_util/scoped_env_var.h"
@@ -68,7 +69,7 @@ using ::xds::type::v3::TypedStruct;
 class XdsCompositeFilterEnd2endTest : public XdsEnd2endTest {
  public:
   void SetUp() override {
-    grpc_core::SetXdsHttpFilterFactoryForTest([]() {
+    grpc_core::GrpcXdsBootstrapBuilder::SetXdsHttpFilterFactoryForTest([]() {
       return std::make_unique<grpc_core::XdsHttpAddHeaderFilterFactory>();
     });
     CreateAndStartBackends(1);
@@ -78,7 +79,7 @@ class XdsCompositeFilterEnd2endTest : public XdsEnd2endTest {
   }
 
   void TearDown() override {
-    grpc_core::SetXdsHttpFilterFactoryForTest(nullptr);
+    grpc_core::GrpcXdsBootstrapBuilder::SetXdsHttpFilterFactoryForTest(nullptr);
     XdsEnd2endTest::TearDown();
   }
 
