@@ -7312,6 +7312,8 @@ grpc_cc_library(
     hdrs = [
         "xds/grpc/xds_matcher_action.h",
     ],
+    tags = ["nofixdeps"],
+    visibility = ["//bazel:xds_client_grpc"],
     deps = [
         "xds_common_types",
         "xds_matcher",
