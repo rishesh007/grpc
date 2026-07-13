@@ -2120,8 +2120,6 @@ Gem::Specification.new do |s|
   s.files += %w( src/core/util/json/json_object_loader.h )
   s.files += %w( src/core/util/json/json_reader.cc )
   s.files += %w( src/core/util/json/json_reader.h )
-  s.files += %w( src/core/util/json/json_util.cc )
-  s.files += %w( src/core/util/json/json_util.h )
   s.files += %w( src/core/util/json/json_writer.cc )
   s.files += %w( src/core/util/json/json_writer.h )
   s.files += %w( src/core/util/latent_see.cc )

@@ -879,7 +879,6 @@ CORE_SOURCE_FILES = [
     'src/core/util/iphone/cpu.cc',
     'src/core/util/json/json_object_loader.cc',
     'src/core/util/json/json_reader.cc',
-    'src/core/util/json/json_util.cc',
     'src/core/util/json/json_writer.cc',
     'src/core/util/latent_see.cc',
     'src/core/util/linux/cpu.cc',

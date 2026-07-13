@@ -470,9 +470,9 @@ TEST_F(CreateExtProcRequestTest, ResponseTrailersProtocolConfig) {
 
 TEST_F(CreateExtProcRequestTest, RequestBodyPayloadValid) {
   upb::Arena arena;
-  std::string body_data = "test request body data";
+  constexpr absl::string_view kBodyData = "test request body data";
   std::string serialized =
-      CreateExtProcClientBodyRequest(arena.ptr(), body_data, {},
+      CreateExtProcClientBodyRequest(arena.ptr(), kBodyData, {},
                                      /*observability_mode=*/false,
                                      /*processing_mode=*/std::nullopt,
                                      /*end_of_stream=*/false,
@@ -480,15 +480,15 @@ TEST_F(CreateExtProcRequestTest, RequestBodyPayloadValid) {
           .value();
   auto parsed = ParseRequest(serialized);
   ASSERT_TRUE(parsed.has_request_body());
-  EXPECT_EQ(parsed.request_body().body(), body_data);
+  EXPECT_EQ(parsed.request_body().body(), kBodyData);
   EXPECT_FALSE(parsed.request_body().end_of_stream());
 }
 
 TEST_F(CreateExtProcRequestTest, RequestBodyEndOfStream) {
   upb::Arena arena;
-  std::string body_data = "data";
+  constexpr absl::string_view kBodyData = "data";
   std::string serialized =
-      CreateExtProcClientBodyRequest(arena.ptr(), body_data, {},
+      CreateExtProcClientBodyRequest(arena.ptr(), kBodyData, {},
                                      /*observability_mode=*/false,
                                      /*processing_mode=*/std::nullopt,
                                      /*end_of_stream=*/true,
@@ -496,7 +496,7 @@ TEST_F(CreateExtProcRequestTest, RequestBodyEndOfStream) {
           .value();
   auto parsed = ParseRequest(serialized);
   ASSERT_TRUE(parsed.has_request_body());
-  EXPECT_EQ(parsed.request_body().body(), body_data);
+  EXPECT_EQ(parsed.request_body().body(), kBodyData);
   EXPECT_TRUE(parsed.request_body().end_of_stream());
 }
 
@@ -552,15 +552,15 @@ TEST_F(CreateExtProcRequestTest, RequestBodyProtocolConfig) {
 
 TEST_F(CreateExtProcRequestTest, ResponseBodyPayloadValid) {
   upb::Arena arena;
-  std::string body_data = "test response body data";
+  constexpr absl::string_view kBodyData = "test response body data";
   std::string serialized =
-      CreateExtProcServerBodyRequest(arena.ptr(), body_data, {},
+      CreateExtProcServerBodyRequest(arena.ptr(), kBodyData, {},
                                      /*observability_mode=*/false,
                                      /*processing_mode=*/std::nullopt)
           .value();
   auto parsed = ParseRequest(serialized);
   ASSERT_TRUE(parsed.has_response_body());
-  EXPECT_EQ(parsed.response_body().body(), body_data);
+  EXPECT_EQ(parsed.response_body().body(), kBodyData);
   EXPECT_FALSE(parsed.response_body().end_of_stream());
 }
 
@@ -605,10 +605,10 @@ TEST_F(CreateExtProcRequestTest, AttributesPayload) {
   ::google_protobuf_Struct_fields_set(
       struct_msg, upb_StringView{kKey1.data(), kKey1.size()}, val_msg,
       arena.ptr());
-  std::string body_data = "test data";
+  constexpr absl::string_view kBodyData = "test data";
   std::string serialized =
       CreateExtProcClientBodyRequest(
-          arena.ptr(), body_data, struct_msg, /*observability_mode=*/false,
+          arena.ptr(), kBodyData, struct_msg, /*observability_mode=*/false,
           /*processing_mode=*/std::nullopt, /*end_of_stream=*/false,
           /*end_of_stream_without_message=*/false)
           .value();

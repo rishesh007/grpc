@@ -177,7 +177,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
   // grpc_service
   {
     ValidationErrors::ScopedField field(errors, ".grpc_service");
-    config->grpc_service = ParseXdsGrpcService(
+    config->channel_info = ParseXdsGrpcService(
         context,
         envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_grpc_service(
             ext_proc),
@@ -309,7 +309,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
               overrides);
       grpc_service != nullptr) {
     ValidationErrors::ScopedField field(errors, ".grpc_service");
-    config->grpc_service = ParseXdsGrpcService(context, grpc_service, errors);
+    config->channel_info = ParseXdsGrpcService(context, grpc_service, errors);
   }
   // TODO(rishesh): Validate that request_attributes and response_attributes are
   // actually valid.
@@ -358,7 +358,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
   const auto& top_config =
       DownCast<const ExtProcFilter::Config&>(*top_level_config);
   auto config = MakeRefCounted<ExtProcFilter::Config>();
-  config->grpc_service = top_config.grpc_service;
+  config->channel_info = top_config.channel_info;
   config->failure_mode_allow = top_config.failure_mode_allow;
   config->processing_mode = top_config.processing_mode;
   config->request_attributes = top_config.request_attributes;
@@ -389,7 +389,9 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
     if (o.processing_mode.has_value()) {
       config->processing_mode = o.processing_mode;
     }
-    if (o.grpc_service.has_value()) config->grpc_service = o.grpc_service;
+    if (std::holds_alternative<GrpcXdsServerTarget>(o.channel_info)) {
+      config->channel_info = o.channel_info;
+    }
     if (!o.request_attributes.empty()) {
       config->request_attributes = o.request_attributes;
     }
@@ -401,12 +403,13 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
     }
   }
   // Blackboard handling
-  if (config->grpc_service.has_value()) {
-    std::string key = config->grpc_service->Key();
-    config->channel =
+  if (std::holds_alternative<GrpcXdsServerTarget>(config->channel_info)) {
+    const auto& target = std::get<GrpcXdsServerTarget>(config->channel_info);
+    std::string key = target.Key();
+    config->channel_info =
         blackboard.GetOrSet<ExtProcFilter::ExtProcChannel>(key, [&]() {
           std::shared_ptr<const XdsBootstrap::XdsServerTarget> target_shared =
-              std::make_shared<GrpcXdsServerTarget>(*config->grpc_service);
+              std::make_shared<GrpcXdsServerTarget>(target);
           return MakeRefCounted<ExtProcFilter::ExtProcChannel>(
               std::move(target_shared), transport_factory.Ref());
         });

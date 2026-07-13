@@ -175,6 +175,7 @@ class FakeXdsTransportFactory : public XdsTransportFactory {
 
   void Orphaned() override;
 
+ private:
   // Returns an existing transport or creates a new one.
   RefCountedPtr<XdsTransport> GetTransport(
       const XdsBootstrap::XdsServerTarget& server,
@@ -184,7 +185,6 @@ class FakeXdsTransportFactory : public XdsTransportFactory {
   RefCountedPtr<FakeXdsTransport> GetTransport(
       const XdsBootstrap::XdsServerTarget& server);
 
- private:
   class FakeXdsTransport : public XdsTransport {
    public:
     FakeXdsTransport(WeakRefCountedPtr<FakeXdsTransportFactory> factory,

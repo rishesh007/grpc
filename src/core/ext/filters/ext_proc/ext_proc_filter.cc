@@ -32,10 +32,18 @@ namespace grpc_core {
 std::string ExtProcFilter::Config::ToString() const {
   std::string result = "{";
   bool is_first = true;
-  if (grpc_service.has_value()) {
+  if (std::holds_alternative<GrpcXdsServerTarget>(channel_info)) {
     StrAppend(result, "grpc_service=");
-    StrAppend(result, grpc_service->Key());
+    StrAppend(result, std::get<GrpcXdsServerTarget>(channel_info).Key());
     is_first = false;
+  } else if (std::holds_alternative<RefCountedPtr<ExtProcChannel>>(
+                 channel_info)) {
+    const auto& channel = std::get<RefCountedPtr<ExtProcChannel>>(channel_info);
+    if (channel != nullptr) {
+      StrAppend(result, "grpc_service=");
+      StrAppend(result, channel->server()->Key());
+      is_first = false;
+    }
   }
   if (failure_mode_allow.value_or(false)) {
     if (!is_first) StrAppend(result, ", ");
