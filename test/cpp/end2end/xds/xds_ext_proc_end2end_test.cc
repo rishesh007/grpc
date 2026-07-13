@@ -69,7 +69,15 @@ std::string GetExtProcAttribute(
 
 class ExternalProcessorBuilder {
  public:
-  ExternalProcessorBuilder() {}
+  ExternalProcessorBuilder() {
+    auto* processing_mode = ext_proc_.mutable_processing_mode();
+    processing_mode->set_request_header_mode(
+        envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::SKIP);
+    processing_mode->set_response_header_mode(
+        envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::SKIP);
+    processing_mode->set_response_trailer_mode(
+        envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::SKIP);
+  }
 
   ExternalProcessorBuilder& SetTargetUri(const std::string& target_uri) {
     auto* google_grpc = ext_proc_.mutable_grpc_service()->mutable_google_grpc();

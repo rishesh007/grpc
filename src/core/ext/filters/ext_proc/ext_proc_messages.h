@@ -219,7 +219,7 @@ absl::StatusOr<std::string> CreateExtProcServerTrailersRequest(
 //  arena, or nullptr if no requested attributes were matched or populated.
 ::google_protobuf_Struct* CreateExtProcAttributesProtoStruct(
     upb_Arena* arena, const std::vector<std::string>& requested_attributes,
-    const grpc_metadata_batch& metadata);
+    const grpc_metadata_batch& metadata, absl::string_view default_authority);
 
 // Represents the parsed response from an external processor, corresponding to
 // envoy.service.ext_proc.v3.ProcessingResponse in gRFC A93.
