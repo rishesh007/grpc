@@ -1665,13 +1665,20 @@ ServerTrailingMetadataObservabilityMode(
         // metadata with a cancelled status corresponding to the error.
         if ((!status.ok() || ext_proc_call->IsStreamClosed()) &&
             !config->failure_mode_allow.value_or(false)) {
-          absl::Status error_status = status;
-          if (ext_proc_call->IsStreamClosed() &&
-              !ext_proc_call->GetStreamStatus().ok()) {
-            error_status = ext_proc_call->GetStreamStatus();
-          }
-          if (!error_status.ok()) {
-            *metadata = CancelledServerMetadataFromStatus(error_status);
+          if (ext_proc_call->IsStreamClosedCleanly()) {
+            GRPC_TRACE_LOG(ext_proc_filter, INFO)
+                << "ExtProc: Ignored server trailing metadata send failure "
+                   "in observability mode due to clean close: "
+                << status;
+          } else {
+            absl::Status error_status = status;
+            if (ext_proc_call->IsStreamClosed() &&
+                !ext_proc_call->GetStreamStatus().ok()) {
+              error_status = ext_proc_call->GetStreamStatus();
+            }
+            if (!error_status.ok()) {
+              *metadata = CancelledServerMetadataFromStatus(error_status);
+            }
           }
         }
         GRPC_TRACE_LOG(ext_proc_filter, INFO)

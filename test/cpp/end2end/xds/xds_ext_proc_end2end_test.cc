@@ -212,6 +212,22 @@ class ExternalProcessorBuilder {
 constexpr absl::string_view kFilterInstanceName = "ext_proc_instance";
 constexpr absl::string_view kExtProcClusterName = "ext_proc_cluster";
 
+constexpr char kRequestHeadersMutatedHeaderKey[] =
+    "x-extproc-request-headers-mutated";
+constexpr char kResponseHeadersMutatedHeaderKey[] =
+    "x-extproc-response-headers-mutated";
+constexpr char kResponseTrailersMutatedHeaderKey[] =
+    "x-extproc-response-trailers-mutated";
+constexpr char kHeaderMutatedValue[] = "yes";
+constexpr char kRequestBodyMutatedSuffix[] = "-request-body-mutated";
+constexpr char kResponseBodyMutatedSuffix[] = "-response-body-mutated";
+constexpr char kImmediateResponseHeaderKey[] =
+    "x-extproc-immediate-response-added";
+constexpr char kMessage1[] = "message1";
+constexpr char kMessage2[] = "message2";
+constexpr char kMessage1Mutated[] = "message1-mutated";
+constexpr char kMutatedSuffix[] = "-mutated";
+
 using MockExternalProcessorBase =
     ::envoy::service::ext_proc::v3::ExternalProcessor::Service;
 
@@ -245,18 +261,16 @@ class MockExternalProcessorService : public MockExternalProcessorBase {
                                ->mutable_response()
                                ->mutable_header_mutation();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-request-headers-mutated");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kRequestHeadersMutatedHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else if (request.has_response_headers()) {
           counts_.response_headers++;
           auto* mutation = response.mutable_response_headers()
                                ->mutable_response()
                                ->mutable_header_mutation();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-response-headers-mutated");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kResponseHeadersMutatedHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else if (request.has_request_body()) {
           counts_.request_body++;
           auto* body_mutation = response.mutable_request_body()
@@ -264,8 +278,8 @@ class MockExternalProcessorService : public MockExternalProcessorBase {
                                     ->mutable_body_mutation();
           grpc::testing::EchoRequest echo_request;
           if (echo_request.ParseFromString(request.request_body().body())) {
-            echo_request.set_message(
-                absl::StrCat(echo_request.message(), "-request-body-mutated"));
+            echo_request.set_message(absl::StrCat(echo_request.message(),
+                                                  kRequestBodyMutatedSuffix));
             std::string mutated_body;
             GRPC_CHECK(echo_request.SerializeToString(&mutated_body));
             body_mutation->mutable_streamed_response()->set_body(mutated_body);
@@ -281,7 +295,7 @@ class MockExternalProcessorService : public MockExternalProcessorBase {
           grpc::testing::EchoResponse echo_response;
           if (echo_response.ParseFromString(request.response_body().body())) {
             echo_response.set_message(absl::StrCat(echo_response.message(),
-                                                   "-response-body-mutated"));
+                                                   kResponseBodyMutatedSuffix));
             std::string mutated_body;
             GRPC_CHECK(echo_response.SerializeToString(&mutated_body));
             body_mutation->mutable_streamed_response()->set_body(mutated_body);
@@ -294,9 +308,8 @@ class MockExternalProcessorService : public MockExternalProcessorBase {
           auto* mutation =
               response.mutable_response_trailers()->mutable_header_mutation();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-response-trailers-mutated");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kResponseTrailersMutatedHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         }
       }
 
@@ -634,11 +647,11 @@ TEST_P(XdsExtProcEnd2endTest, ProcessingModeAllDisabledSuccess) {
   EXPECT_EQ(counts.request_body, 0);
   EXPECT_EQ(counts.response_body, 0);
   // Verify mutations (none expected)
-  auto it = server_initial_metadata.find("x-extproc-request-headers-mutated");
+  auto it = server_initial_metadata.find(kRequestHeadersMutatedHeaderKey);
   EXPECT_EQ(it, server_initial_metadata.end());
-  it = server_initial_metadata.find("x-extproc-response-headers-mutated");
+  it = server_initial_metadata.find(kResponseHeadersMutatedHeaderKey);
   EXPECT_EQ(it, server_initial_metadata.end());
-  it = server_trailing_metadata.find("x-extproc-response-trailers-mutated");
+  it = server_trailing_metadata.find(kResponseTrailersMutatedHeaderKey);
   EXPECT_EQ(it, server_trailing_metadata.end());
   EXPECT_EQ(response.message(), kRequestMessage);
   EXPECT_EQ(ext_proc_server_->ext_proc_service()->num_calls(), 0);
@@ -694,18 +707,18 @@ TEST_P(XdsExtProcEnd2endTest, ProcessingModeAllEnabledSuccess) {
   EXPECT_THAT(counts.request_body, ::testing::AnyOf(1, 2));
   EXPECT_EQ(counts.response_body, 1);
   // Verify mutations
-  auto it = server_initial_metadata.find("x-extproc-request-headers-mutated");
+  auto it = server_initial_metadata.find(kRequestHeadersMutatedHeaderKey);
   ASSERT_NE(it, server_initial_metadata.end());
-  EXPECT_EQ(it->second, "yes");
-  it = server_initial_metadata.find("x-extproc-response-headers-mutated");
+  EXPECT_EQ(it->second, kHeaderMutatedValue);
+  it = server_initial_metadata.find(kResponseHeadersMutatedHeaderKey);
   ASSERT_NE(it, server_initial_metadata.end());
-  EXPECT_EQ(it->second, "yes");
-  it = server_trailing_metadata.find("x-extproc-response-trailers-mutated");
+  EXPECT_EQ(it->second, kHeaderMutatedValue);
+  it = server_trailing_metadata.find(kResponseTrailersMutatedHeaderKey);
   ASSERT_NE(it, server_trailing_metadata.end());
-  EXPECT_EQ(it->second, "yes");
+  EXPECT_EQ(it->second, kHeaderMutatedValue);
   std::string expected_message = kRequestMessage;
-  absl::StrAppend(&expected_message, "-request-body-mutated");
-  absl::StrAppend(&expected_message, "-response-body-mutated");
+  absl::StrAppend(&expected_message, kRequestBodyMutatedSuffix);
+  absl::StrAppend(&expected_message, kResponseBodyMutatedSuffix);
   EXPECT_EQ(response.message(), expected_message);
   EXPECT_EQ(ext_proc_server_->ext_proc_service()->num_calls(), 1);
 }
@@ -764,11 +777,11 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_THAT(counts.request_body, ::testing::AnyOf(1, 2));
   EXPECT_EQ(counts.response_body, 1);
   // Verify mutations (none expected in observability mode)
-  auto it = server_initial_metadata.find("x-extproc-request-headers-mutated");
+  auto it = server_initial_metadata.find(kRequestHeadersMutatedHeaderKey);
   EXPECT_EQ(it, server_initial_metadata.end());
-  it = server_initial_metadata.find("x-extproc-response-headers-mutated");
+  it = server_initial_metadata.find(kResponseHeadersMutatedHeaderKey);
   EXPECT_EQ(it, server_initial_metadata.end());
-  it = server_trailing_metadata.find("x-extproc-response-trailers-mutated");
+  it = server_trailing_metadata.find(kResponseTrailersMutatedHeaderKey);
   EXPECT_EQ(it, server_trailing_metadata.end());
   EXPECT_EQ(response.message(), kRequestMessage);
   EXPECT_EQ(ext_proc_server_->ext_proc_service()->num_calls(), 1);
@@ -1500,7 +1513,7 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithMessageFailure) {
             grpc::testing::EchoRequest echo_request;
             if (echo_request.ParseFromString(request.request_body().body())) {
               echo_request.set_message(
-                  absl::StrCat(echo_request.message(), "-mutated"));
+                  absl::StrCat(echo_request.message(), kMutatedSuffix));
               std::string mutated_body;
               GRPC_CHECK(echo_request.SerializeToString(&mutated_body));
               body_mutation->mutable_streamed_response()->set_body(
@@ -1540,12 +1553,12 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithMessageFailure) {
   EchoRequest request;
   EchoResponse response;
   // Message 1 - should succeed and be mutated
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1-mutated");
+  EXPECT_EQ(response.message(), kMessage1Mutated);
   // Message 2 - should fail because processor half-closed
-  request.set_message("message2");
+  request.set_message(kMessage2);
   stream->Write(request);
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
@@ -1606,10 +1619,10 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithoutMessageFailure) {
   EchoRequest request;
   EchoResponse response;
   // Message 1 - sent. Processor will drop it and half-close.
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_FALSE(stream->Write(request));
   // Message 2 - should fail because processor half-closed
-  request.set_message("message2");
+  request.set_message(kMessage2);
   stream->Write(request);
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
@@ -2135,10 +2148,10 @@ TEST_P(XdsExtProcEnd2endTest, ResponseBodyObservabilityStreamErrorAllowCall) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -2191,7 +2204,7 @@ TEST_P(XdsExtProcEnd2endTest, ResponseBodyObservabilityStreamErrorFailCall) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   stream->Write(request);
   stream->Read(&response);
   Status status = stream->Finish();
@@ -2374,9 +2387,8 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForRequestBody) {
           immediate->set_details("Access Denied by ExtProc (Request Body)");
           auto* mutation = immediate->mutable_headers();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kImmediateResponseHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -2430,9 +2442,8 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForRequestHeaders) {
           immediate->set_details("Access Denied by ExtProc (Request Headers)");
           auto* mutation = immediate->mutable_headers();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kImmediateResponseHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -2486,9 +2497,8 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForResponseBody) {
           immediate->set_details("Access Denied by ExtProc (Response Body)");
           auto* mutation = immediate->mutable_headers();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kImmediateResponseHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -2541,9 +2551,8 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForResponseHeaders) {
           immediate->set_details("Access Denied by ExtProc (Response Headers)");
           auto* mutation = immediate->mutable_headers();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kImmediateResponseHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -2598,9 +2607,8 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForResponseTrailers) {
               "Access Denied by ExtProc (Response Trailers)");
           auto* mutation = immediate->mutable_headers();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kImmediateResponseHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -2658,9 +2666,8 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForRequestBody) {
           immediate->set_details("Access Denied by ExtProc (Request Body)");
           auto* mutation = immediate->mutable_headers();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kImmediateResponseHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -2711,9 +2718,8 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForRequestHeaders) {
           immediate->set_details("Access Denied by ExtProc (Request Headers)");
           auto* mutation = immediate->mutable_headers();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kImmediateResponseHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -2764,9 +2770,8 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseBody) {
           immediate->set_details("Access Denied by ExtProc (Response Body)");
           auto* mutation = immediate->mutable_headers();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kImmediateResponseHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -2817,9 +2822,8 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseHeaders) {
           immediate->set_details("Access Denied by ExtProc (Response Headers)");
           auto* mutation = immediate->mutable_headers();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kImmediateResponseHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -2871,9 +2875,8 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseTrailers) {
               "Access Denied by ExtProc (Response Trailers)");
           auto* mutation = immediate->mutable_headers();
           auto* header = mutation->add_set_headers();
-          header->mutable_header()->set_key(
-              "x-extproc-immediate-response-added");
-          header->mutable_header()->set_value("yes");
+          header->mutable_header()->set_key(kImmediateResponseHeaderKey);
+          header->mutable_header()->set_value(kHeaderMutatedValue);
         } else {
           SetDefaultEmptyResponse(request, response);
         }
@@ -2911,10 +2914,10 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseTrailers) {
   EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
   EXPECT_EQ(status.error_message(),
             "Access Denied by ExtProc (Response Trailers)");
-  auto it = server_trailing_metadata.find("x-extproc-immediate-response-added");
+  auto it = server_trailing_metadata.find(kImmediateResponseHeaderKey);
   EXPECT_NE(it, server_trailing_metadata.end());
   if (it != server_trailing_metadata.end()) {
-    EXPECT_EQ(it->second, "yes");
+    EXPECT_EQ(it->second, kHeaderMutatedValue);
   }
 }
 
@@ -2985,17 +2988,17 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestOnClientBody) {
   EchoResponse response;
   // Send message1. It should be modified by ext_proc.
   // The response to message1 will also trigger drain.
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1_modified");
   // Send message2. Since drain was triggered on message1, the ext_proc stream
   // should be closed by now, and message2 should bypass ext_proc (not
   // modified).
-  request.set_message("message2");
+  request.set_message(kMessage2);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message2");
+  EXPECT_EQ(response.message(), kMessage2);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -3048,10 +3051,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestOnRequestHeaders) {
   // Send message1. Since drain was triggered immediately on request headers,
   // the ext_proc stream should be half-closed/draining by now, and message1
   // should bypass ext_proc (not modified).
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -3130,7 +3133,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestOnResponseHeaders) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   stream->WritesDone();
@@ -3210,7 +3213,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestOnResponseTrailers) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   stream->WritesDone();
@@ -3281,15 +3284,15 @@ TEST_P(XdsExtProcEnd2endTest, StreamDrainRequestOnServerBody) {
   EchoRequest request;
   EchoResponse response;
   // Send request1. Response1 should be modified.
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
   EXPECT_EQ(response.message(), "message1_modified");
   // Send request2. Response2 should bypass ext_proc.
-  request.set_message("message2");
+  request.set_message(kMessage2);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message2");
+  EXPECT_EQ(response.message(), kMessage2);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -3336,7 +3339,7 @@ TEST_P(XdsExtProcEnd2endTest,
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
-  request.set_message("hello");
+  request.set_message(kRequestMessage);
   stream->Write(request);
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
@@ -3386,7 +3389,7 @@ TEST_P(XdsExtProcEnd2endTest, ClientToServerOrderingResponseBodyBeforeHeaders) {
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
-  request.set_message("hello");
+  request.set_message(kRequestMessage);
   stream->Write(request);
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
@@ -3435,7 +3438,7 @@ TEST_P(XdsExtProcEnd2endTest,
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
-  request.set_message("hello");
+  request.set_message(kRequestMessage);
   stream->Write(request);
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
@@ -3497,7 +3500,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingResponseBodyAfterTrailers) {
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
-  request.set_message("hello");
+  request.set_message(kRequestMessage);
   stream->Write(request);
   EchoResponse response;
   // Read the echo response first to ensure the normal body flow works.
@@ -3652,7 +3655,7 @@ TEST_P(XdsExtProcEnd2endTest,
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
-  request.set_message("hello");
+  request.set_message(kRequestMessage);
   stream->Write(request);
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
@@ -3757,7 +3760,7 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientResponseBodyHalfClose) {
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
-  request.set_message("hello");
+  request.set_message(kRequestMessage);
   EXPECT_TRUE(stream->Write(request));
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
@@ -3814,7 +3817,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseRequestBodyFailureModeFalse) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_FALSE(stream->Write(request));
   EXPECT_FALSE(stream->Read(&response));
   stream->WritesDone();
@@ -3864,10 +3867,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseRequestBodyFailureModeTrue) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -3919,7 +3922,7 @@ TEST_P(XdsExtProcEnd2endTest,
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   stream->Write(request);
   stream->WritesDone();
   Status status = stream->Finish();
@@ -3968,7 +3971,7 @@ TEST_P(XdsExtProcEnd2endTest,
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   // The first body message is successfully sent to ext_proc, which sets
   // c2s_first_body_message_sent_ to true. Once this is set, the filter
   // is committed to body processing and cannot fail-open.
@@ -4013,10 +4016,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseRequestHeadersFailureModeFalse) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -4053,10 +4056,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseRequestHeadersFailureModeTrue) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -4103,7 +4106,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeFalse) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_FALSE(stream->Read(&response));
   stream->WritesDone();
@@ -4155,7 +4158,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeTrue) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_FALSE(stream->Read(&response));
   stream->WritesDone();
@@ -4212,15 +4215,15 @@ TEST_P(XdsExtProcEnd2endTest,
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EchoResponse response;
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   // Send second message. It will be sent to ext_proc, and stream will close
   // before ext_proc responds. Since the filter is committed, the RPC should
   // fail.
-  request.set_message("message2");
+  request.set_message(kMessage2);
   if (stream->Write(request)) {
     // Read should fail because the RPC will be failed.
     EXPECT_FALSE(stream->Read(&response));
@@ -4278,12 +4281,12 @@ TEST_P(XdsExtProcEnd2endTest,
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EchoResponse response;
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
-  request.set_message("message2");
+  EXPECT_EQ(response.message(), kMessage1);
+  request.set_message(kMessage2);
   if (stream->Write(request)) {
     EXPECT_FALSE(stream->Read(&response));
   }
@@ -4335,7 +4338,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseHeadersFailureModeFalse) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_FALSE(stream->Write(request));
   EXPECT_FALSE(stream->Read(&response));
   stream->WritesDone();
@@ -4387,10 +4390,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseHeadersFailureModeTrue) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -4506,10 +4509,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseRequestBodyObservability) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -4563,15 +4566,15 @@ TEST_P(XdsExtProcEnd2endTest,
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   // Stream closed. In observability mode, we can still send more messages.
-  request.set_message("message2");
+  request.set_message(kMessage2);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message2");
+  EXPECT_EQ(response.message(), kMessage2);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -4608,10 +4611,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseRequestHeadersObservability) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -4659,10 +4662,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyObservability) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
@@ -4717,17 +4720,17 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoRequest request;
   EchoResponse response;
   // Send message1.
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   // Send message2. It will be sent to ext_proc, and stream will close
   // before ext_proc responds. In observability mode, this should not fail the
   // RPC. The message should be forwarded.
-  request.set_message("message2");
+  request.set_message(kMessage2);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message2");
+  EXPECT_EQ(response.message(), kMessage2);
   // Send message3. Stream is closed, should be bypassed.
   request.set_message("message3");
   EXPECT_TRUE(stream->Write(request));
@@ -4780,10 +4783,10 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseHeadersObservability) {
   auto stream = stub_->BidiStream(&context);
   EchoRequest request;
   EchoResponse response;
-  request.set_message("message1");
+  request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
   EXPECT_TRUE(stream->Read(&response));
-  EXPECT_EQ(response.message(), "message1");
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
