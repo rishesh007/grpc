@@ -14,8 +14,8 @@
 // limitations under the License.
 //
 
-#ifndef GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_FILTER_H
-#define GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_FILTER_H
+#ifndef GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
+#define GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
 
 #include <queue>
 
@@ -29,7 +29,7 @@
 #include <variant>
 #include <vector>
 
-#include "src/core/ext/filters/ext_proc/ext_proc_messages.h"
+#include "src/core/filter/ext_proc/ext_proc_messages.h"
 #include "src/core/filter/filter_args.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/promise_based_filter.h"
@@ -77,10 +77,9 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     // Or, a ref-counted handle to the persistent gRPC side-channel
     // (ExtProcChannel) used to communicate with the external processing server
     // across multiple data plane RPCs.
-    // Holds std::monostate when neither is set (e.g. in an empty override
-    // config).
-    std::variant<std::monostate, GrpcXdsServerTarget,
-                 RefCountedPtr<ExtProcChannel>>
+    // Holds a null RefCountedPtr when neither is set (e.g. in an empty
+    // override config).
+    std::variant<RefCountedPtr<ExtProcChannel>, GrpcXdsServerTarget>
         channel_info;
     // If true, when an ext_proc stream fails or terminates with a non-OK
     // status, the data plane RPC is allowed to continue without error if the
@@ -122,10 +121,9 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     Duration deferred_close_timeout;
 
     RefCountedPtr<ExtProcChannel> channel() const {
-      if (std::holds_alternative<RefCountedPtr<ExtProcChannel>>(channel_info)) {
-        return std::get<RefCountedPtr<ExtProcChannel>>(channel_info);
-      }
-      return nullptr;
+      auto* channel = std::get_if<RefCountedPtr<ExtProcChannel>>(&channel_info);
+      if (channel == nullptr) return nullptr;
+      return *channel;
     }
   };
 
@@ -184,4 +182,4 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
 }  // namespace grpc_core
 
-#endif  // GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_FILTER_H
+#endif  // GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H

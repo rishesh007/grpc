@@ -780,8 +780,6 @@ LIBGRPC_SRC = \
     src/core/ext/filters/census/grpc_context.cc \
     src/core/ext/filters/channel_idle/idle_filter_state.cc \
     src/core/ext/filters/channel_idle/legacy_channel_idle_filter.cc \
-    src/core/ext/filters/ext_proc/ext_proc_filter.cc \
-    src/core/ext/filters/ext_proc/ext_proc_messages.cc \
     src/core/ext/filters/fault_injection/fault_injection_filter.cc \
     src/core/ext/filters/gcp_authentication/gcp_authentication_filter.cc \
     src/core/ext/filters/http/client/http_client_filter.cc \
@@ -1194,6 +1192,8 @@ LIBGRPC_SRC = \
     src/core/filter/auth/client_auth_filter.cc \
     src/core/filter/auth/server_auth_filter.cc \
     src/core/filter/composite/composite_filter.cc \
+    src/core/filter/ext_proc/ext_proc_filter.cc \
+    src/core/filter/ext_proc/ext_proc_messages.cc \
     src/core/filter/fused_filters.cc \
     src/core/handshaker/endpoint_info/endpoint_info_handshaker.cc \
     src/core/handshaker/handshaker.cc \

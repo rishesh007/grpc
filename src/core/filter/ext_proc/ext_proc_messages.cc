@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-#include "src/core/ext/filters/ext_proc/ext_proc_messages.h"
+#include "src/core/filter/ext_proc/ext_proc_messages.h"
 
 #include <optional>
 #include <string>

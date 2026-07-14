@@ -5745,10 +5745,10 @@ grpc_cc_library(
 grpc_cc_library(
     name = "grpc_ext_proc_filter",
     srcs = [
-        "ext/filters/ext_proc/ext_proc_filter.cc",
+        "filter/ext_proc/ext_proc_filter.cc",
     ],
     hdrs = [
-        "ext/filters/ext_proc/ext_proc_filter.h",
+        "filter/ext_proc/ext_proc_filter.h",
     ],
     external_deps = [
         "absl/cleanup",
@@ -5781,6 +5781,7 @@ grpc_cc_library(
         "inter_activity_pipe",
         "latch",
         "map",
+        "match",
         "message",
         "metadata",
         "metadata_batch",
@@ -5808,10 +5809,10 @@ grpc_cc_library(
 grpc_cc_library(
     name = "ext_proc_messages",
     srcs = [
-        "ext/filters/ext_proc/ext_proc_messages.cc",
+        "filter/ext_proc/ext_proc_messages.cc",
     ],
     hdrs = [
-        "ext/filters/ext_proc/ext_proc_messages.h",
+        "filter/ext_proc/ext_proc_messages.h",
     ],
     external_deps = [
         "@com_google_protobuf//upb/mem",

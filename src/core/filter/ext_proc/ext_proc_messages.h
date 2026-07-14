@@ -14,8 +14,8 @@
 // limitations under the License.
 //
 
-#ifndef GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_MESSAGES_H
-#define GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_MESSAGES_H
+#ifndef GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_MESSAGES_H
+#define GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_MESSAGES_H
 
 #include <grpc/status.h>
 
@@ -303,4 +303,4 @@ struct ExtProcResponse {
 
 }  // namespace grpc_core
 
-#endif  // GRPC_SRC_CORE_EXT_FILTERS_EXT_PROC_EXT_PROC_MESSAGES_H
+#endif  // GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_MESSAGES_H

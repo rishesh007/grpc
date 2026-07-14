@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-#include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
+#include "src/core/filter/ext_proc/ext_proc_filter.h"
 
 #include <grpc/event_engine/event_engine.h>
 #include <grpc/impl/channel_arg_names.h>
@@ -28,7 +28,7 @@
 #include "src/core/call/metadata.h"
 #include "src/core/client_channel/client_channel_args.h"
 #include "src/core/config/core_configuration.h"
-#include "src/core/ext/filters/ext_proc/ext_proc_messages.h"
+#include "src/core/ext/filter/ext_proc/ext_proc_messages.h"
 #include "src/core/lib/debug/trace_flags.h"
 #include "src/core/lib/promise/all_ok.h"
 #include "src/core/lib/promise/context.h"
@@ -44,6 +44,7 @@
 #include "src/core/lib/promise/try_seq.h"
 #include "src/core/lib/resource_quota/arena.h"
 #include "src/core/util/grpc_check.h"
+#include "src/core/util/match.h"
 #include "src/core/util/string.h"
 #include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/xds_client/serialized_streaming_call.h"
@@ -59,19 +60,20 @@ namespace grpc_core {
 std::string ExtProcFilter::Config::ToString() const {
   std::string result = "{";
   bool is_first = true;
-  if (std::holds_alternative<GrpcXdsServerTarget>(channel_info)) {
-    StrAppend(result, "grpc_service=");
-    StrAppend(result, std::get<GrpcXdsServerTarget>(channel_info).Key());
-    is_first = false;
-  } else if (std::holds_alternative<RefCountedPtr<ExtProcChannel>>(
-                 channel_info)) {
-    const auto& channel = std::get<RefCountedPtr<ExtProcChannel>>(channel_info);
-    if (channel != nullptr) {
-      StrAppend(result, "grpc_service=");
-      StrAppend(result, channel->server()->Key());
-      is_first = false;
-    }
-  }
+  Match(
+      channel_info,
+      [&](const GrpcXdsServerTarget& target) {
+        StrAppend(result, "grpc_service=");
+        StrAppend(result, target.Key());
+        is_first = false;
+      },
+      [&](const RefCountedPtr<ExtProcChannel>& channel) {
+        if (channel != nullptr) {
+          StrAppend(result, "grpc_service=");
+          StrAppend(result, channel->server()->Key());
+          is_first = false;
+        }
+      });
   if (failure_mode_allow.value_or(false)) {
     if (!is_first) StrAppend(result, ", ");
     StrAppend(result, "failure_mode_allow=true");

@@ -29,7 +29,7 @@
 #include "envoy/extensions/filters/http/ext_proc/v3/processing_mode.upb.h"
 #include "envoy/extensions/filters/http/ext_proc/v3/processing_mode.upbdefs.h"
 #include "re2/re2.h"
-#include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
+#include "src/core/filter/ext_proc/ext_proc_filter.h"
 #include "src/core/filter/filter_args.h"
 #include "src/core/util/down_cast.h"
 #include "src/core/util/grpc_check.h"
@@ -289,12 +289,12 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
     errors->AddError("could not parse ext_proc filter override config");
     return nullptr;
   }
+  auto config = MakeRefCounted<ExtProcFilter::Config>();
   auto* overrides =
       envoy_extensions_filters_http_ext_proc_v3_ExtProcPerRoute_overrides(
           ext_proc_per_route);
-  if (overrides == nullptr) return nullptr;
+  if (overrides == nullptr) return config;
   ValidationErrors::ScopedField field(errors, ".overrides");
-  auto config = MakeRefCounted<ExtProcFilter::Config>();
   // processing_mode
   if (auto* processing_mode =
           envoy_extensions_filters_http_ext_proc_v3_ExtProcOverrides_processing_mode(
@@ -403,13 +403,13 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
     }
   }
   // Blackboard handling
-  if (std::holds_alternative<GrpcXdsServerTarget>(config->channel_info)) {
-    const auto& target = std::get<GrpcXdsServerTarget>(config->channel_info);
-    std::string key = target.Key();
+  if (const auto* target =
+          std::get_if<GrpcXdsServerTarget>(&config->channel_info)) {
+    std::string key = target->Key();
     config->channel_info =
         blackboard.GetOrSet<ExtProcFilter::ExtProcChannel>(key, [&]() {
           std::shared_ptr<const XdsBootstrap::XdsServerTarget> target_shared =
-              std::make_shared<GrpcXdsServerTarget>(target);
+              std::make_shared<GrpcXdsServerTarget>(*target);
           return MakeRefCounted<ExtProcFilter::ExtProcChannel>(
               std::move(target_shared), transport_factory.Ref());
         });
