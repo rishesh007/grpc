@@ -50,13 +50,13 @@
 #include "envoy/type/matcher/v3/string.pb.h"
 #include "envoy/type/v3/percent.pb.h"
 #include "envoy/type/v3/range.pb.h"
-#include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
 #include "src/core/ext/filters/fault_injection/fault_injection_filter.h"
 #include "src/core/ext/filters/gcp_authentication/gcp_authentication_filter.h"
 #include "src/core/ext/filters/rbac/rbac_filter.h"
 #include "src/core/ext/filters/rbac/rbac_service_config_parser.h"
 #include "src/core/ext/filters/stateful_session/stateful_session_filter.h"
 #include "src/core/filter/composite/composite_filter.h"
+#include "src/core/filter/ext_proc/ext_proc_filter.h"
 #include "src/core/lib/iomgr/error.h"
 #include "src/core/lib/iomgr/timer_manager.h"
 #include "src/core/util/crash.h"
@@ -2405,13 +2405,13 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidTimeout) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].deferred_close_timeout "
-      "error:duration must be positive]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].deferred_close_timeout "
+          "error:duration must be positive]"));
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidGrpcService) {
@@ -2430,13 +2430,13 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidGrpcService) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].grpc_service.google_grpc "
-      "error:field not set]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].grpc_service.google_grpc "
+          "error:field not set]"));
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidHeaderProcessingModes) {
@@ -2458,19 +2458,19 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidHeaderProcessingModes) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].processing_mode.request_header_mode "
-      "error:unsupported header processing mode value: 99; "
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].processing_mode.response_header_mode "
-      "error:unsupported header processing mode value: 99; "
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].processing_mode.response_trailer_mode "
-      "error:unsupported header processing mode value: 99]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].processing_mode.request_header_mode "
+          "error:unsupported header processing mode value: 99; "
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].processing_mode.response_header_mode "
+          "error:unsupported header processing mode value: 99; "
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].processing_mode.response_trailer_mode "
+          "error:unsupported header processing mode value: 99]"));
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidBodyProcessingModes) {
@@ -2495,16 +2495,16 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidBodyProcessingModes) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].processing_mode.request_body_mode "
-      "error:unsupported body processing mode value: 99; "
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].processing_mode.response_body_mode "
-      "error:unsupported body processing mode value: 99]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].processing_mode.request_body_mode "
+          "error:unsupported body processing mode value: 99; "
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].processing_mode.response_body_mode "
+          "error:unsupported body processing mode value: 99]"));
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigRequestHeaderModeDefault) {
@@ -2523,13 +2523,13 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigRequestHeaderModeDefault) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].processing_mode.request_header_mode "
-      "error:unsupported header processing mode value: 0]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].processing_mode.request_header_mode "
+          "error:unsupported header processing mode value: 0]"));
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigRequestHeaderModeSend) {
@@ -2549,9 +2549,8 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigRequestHeaderModeSend) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   ASSERT_NE(config, nullptr);
-  EXPECT_EQ(DownCast<const ExtProcFilter::Config&>(*config)
-                .processing_mode->send_request_headers,
-            true);
+  EXPECT_TRUE(DownCast<const ExtProcFilter::Config&>(*config)
+                  .processing_mode->send_request_headers);
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigRequestHeaderModeSkip) {
@@ -2592,13 +2591,13 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseHeaderModeDefault) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].processing_mode.response_header_mode "
-      "error:unsupported header processing mode value: 0]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].processing_mode.response_header_mode "
+          "error:unsupported header processing mode value: 0]"));
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseHeaderModeSend) {
@@ -2618,9 +2617,8 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseHeaderModeSend) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   ASSERT_NE(config, nullptr);
-  EXPECT_EQ(DownCast<const ExtProcFilter::Config&>(*config)
-                .processing_mode->send_response_headers,
-            true);
+  EXPECT_TRUE(DownCast<const ExtProcFilter::Config&>(*config)
+                  .processing_mode->send_response_headers);
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseHeaderModeSkip) {
@@ -2640,9 +2638,8 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseHeaderModeSkip) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   ASSERT_NE(config, nullptr);
-  EXPECT_EQ(DownCast<const ExtProcFilter::Config&>(*config)
-                .processing_mode->send_response_headers,
-            false);
+  EXPECT_FALSE(DownCast<const ExtProcFilter::Config&>(*config)
+                   .processing_mode->send_response_headers);
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseTrailerModeDefault) {
@@ -2661,13 +2658,13 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseTrailerModeDefault) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].processing_mode.response_trailer_mode "
-      "error:unsupported header processing mode value: 0]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].processing_mode.response_trailer_mode "
+          "error:unsupported header processing mode value: 0]"));
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseTrailerModeSend) {
@@ -2687,9 +2684,8 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseTrailerModeSend) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   ASSERT_NE(config, nullptr);
-  EXPECT_EQ(DownCast<const ExtProcFilter::Config&>(*config)
-                .processing_mode->send_response_trailers,
-            true);
+  EXPECT_TRUE(DownCast<const ExtProcFilter::Config&>(*config)
+                  .processing_mode->send_response_trailers);
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseTrailerModeSkip) {
@@ -2708,9 +2704,8 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseTrailerModeSkip) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
-  EXPECT_EQ(DownCast<const ExtProcFilter::Config&>(*config)
-                .processing_mode->send_response_trailers,
-            false);
+  EXPECT_FALSE(DownCast<const ExtProcFilter::Config&>(*config)
+                   .processing_mode->send_response_trailers);
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigRequestBodyModeNone) {
@@ -2732,9 +2727,8 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigRequestBodyModeNone) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   ASSERT_NE(config, nullptr);
-  EXPECT_EQ(DownCast<const ExtProcFilter::Config&>(*config)
-                .processing_mode->send_request_body,
-            false);
+  EXPECT_FALSE(DownCast<const ExtProcFilter::Config&>(*config)
+                   .processing_mode->send_request_body);
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigRequestBodyModeGrpc) {
@@ -2756,9 +2750,8 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigRequestBodyModeGrpc) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   ASSERT_NE(config, nullptr);
-  EXPECT_EQ(DownCast<const ExtProcFilter::Config&>(*config)
-                .processing_mode->send_request_body,
-            true);
+  EXPECT_TRUE(DownCast<const ExtProcFilter::Config&>(*config)
+                  .processing_mode->send_request_body);
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseBodyModeNone) {
@@ -2780,9 +2773,8 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseBodyModeNone) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   ASSERT_NE(config, nullptr);
-  EXPECT_EQ(DownCast<const ExtProcFilter::Config&>(*config)
-                .processing_mode->send_response_body,
-            false);
+  EXPECT_FALSE(DownCast<const ExtProcFilter::Config&>(*config)
+                   .processing_mode->send_response_body);
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseBodyModeGrpc) {
@@ -2802,9 +2794,8 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigResponseBodyModeGrpc) {
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
   ASSERT_NE(config, nullptr);
-  EXPECT_EQ(DownCast<const ExtProcFilter::Config&>(*config)
-                .processing_mode->send_response_body,
-            true);
+  EXPECT_TRUE(DownCast<const ExtProcFilter::Config&>(*config)
+                  .processing_mode->send_response_body);
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigForwardRules) {
@@ -2855,13 +2846,13 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidAllowedHeaders) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].forwarding_rules.allowed_headers.patterns[0] "
-      "error:invalid string matcher]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].forwarding_rules.allowed_headers.patterns[0] "
+          "error:invalid string matcher]"));
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidDisallowedHeaders) {
@@ -2881,13 +2872,13 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidDisallowedHeaders) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].forwarding_rules.disallowed_headers.patterns[0] "
-      "error:invalid string matcher]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].forwarding_rules.disallowed_headers.patterns[0] "
+          "error:invalid string matcher]"));
 }
 
 TEST_F(XdsExtProcFilterTest,
@@ -2910,13 +2901,13 @@ TEST_F(XdsExtProcFilterTest,
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].forwarding_rules.allowed_headers.patterns[0] "
-      "error:Invalid regex string specified in matcher: missing ]: []");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].forwarding_rules.allowed_headers.patterns[0] "
+          "error:Invalid regex string specified in matcher: missing ]: []"));
 }
 
 TEST_F(XdsExtProcFilterTest,
@@ -2940,13 +2931,13 @@ TEST_F(XdsExtProcFilterTest,
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].forwarding_rules.disallowed_headers.patterns[0] "
-      "error:Invalid regex string specified in matcher: missing ]: []");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].forwarding_rules.disallowed_headers.patterns[0] "
+          "error:Invalid regex string specified in matcher: missing ]: []"));
 }
 
 TEST_F(XdsExtProcFilterTest,
@@ -2966,13 +2957,13 @@ TEST_F(XdsExtProcFilterTest,
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].processing_mode.response_trailer_mode "
-      "error:must be set to SEND if response_body_mode is set to GRPC]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].processing_mode.response_trailer_mode "
+          "error:must be set to SEND if response_body_mode is set to GRPC]"));
 }
 
 TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidMutationRules) {
@@ -2993,14 +2984,14 @@ TEST_F(XdsExtProcFilterTest, ParseTopLevelConfigInvalidMutationRules) {
       filter_->ParseTopLevelConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExternalProcessor].mutation_rules.header_mutation_rules.allow_"
-      "expression "
-      "error:Invalid regex string specified in matcher: missing ]: []");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExternalProcessor].mutation_rules.header_mutation_rules.allow_"
+          "expression "
+          "error:Invalid regex string specified in matcher: missing ]: []"));
 }
 
 TEST_F(XdsExtProcFilterTest, ParseOverrideConfig) {
@@ -3042,7 +3033,7 @@ TEST_F(XdsExtProcFilterTest, ParseOverrideConfigEmpty) {
       filter_->ParseOverrideConfig("", decode_context_, extension, &errors_);
   ASSERT_TRUE(errors_.ok()) << errors_.status(
       absl::StatusCode::kInvalidArgument, "unexpected errors");
-  EXPECT_EQ(config, nullptr);
+  EXPECT_NE(config, nullptr);
 }
 
 TEST_F(XdsExtProcFilterTest, ParseOverrideConfigInvalid) {
@@ -3055,16 +3046,16 @@ TEST_F(XdsExtProcFilterTest, ParseOverrideConfigInvalid) {
       filter_->ParseOverrideConfig("", decode_context_, extension, &errors_);
   absl::Status status = errors_.status(absl::StatusCode::kInvalidArgument,
                                        "errors validating filter config");
-  absl::Status expected_status(
-      absl::StatusCode::kInvalidArgument,
-      "errors validating filter config: ["
-      "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
-      ".ExtProcPerRoute].overrides.grpc_service.google_grpc "
-      "error:field not set]");
-  EXPECT_EQ(status, expected_status);
+  EXPECT_EQ(
+      status,
+      absl::InvalidArgumentError(
+          "errors validating filter config: ["
+          "field:http_filter.value[envoy.extensions.filters.http.ext_proc.v3"
+          ".ExtProcPerRoute].overrides.grpc_service.google_grpc "
+          "error:field not set]"));
 }
 
-TEST_F(XdsExtProcFilterTest, MergeConfigsBasic) {
+TEST_F(XdsExtProcFilterTest, MergeConfigsNoOverride) {
   ExternalProcessor proto;
   auto* grpc_service = proto.mutable_grpc_service();
   grpc_service->mutable_google_grpc()->set_target_uri("localhost:1234");
@@ -3490,7 +3481,7 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsOverrideProcessingMode) {
             "deferred_close_timeout=5000ms}");
 }
 
-TEST_F(XdsExtProcFilterTest, MergeConfigsSharesChannelOnSameBlackboard) {
+TEST_F(XdsExtProcFilterTest, MergeConfigsSharesChannel) {
   ExternalProcessor proto;
   auto* grpc_service = proto.mutable_grpc_service();
   grpc_service->mutable_google_grpc()->set_target_uri("localhost:1234");

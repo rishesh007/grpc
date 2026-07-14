@@ -20,7 +20,7 @@
 #include "envoy/config/core/v3/base.pb.h"
 #include "envoy/extensions/filters/http/ext_proc/v3/processing_mode.pb.h"
 #include "envoy/service/ext_proc/v3/external_processor.pb.h"
-#include "src/core/ext/filters/ext_proc/ext_proc_messages.h"
+#include "src/core/filter/ext_proc/ext_proc_messages.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
@@ -44,6 +44,85 @@ MATCHER_P3(IsHeaderValueOption, key, value, append_action, "") {
 MATCHER_P2(IsHeader, key, value, "") {
   return ::testing::ExplainMatchResult(key, arg.key(), result_listener) &&
          ::testing::ExplainMatchResult(value, arg.raw_value(), result_listener);
+}
+
+MATCHER_P2(IsHeaderMutation, set_headers_matcher, remove_headers_matcher, "") {
+  return ::testing::ExplainMatchResult(set_headers_matcher, arg.set_headers,
+                                       result_listener) &&
+         ::testing::ExplainMatchResult(remove_headers_matcher,
+                                       arg.remove_headers, result_listener);
+}
+
+MATCHER_P3(IsBodyMutation, body_matcher, end_of_stream_matcher,
+           end_of_stream_without_message_matcher, "") {
+  return ::testing::ExplainMatchResult(body_matcher, arg.body,
+                                       result_listener) &&
+         ::testing::ExplainMatchResult(end_of_stream_matcher, arg.end_of_stream,
+                                       result_listener) &&
+         ::testing::ExplainMatchResult(end_of_stream_without_message_matcher,
+                                       arg.end_of_stream_without_message,
+                                       result_listener);
+}
+
+MATCHER_P2(IsRequestHeaders, set_headers_matcher, remove_headers_matcher, "") {
+  return ::testing::ExplainMatchResult(
+      ::testing::VariantWith<ExtProcResponse::RequestHeaders>(::testing::Field(
+          &ExtProcResponse::RequestHeaders::mutation,
+          IsHeaderMutation(set_headers_matcher, remove_headers_matcher))),
+      arg, result_listener);
+}
+
+MATCHER_P2(IsResponseHeaders, set_headers_matcher, remove_headers_matcher, "") {
+  return ::testing::ExplainMatchResult(
+      ::testing::VariantWith<ExtProcResponse::ResponseHeaders>(::testing::Field(
+          &ExtProcResponse::ResponseHeaders::mutation,
+          IsHeaderMutation(set_headers_matcher, remove_headers_matcher))),
+      arg, result_listener);
+}
+
+MATCHER_P2(IsResponseTrailers, set_headers_matcher, remove_headers_matcher,
+           "") {
+  return ::testing::ExplainMatchResult(
+      ::testing::VariantWith<ExtProcResponse::ResponseTrailers>(
+          ::testing::Field(
+              &ExtProcResponse::ResponseTrailers::mutation,
+              IsHeaderMutation(set_headers_matcher, remove_headers_matcher))),
+      arg, result_listener);
+}
+
+MATCHER_P3(IsRequestBody, body_matcher, end_of_stream_matcher,
+           end_of_stream_without_message_matcher, "") {
+  return ::testing::ExplainMatchResult(
+      ::testing::VariantWith<ExtProcResponse::RequestBody>(::testing::Field(
+          &ExtProcResponse::RequestBody::mutation,
+          IsBodyMutation(body_matcher, end_of_stream_matcher,
+                         end_of_stream_without_message_matcher))),
+      arg, result_listener);
+}
+
+MATCHER_P3(IsResponseBody, body_matcher, end_of_stream_matcher,
+           end_of_stream_without_message_matcher, "") {
+  return ::testing::ExplainMatchResult(
+      ::testing::VariantWith<ExtProcResponse::ResponseBody>(::testing::Field(
+          &ExtProcResponse::ResponseBody::mutation,
+          IsBodyMutation(body_matcher, end_of_stream_matcher,
+                         end_of_stream_without_message_matcher))),
+      arg, result_listener);
+}
+
+MATCHER_P3(IsImmediateResponse, status_matcher, details_matcher,
+           header_mutation_matcher, "") {
+  return ::testing::ExplainMatchResult(
+      ::testing::VariantWith<ExtProcResponse::ImmediateResponse>(
+          ::testing::AllOf(
+              ::testing::Field(&ExtProcResponse::ImmediateResponse::status,
+                               status_matcher),
+              ::testing::Field(&ExtProcResponse::ImmediateResponse::details,
+                               details_matcher),
+              ::testing::Field(
+                  &ExtProcResponse::ImmediateResponse::header_mutation,
+                  header_mutation_matcher))),
+      arg, result_listener);
 }
 
 //
@@ -786,16 +865,11 @@ TEST_F(ParseExtProcResponseTest, RequestHeadersMutation) {
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   EXPECT_THAT(
       parsed->response,
-      ::testing::VariantWith<ExtProcResponse::RequestHeaders>(::testing::Field(
-          &ExtProcResponse::RequestHeaders::mutation,
-          ::testing::AllOf(
-              ::testing::Field(&ExtProcResponse::HeaderMutation::set_headers,
-                               ::testing::ElementsAre(IsHeaderValueOption(
-                                   kKey1, kVal1,
-                                   XdsHeaderValueOption::AppendAction::
-                                       kAppendIfExistsOrAdd))),
-              ::testing::Field(&ExtProcResponse::HeaderMutation::remove_headers,
-                               ::testing::ElementsAre(kKey2))))));
+      IsRequestHeaders(
+          ::testing::ElementsAre(IsHeaderValueOption(
+              kKey1, kVal1,
+              XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)),
+          ::testing::ElementsAre(kKey2)));
 }
 
 TEST_F(ParseExtProcResponseTest, RequestHeadersUnsupportedStatus) {
@@ -874,16 +948,11 @@ TEST_F(ParseExtProcResponseTest, ResponseHeadersMutation) {
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   EXPECT_THAT(
       parsed->response,
-      ::testing::VariantWith<ExtProcResponse::ResponseHeaders>(::testing::Field(
-          &ExtProcResponse::ResponseHeaders::mutation,
-          ::testing::AllOf(
-              ::testing::Field(&ExtProcResponse::HeaderMutation::set_headers,
-                               ::testing::ElementsAre(IsHeaderValueOption(
-                                   kKey1, kVal1,
-                                   XdsHeaderValueOption::AppendAction::
-                                       kAppendIfExistsOrAdd))),
-              ::testing::Field(&ExtProcResponse::HeaderMutation::remove_headers,
-                               ::testing::ElementsAre(kKey2))))));
+      IsResponseHeaders(
+          ::testing::ElementsAre(IsHeaderValueOption(
+              kKey1, kVal1,
+              XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)),
+          ::testing::ElementsAre(kKey2)));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseHeadersUnsupportedStatus) {
@@ -937,18 +1006,8 @@ TEST_F(ParseExtProcResponseTest, RequestBodyMutation) {
   streamed_response->set_end_of_stream_without_message(false);
   auto parsed = ParseResponse(response);
   ASSERT_TRUE(parsed.ok()) << parsed.status();
-  EXPECT_THAT(
-      parsed->response,
-      ::testing::VariantWith<ExtProcResponse::RequestBody>(::testing::Field(
-          &ExtProcResponse::RequestBody::mutation,
-          ::testing::AllOf(
-              ::testing::Field(&ExtProcResponse::BodyMutation::body,
-                               "test request body"),
-              ::testing::Field(&ExtProcResponse::BodyMutation::end_of_stream,
-                               true),
-              ::testing::Field(
-                  &ExtProcResponse::BodyMutation::end_of_stream_without_message,
-                  false)))));
+  EXPECT_THAT(parsed->response,
+              IsRequestBody("test request body", true, false));
 }
 
 TEST_F(ParseExtProcResponseTest, RequestBodyUnsupportedStatus) {
@@ -1025,18 +1084,8 @@ TEST_F(ParseExtProcResponseTest, ResponseBodyMutation) {
   streamed_response->set_end_of_stream_without_message(false);
   auto parsed = ParseResponse(response);
   ASSERT_TRUE(parsed.ok()) << parsed.status();
-  EXPECT_THAT(
-      parsed->response,
-      ::testing::VariantWith<ExtProcResponse::ResponseBody>(::testing::Field(
-          &ExtProcResponse::ResponseBody::mutation,
-          ::testing::AllOf(
-              ::testing::Field(&ExtProcResponse::BodyMutation::body,
-                               "test response body"),
-              ::testing::Field(&ExtProcResponse::BodyMutation::end_of_stream,
-                               false),
-              ::testing::Field(
-                  &ExtProcResponse::BodyMutation::end_of_stream_without_message,
-                  false)))));
+  EXPECT_THAT(parsed->response,
+              IsResponseBody("test response body", false, false));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseBodyEndOfStreamRejected) {
@@ -1144,20 +1193,13 @@ TEST_F(ParseExtProcResponseTest, ResponseTrailersMutation) {
   header_mutation->add_remove_headers(kKey2);
   auto parsed = ParseResponse(response);
   ASSERT_TRUE(parsed.ok()) << parsed.status();
-  EXPECT_THAT(parsed->response,
-              ::testing::VariantWith<ExtProcResponse::ResponseTrailers>(
-                  ::testing::Field(
-                      &ExtProcResponse::ResponseTrailers::mutation,
-                      ::testing::AllOf(
-                          ::testing::Field(
-                              &ExtProcResponse::HeaderMutation::set_headers,
-                              ::testing::ElementsAre(IsHeaderValueOption(
-                                  kKey1, kVal1,
-                                  XdsHeaderValueOption::AppendAction::
-                                      kAppendIfExistsOrAdd))),
-                          ::testing::Field(
-                              &ExtProcResponse::HeaderMutation::remove_headers,
-                              ::testing::ElementsAre(kKey2))))));
+  EXPECT_THAT(
+      parsed->response,
+      IsResponseTrailers(
+          ::testing::ElementsAre(IsHeaderValueOption(
+              kKey1, kVal1,
+              XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)),
+          ::testing::ElementsAre(kKey2)));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseTrailersHeaderMutationEmptyValue) {
@@ -1181,16 +1223,7 @@ TEST_F(ParseExtProcResponseTest, ResponseTrailersHeaderMutationNull) {
   auto parsed = ParseResponse(response);
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   EXPECT_THAT(parsed->response,
-              ::testing::VariantWith<ExtProcResponse::ResponseTrailers>(
-                  ::testing::Field(
-                      &ExtProcResponse::ResponseTrailers::mutation,
-                      ::testing::AllOf(
-                          ::testing::Field(
-                              &ExtProcResponse::HeaderMutation::set_headers,
-                              ::testing::IsEmpty()),
-                          ::testing::Field(
-                              &ExtProcResponse::HeaderMutation::remove_headers,
-                              ::testing::IsEmpty())))));
+              IsResponseTrailers(::testing::IsEmpty(), ::testing::IsEmpty()));
 }
 
 TEST_F(ParseExtProcResponseTest, ImmediateResponse) {
@@ -1207,20 +1240,13 @@ TEST_F(ParseExtProcResponseTest, ImmediateResponse) {
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   EXPECT_THAT(
       parsed->response,
-      ::testing::VariantWith<ExtProcResponse::ImmediateResponse>(
-          ::testing::AllOf(
-              ::testing::Field(&ExtProcResponse::ImmediateResponse::status,
-                               GRPC_STATUS_UNAUTHENTICATED),
-              ::testing::Field(&ExtProcResponse::ImmediateResponse::details,
-                               "invalid credentials"),
-              ::testing::Field(
-                  &ExtProcResponse::ImmediateResponse::header_mutation,
-                  ::testing::Field(
-                      &ExtProcResponse::HeaderMutation::set_headers,
-                      ::testing::ElementsAre(IsHeaderValueOption(
-                          kKey1, kVal1,
-                          XdsHeaderValueOption::AppendAction::
-                              kAppendIfExistsOrAdd)))))));
+      IsImmediateResponse(
+          GRPC_STATUS_UNAUTHENTICATED, "invalid credentials",
+          IsHeaderMutation(
+              ::testing::ElementsAre(IsHeaderValueOption(
+                  kKey1, kVal1,
+                  XdsHeaderValueOption::AppendAction::kAppendIfExistsOrAdd)),
+              ::testing::_)));
 }
 
 TEST_F(ParseExtProcResponseTest, ImmediateResponseHeaderMutationNull) {
@@ -1233,21 +1259,9 @@ TEST_F(ParseExtProcResponseTest, ImmediateResponseHeaderMutationNull) {
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   EXPECT_THAT(
       parsed->response,
-      ::testing::VariantWith<ExtProcResponse::ImmediateResponse>(
-          ::testing::AllOf(
-              ::testing::Field(&ExtProcResponse::ImmediateResponse::status,
-                               GRPC_STATUS_UNAUTHENTICATED),
-              ::testing::Field(&ExtProcResponse::ImmediateResponse::details,
-                               "invalid credentials"),
-              ::testing::Field(
-                  &ExtProcResponse::ImmediateResponse::header_mutation,
-                  ::testing::AllOf(
-                      ::testing::Field(
-                          &ExtProcResponse::HeaderMutation::set_headers,
-                          ::testing::IsEmpty()),
-                      ::testing::Field(
-                          &ExtProcResponse::HeaderMutation::remove_headers,
-                          ::testing::IsEmpty()))))));
+      IsImmediateResponse(
+          GRPC_STATUS_UNAUTHENTICATED, "invalid credentials",
+          IsHeaderMutation(::testing::IsEmpty(), ::testing::IsEmpty())));
 }
 
 TEST_F(ParseExtProcResponseTest, ImmediateResponseStatusMissing) {

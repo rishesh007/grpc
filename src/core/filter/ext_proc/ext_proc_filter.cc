@@ -14,12 +14,13 @@
 // limitations under the License.
 //
 
-#include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
+#include "src/core/filter/ext_proc/ext_proc_filter.h"
 
 #include <string>
 
 #include "src/core/call/call_spine.h"
 #include "src/core/lib/promise/try_seq.h"
+#include "src/core/util/match.h"
 #include "src/core/util/string.h"
 #include "absl/strings/str_join.h"
 
@@ -32,19 +33,20 @@ namespace grpc_core {
 std::string ExtProcFilter::Config::ToString() const {
   std::string result = "{";
   bool is_first = true;
-  if (std::holds_alternative<GrpcXdsServerTarget>(channel_info)) {
-    StrAppend(result, "grpc_service=");
-    StrAppend(result, std::get<GrpcXdsServerTarget>(channel_info).Key());
-    is_first = false;
-  } else if (std::holds_alternative<RefCountedPtr<ExtProcChannel>>(
-                 channel_info)) {
-    const auto& channel = std::get<RefCountedPtr<ExtProcChannel>>(channel_info);
-    if (channel != nullptr) {
-      StrAppend(result, "grpc_service=");
-      StrAppend(result, channel->server()->Key());
-      is_first = false;
-    }
-  }
+  Match(
+      channel_info,
+      [&](const GrpcXdsServerTarget& target) {
+        StrAppend(result, "grpc_service=");
+        StrAppend(result, target.Key());
+        is_first = false;
+      },
+      [&](const RefCountedPtr<ExtProcChannel>& channel) {
+        if (channel != nullptr) {
+          StrAppend(result, "grpc_service=");
+          StrAppend(result, channel->server()->Key());
+          is_first = false;
+        }
+      });
   if (failure_mode_allow.value_or(false)) {
     if (!is_first) StrAppend(result, ", ");
     StrAppend(result, "failure_mode_allow=true");
