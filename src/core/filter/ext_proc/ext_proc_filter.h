@@ -29,6 +29,7 @@
 #include <variant>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "src/core/filter/ext_proc/ext_proc_messages.h"
 #include "src/core/filter/filter_args.h"
 #include "src/core/lib/channel/channel_args.h"
@@ -152,13 +153,12 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
       return server_;
     }
 
-    RefCountedPtr<XdsTransportFactory::XdsTransport> transport() const {
-      return transport_;
-    }
+    absl::StatusOr<RefCountedPtr<XdsTransportFactory::XdsTransport>>
+    GetTransport();
 
    private:
     std::shared_ptr<const XdsBootstrap::XdsServerTarget> server_;
-    RefCountedPtr<XdsTransportFactory::XdsTransport> transport_;
+    RefCountedPtr<XdsTransportFactory> transport_factory_;
   };
 
  private:
