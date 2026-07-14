@@ -3877,7 +3877,8 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(
       status.error_message(),
-      ::testing::HasSubstr("Processor sent end_of_stream in response_body"));
+      ::testing::HasSubstr("end_of_stream / end_of_stream_without_message "
+                           "is not supported for response_body"));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -3933,7 +3934,8 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
   EXPECT_THAT(
       status.error_message(),
-      ::testing::HasSubstr("Processor sent end_of_stream in response_body"));
+      ::testing::HasSubstr("end_of_stream / end_of_stream_without_message "
+                           "is not supported for response_body"));
 }
 
 TEST_P(XdsExtProcEnd2endTest,

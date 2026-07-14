@@ -224,7 +224,8 @@ absl::StatusOr<ExtProcResponse> ExtProcResponse::Parse(
       if (!mutation.ok()) return mutation.status();
       if (mutation->end_of_stream || mutation->end_of_stream_without_message) {
         return absl::InternalError(
-            "Processor sent end_of_stream in response_body");
+            "end_of_stream / end_of_stream_without_message "
+            "is not supported for response_body");
       }
       ext_proc_response.response = ResponseBody{std::move(*mutation)};
       break;

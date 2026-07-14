@@ -644,7 +644,8 @@ class CreateExtProcAttributesProtoStructTest : public ::testing::Test {
 TEST_F(CreateExtProcAttributesProtoStructTest, AttributesEmptyRequested) {
   upb::Arena arena;
   grpc_metadata_batch batch;
-  auto* upb_struct = CreateExtProcAttributesProtoStruct(arena.ptr(), {}, batch);
+  auto* upb_struct =
+      CreateExtProcAttributesProtoStruct(arena.ptr(), {}, batch, "");
   EXPECT_EQ(upb_struct, nullptr);
 }
 
@@ -667,7 +668,7 @@ TEST_F(CreateExtProcAttributesProtoStructTest, AttributesAllRecognizedFields) {
       "request.useragent", "request.time",     "request.id",
       "request.protocol",  "request.query"};
   auto* upb_struct =
-      CreateExtProcAttributesProtoStruct(arena.ptr(), requested, batch);
+      CreateExtProcAttributesProtoStruct(arena.ptr(), requested, batch, "");
   ASSERT_NE(upb_struct, nullptr);
   auto proto = ConvertToProto(upb_struct, arena.ptr());
   EXPECT_EQ(proto.fields().at("request.path").string_value(), "/foo/bar");
@@ -693,8 +694,8 @@ TEST_F(CreateExtProcAttributesProtoStructTest,
   grpc_metadata_batch batch;
   // No HttpAuthorityMetadata, but has HostMetadata
   batch.Set(HostMetadata(), Slice::FromCopiedString("fallback.host.com"));
-  auto* upb_struct =
-      CreateExtProcAttributesProtoStruct(arena.ptr(), {"request.host"}, batch);
+  auto* upb_struct = CreateExtProcAttributesProtoStruct(
+      arena.ptr(), {"request.host"}, batch, "");
   ASSERT_NE(upb_struct, nullptr);
   auto proto = ConvertToProto(upb_struct, arena.ptr());
   EXPECT_EQ(proto.fields().at("request.host").string_value(),
@@ -706,7 +707,7 @@ TEST_F(CreateExtProcAttributesProtoStructTest, AttributesMethodFallbackToPost) {
   grpc_metadata_batch batch;
   // No HttpMethodMetadata
   auto* upb_struct = CreateExtProcAttributesProtoStruct(
-      arena.ptr(), {"request.method"}, batch);
+      arena.ptr(), {"request.method"}, batch, "");
   ASSERT_NE(upb_struct, nullptr);
   auto proto = ConvertToProto(upb_struct, arena.ptr());
   EXPECT_EQ(proto.fields().at("request.method").string_value(), "POST");
@@ -720,7 +721,7 @@ TEST_F(CreateExtProcAttributesProtoStructTest, AttributesRequestHeaders) {
   batch.Append("x-custom2", Slice::FromCopiedString(kVal2),
                [](absl::string_view, const Slice&) {});
   auto* upb_struct = CreateExtProcAttributesProtoStruct(
-      arena.ptr(), {"request.headers"}, batch);
+      arena.ptr(), {"request.headers"}, batch, "");
   ASSERT_NE(upb_struct, nullptr);
   auto proto = ConvertToProto(upb_struct, arena.ptr());
   ASSERT_NE(proto.fields().find("request.headers"), proto.fields().end());
