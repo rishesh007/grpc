@@ -17,18 +17,17 @@
 #ifndef GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
 #define GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
 
+#include <memory>
+#include <optional>
 #include <queue>
+#include <string>
+#include <variant>
+#include <vector>
 
 #include "src/core/call/call_destination.h"
 #include "src/core/call/call_spine.h"
 #include "src/core/call/message.h"
 #include "src/core/call/metadata_batch.h"
-#include <memory>
-#include <optional>
-#include <string>
-#include <variant>
-#include <vector>
-
 #include "src/core/filter/ext_proc/ext_proc_messages.h"
 #include "src/core/filter/filter_args.h"
 #include "src/core/lib/channel/channel_args.h"

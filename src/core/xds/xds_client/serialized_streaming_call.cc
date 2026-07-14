@@ -88,113 +88,111 @@ SerializedStreamingCall::SerializedStreamingCall(
       "write_loop",
       [self = RefAsSubclass<SerializedStreamingCall>()]() {
         return Loop([self]() {
-          return Seq(
-              self->receiver_.Next(),
-              [self](auto state_or_failure) {
-                bool ok = state_or_failure.ok();
-                std::shared_ptr<WriteState> state;
-                bool has_call = false;
-                bool is_half_close = false;
-                if (ok) {
-                  auto queued = std::move(*state_or_failure);
-                  state = *queued;
-                  is_half_close = state->is_half_close;
-                  {
-                    MutexLock lock(&self->mu_);
-                    self->active_write_ = state;
-                    if (self->underlying_call_ != nullptr) {
-                      if (is_half_close) {
-                        self->underlying_call_->SendHalfClose();
-                      } else {
-                        self->underlying_call_->SendMessage(state->payload);
-                        has_call = true;
-                      }
-                    }
+          return Seq(self->receiver_.Next(), [self](auto state_or_failure) {
+            bool ok = state_or_failure.ok();
+            std::shared_ptr<WriteState> state;
+            bool has_call = false;
+            bool is_half_close = false;
+            if (ok) {
+              auto queued = std::move(*state_or_failure);
+              state = *queued;
+              is_half_close = state->is_half_close;
+              {
+                MutexLock lock(&self->mu_);
+                self->active_write_ = state;
+                if (self->underlying_call_ != nullptr) {
+                  if (is_half_close) {
+                    self->underlying_call_->SendHalfClose();
+                  } else {
+                    self->underlying_call_->SendMessage(state->payload);
+                    has_call = true;
                   }
                 }
-                return Seq(
-                    [self, ok, has_call, is_half_close]() -> Poll<bool> {
-                      if (!ok) return false;
-                      if (is_half_close) return true;
-                      if (!has_call) return false;
+              }
+            }
+            return Seq(
+                [self, ok, has_call, is_half_close]() -> Poll<bool> {
+                  if (!ok) return false;
+                  if (is_half_close) return true;
+                  if (!has_call) return false;
+                  MutexLock lock(&self->mu_);
+                  if (self->write_completed_) {
+                    self->write_completed_ = false;
+                    return self->write_ok_;
+                  }
+                  self->write_waker_ =
+                      GetContext<Activity>()->MakeNonOwningWaker();
+                  if (self->write_completed_) {
+                    self->write_completed_ = false;
+                    return self->write_ok_;
+                  }
+                  return Pending{};
+                },
+                [self, ok, state, has_call,
+                 is_half_close](bool write_ok) -> LoopCtl<absl::Status> {
+                  if (!ok) {
+                    return absl::CancelledError("Receiver closed");
+                  }
+                  Waker waker_to_wakeup;
+                  if (is_half_close) {
+                    {
+                      MutexLock lock(&state->mu);
+                      if (!state->done) {
+                        state->status = absl::OkStatus();
+                        state->done = true;
+                        waker_to_wakeup = std::move(state->waker);
+                      }
+                    }
+                    if (!waker_to_wakeup.is_unwakeable()) {
+                      waker_to_wakeup.Wakeup();
+                    }
+                    {
                       MutexLock lock(&self->mu_);
-                      if (self->write_completed_) {
-                        self->write_completed_ = false;
-                        return self->write_ok_;
+                      self->active_write_ = nullptr;
+                    }
+                    return absl::OkStatus();
+                  }
+                  if (!write_ok || !has_call) {
+                    {
+                      MutexLock lock(&state->mu);
+                      if (!state->done) {
+                        state->status = absl::InternalError(
+                            has_call ? "Write failed" : "Stream closed");
+                        state->done = true;
+                        waker_to_wakeup = std::move(state->waker);
                       }
-                      self->write_waker_ =
-                          GetContext<Activity>()->MakeNonOwningWaker();
-                      if (self->write_completed_) {
-                        self->write_completed_ = false;
-                        return self->write_ok_;
-                      }
-                      return Pending{};
-                    },
-                    [self, ok, state, has_call,
-                     is_half_close](bool write_ok) -> LoopCtl<absl::Status> {
-                      if (!ok) {
-                        return absl::CancelledError("Receiver closed");
-                      }
-                      Waker waker_to_wakeup;
-                      if (is_half_close) {
-                        {
-                          MutexLock lock(&state->mu);
-                          if (!state->done) {
-                            state->status = absl::OkStatus();
-                            state->done = true;
-                            waker_to_wakeup = std::move(state->waker);
-                          }
-                        }
-                        if (!waker_to_wakeup.is_unwakeable()) {
-                          waker_to_wakeup.Wakeup();
-                        }
-                        {
-                          MutexLock lock(&self->mu_);
-                          self->active_write_ = nullptr;
-                        }
-                        return absl::OkStatus();
-                      }
-                      if (!write_ok || !has_call) {
-                        {
-                          MutexLock lock(&state->mu);
-                          if (!state->done) {
-                            state->status = absl::InternalError(
-                                has_call ? "Write failed" : "Stream closed");
-                            state->done = true;
-                            waker_to_wakeup = std::move(state->waker);
-                          }
-                        }
-                        if (!waker_to_wakeup.is_unwakeable()) {
-                          waker_to_wakeup.Wakeup();
-                        }
-                        self->DrainQueueAndFail(absl::InternalError(
-                            has_call ? "Write failed" : "Stream closed"));
-                        {
-                          MutexLock lock(&self->mu_);
-                          self->active_write_ = nullptr;
-                        }
-                        return absl::InternalError(has_call ? "Write failed"
-                                                            : "Stream closed");
-                      }
-                      {
-                        MutexLock lock(&state->mu);
-                        if (!state->done) {
-                          state->status = absl::OkStatus();
-                          state->done = true;
-                          waker_to_wakeup = std::move(state->waker);
-                        }
-                      }
-                      if (!waker_to_wakeup.is_unwakeable()) {
-                        waker_to_wakeup.Wakeup();
-                      }
-                      {
-                        MutexLock lock(&self->mu_);
-                        self->active_write_ = nullptr;
-                      }
-                      self->CleanupExpiredNodes();
-                      return Continue{};
-                    });
-              });
+                    }
+                    if (!waker_to_wakeup.is_unwakeable()) {
+                      waker_to_wakeup.Wakeup();
+                    }
+                    self->DrainQueueAndFail(absl::InternalError(
+                        has_call ? "Write failed" : "Stream closed"));
+                    {
+                      MutexLock lock(&self->mu_);
+                      self->active_write_ = nullptr;
+                    }
+                    return absl::InternalError(has_call ? "Write failed"
+                                                        : "Stream closed");
+                  }
+                  {
+                    MutexLock lock(&state->mu);
+                    if (!state->done) {
+                      state->status = absl::OkStatus();
+                      state->done = true;
+                      waker_to_wakeup = std::move(state->waker);
+                    }
+                  }
+                  if (!waker_to_wakeup.is_unwakeable()) {
+                    waker_to_wakeup.Wakeup();
+                  }
+                  {
+                    MutexLock lock(&self->mu_);
+                    self->active_write_ = nullptr;
+                  }
+                  self->CleanupExpiredNodes();
+                  return Continue{};
+                });
+          });
         });
       },
       [self = RefAsSubclass<SerializedStreamingCall>()](absl::Status status) {
@@ -366,7 +364,8 @@ void SerializedStreamingCall::OnStatusReceived(absl::Status status) {
     waker_to_wakeup.Wakeup();
   }
   user_event_handler_->OnStatusReceived(std::move(status));
-  // Clean up underlying call to avoid dangling pointer if we are orphaned later.
+  // Clean up underlying call to avoid dangling pointer if we are orphaned
+  // later.
   OrphanablePtr<XdsTransportFactory::XdsTransport::StreamingCall>
       call_to_destroy;
   {
