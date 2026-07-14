@@ -289,12 +289,12 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
     errors->AddError("could not parse ext_proc filter override config");
     return nullptr;
   }
+  auto config = MakeRefCounted<ExtProcFilter::Config>();
   auto* overrides =
       envoy_extensions_filters_http_ext_proc_v3_ExtProcPerRoute_overrides(
           ext_proc_per_route);
-  if (overrides == nullptr) return nullptr;
+  if (overrides == nullptr) return config;
   ValidationErrors::ScopedField field(errors, ".overrides");
-  auto config = MakeRefCounted<ExtProcFilter::Config>();
   // processing_mode
   if (auto* processing_mode =
           envoy_extensions_filters_http_ext_proc_v3_ExtProcOverrides_processing_mode(
