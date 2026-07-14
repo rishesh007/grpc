@@ -28,7 +28,7 @@
 #include "src/core/call/metadata.h"
 #include "src/core/client_channel/client_channel_args.h"
 #include "src/core/config/core_configuration.h"
-#include "src/core/ext/filter/ext_proc/ext_proc_messages.h"
+#include "src/core/filter/ext_proc/ext_proc_messages.h"
 #include "src/core/lib/debug/trace_flags.h"
 #include "src/core/lib/promise/all_ok.h"
 #include "src/core/lib/promise/context.h"

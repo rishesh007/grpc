@@ -35,7 +35,7 @@
 #include "envoy/type/v3/http_status.pb.h"
 #include "src/core/client_channel/backup_poller.h"
 #include "src/core/config/config_vars.h"
-#include "src/core/ext/filters/ext_proc/ext_proc_filter.h"
+#include "src/core/filter/ext_proc/ext_proc_filter.h"
 #include "src/core/lib/debug/trace.h"
 #include "src/core/lib/experiments/config.h"
 #include "src/core/lib/experiments/experiments.h"
@@ -573,11 +573,6 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     return status;
   }
 
-  void RunProcessingModeTest(bool req_hdrs, bool resp_hdrs, bool resp_trls,
-                             bool req_body, bool resp_body,
-                             bool observability_mode = false);
-  void RunTrailersOnlyTest(bool observability_mode);
-
   std::unique_ptr<ExtProcServer<MockExternalProcessorService>> ext_proc_server_;
   std::unique_ptr<ExtProcServerBase> alternative_ext_proc_server_;
 };
@@ -585,32 +580,153 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
 INSTANTIATE_TEST_SUITE_P(XdsTest, XdsExtProcEnd2endTest,
                          ::testing::Values(XdsTestType()), &XdsTestType::Name);
 
-void XdsExtProcEnd2endTest::RunProcessingModeTest(bool req_hdrs, bool resp_hdrs,
-                                                  bool resp_trls, bool req_body,
-                                                  bool resp_body,
-                                                  bool observability_mode) {
+TEST_P(XdsExtProcEnd2endTest, ProcessingModeAllDisabledSuccess) {
+  CreateAndStartBackends(1);
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetObservabilityMode(false)
+          .SetRequestHeaderMode(envoy::extensions::filters::http::ext_proc::v3::
+                                    ProcessingMode::SKIP)
+          .SetResponseHeaderMode(envoy::extensions::filters::http::ext_proc::
+                                     v3::ProcessingMode::SKIP)
+          .SetResponseTrailerMode(envoy::extensions::filters::http::ext_proc::
+                                      v3::ProcessingMode::SKIP)
+          .SetRequestBodyMode(envoy::extensions::filters::http::ext_proc::v3::
+                                  ProcessingMode::NONE)
+          .SetResponseBodyMode(envoy::extensions::filters::http::ext_proc::v3::
+                                   ProcessingMode::NONE)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  rpc_options.set_echo_metadata_initially(true);
+  rpc_options.set_echo_metadata(true);
+  EchoResponse response;
+  std::multimap<std::string, std::string> server_initial_metadata;
+  std::multimap<std::string, std::string> server_trailing_metadata;
+  Status status =
+      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
+                         &server_trailing_metadata);
+  EXPECT_TRUE(status.ok()) << "RPC failed: " << status.error_message();
+  // Wait for expected counts (all 0)
+  MockExternalProcessorService::RequestCounts expected_counts;
+  expected_counts.request_headers = 0;
+  expected_counts.response_headers = 0;
+  expected_counts.response_trailers = 0;
+  expected_counts.request_body = 0;
+  expected_counts.response_body = 0;
+  ext_proc_server_->ext_proc_service()->WaitForRequestCounts(expected_counts);
+  auto counts = ext_proc_server_->ext_proc_service()->GetRequestCounts();
+  EXPECT_EQ(counts.request_headers, 0);
+  EXPECT_EQ(counts.response_headers, 0);
+  EXPECT_EQ(counts.response_trailers, 0);
+  EXPECT_EQ(counts.request_body, 0);
+  EXPECT_EQ(counts.response_body, 0);
+  // Verify mutations (none expected)
+  auto it = server_initial_metadata.find("x-extproc-request-headers-mutated");
+  EXPECT_EQ(it, server_initial_metadata.end());
+  it = server_initial_metadata.find("x-extproc-response-headers-mutated");
+  EXPECT_EQ(it, server_initial_metadata.end());
+  it = server_trailing_metadata.find("x-extproc-response-trailers-mutated");
+  EXPECT_EQ(it, server_trailing_metadata.end());
+  EXPECT_EQ(response.message(), kRequestMessage);
+  EXPECT_EQ(ext_proc_server_->ext_proc_service()->num_calls(), 0);
+}
+
+TEST_P(XdsExtProcEnd2endTest, ProcessingModeAllEnabledSuccess) {
+  CreateAndStartBackends(1);
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetObservabilityMode(false)
+          .SetRequestHeaderMode(envoy::extensions::filters::http::ext_proc::v3::
+                                    ProcessingMode::SEND)
+          .SetResponseHeaderMode(envoy::extensions::filters::http::ext_proc::
+                                     v3::ProcessingMode::SEND)
+          .SetResponseTrailerMode(envoy::extensions::filters::http::ext_proc::
+                                      v3::ProcessingMode::SEND)
+          .SetRequestBodyMode(envoy::extensions::filters::http::ext_proc::v3::
+                                  ProcessingMode::GRPC)
+          .SetResponseBodyMode(envoy::extensions::filters::http::ext_proc::v3::
+                                   ProcessingMode::GRPC)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  rpc_options.set_echo_metadata_initially(true);
+  rpc_options.set_echo_metadata(true);
+  EchoResponse response;
+  std::multimap<std::string, std::string> server_initial_metadata;
+  std::multimap<std::string, std::string> server_trailing_metadata;
+  Status status =
+      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
+                         &server_trailing_metadata);
+  EXPECT_TRUE(status.ok()) << "RPC failed: " << status.error_message();
+  // Wait for expected counts
+  MockExternalProcessorService::RequestCounts expected_counts;
+  expected_counts.request_headers = 1;
+  expected_counts.response_headers = 1;
+  expected_counts.response_trailers = 1;
+  expected_counts.request_body = 1;
+  expected_counts.response_body = 1;
+  ext_proc_server_->ext_proc_service()->WaitForRequestCounts(expected_counts);
+  auto counts = ext_proc_server_->ext_proc_service()->GetRequestCounts();
+  EXPECT_EQ(counts.request_headers, 1);
+  EXPECT_EQ(counts.response_headers, 1);
+  EXPECT_EQ(counts.response_trailers, 1);
+  EXPECT_THAT(counts.request_body, ::testing::AnyOf(1, 2));
+  EXPECT_EQ(counts.response_body, 1);
+  // Verify mutations
+  auto it = server_initial_metadata.find("x-extproc-request-headers-mutated");
+  ASSERT_NE(it, server_initial_metadata.end());
+  EXPECT_EQ(it->second, "yes");
+  it = server_initial_metadata.find("x-extproc-response-headers-mutated");
+  ASSERT_NE(it, server_initial_metadata.end());
+  EXPECT_EQ(it->second, "yes");
+  it = server_trailing_metadata.find("x-extproc-response-trailers-mutated");
+  ASSERT_NE(it, server_trailing_metadata.end());
+  EXPECT_EQ(it->second, "yes");
+  std::string expected_message = kRequestMessage;
+  absl::StrAppend(&expected_message, "-request-body-mutated");
+  absl::StrAppend(&expected_message, "-response-body-mutated");
+  EXPECT_EQ(response.message(), expected_message);
+  EXPECT_EQ(ext_proc_server_->ext_proc_service()->num_calls(), 1);
+}
+
+TEST_P(XdsExtProcEnd2endTest,
+       ProcessingModeAllEnabledWithObservabilityModeSuccess) {
   CreateAndStartBackends(1);
   auto ext_proc_config_builder = ExternalProcessorBuilder()
                                      .SetTargetUri(ext_proc_server_->target())
                                      .SetInsecureChannelCredentials()
-                                     .SetObservabilityMode(observability_mode);
-  if (observability_mode) {
-    google::protobuf::Duration timeout;
-    timeout.set_seconds(1);
-    timeout.set_nanos(0);
-    ext_proc_config_builder.SetDeferredCloseTimeout(timeout);
-  }
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  ext_proc_config_builder.SetRequestHeaderMode(req_hdrs ? ProcessingMode::SEND
-                                                        : ProcessingMode::SKIP);
+                                     .SetObservabilityMode(true);
+  google::protobuf::Duration timeout;
+  timeout.set_seconds(1);
+  timeout.set_nanos(0);
+  ext_proc_config_builder.SetDeferredCloseTimeout(timeout);
+  ext_proc_config_builder.SetRequestHeaderMode(
+      envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::SEND);
   ext_proc_config_builder.SetResponseHeaderMode(
-      resp_hdrs ? ProcessingMode::SEND : ProcessingMode::SKIP);
+      envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::SEND);
   ext_proc_config_builder.SetResponseTrailerMode(
-      resp_trls ? ProcessingMode::SEND : ProcessingMode::SKIP);
-  ext_proc_config_builder.SetRequestBodyMode(req_body ? ProcessingMode::GRPC
-                                                      : ProcessingMode::NONE);
-  ext_proc_config_builder.SetResponseBodyMode(resp_body ? ProcessingMode::GRPC
-                                                        : ProcessingMode::NONE);
+      envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::SEND);
+  ext_proc_config_builder.SetRequestBodyMode(
+      envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::GRPC);
+  ext_proc_config_builder.SetResponseBodyMode(
+      envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::GRPC);
   auto ext_proc_config = ext_proc_config_builder.Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
@@ -629,93 +745,49 @@ void XdsExtProcEnd2endTest::RunProcessingModeTest(bool req_hdrs, bool resp_hdrs,
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
   EXPECT_TRUE(status.ok()) << "RPC failed: " << status.error_message();
-  // NOTE: In both normal and observability modes, if response headers (initial
-  // metadata) are enabled, the filter blocks/delays the call progression to
-  // write them. Due to transport-level coalescing, this delay causes the
-  // subsequent response body in the same coalesced batch to be dropped by the
-  // transport before the message loop can pull it. This is a known limitation.
-  bool expect_response_body = resp_body;
-  // if (resp_hdrs && resp_body) {
-  //   expect_response_body = false;
-  // }
-  // Wait for expected counts (especially important for async observability
-  // mode)
+  // Wait for expected counts
   MockExternalProcessorService::RequestCounts expected_counts;
-  expected_counts.request_headers = req_hdrs ? 1 : 0;
-  expected_counts.response_headers = resp_hdrs ? 1 : 0;
-  expected_counts.response_trailers = resp_trls ? 1 : 0;
-  expected_counts.request_body = req_body ? 1 : 0;
-  expected_counts.response_body = expect_response_body ? 1 : 0;
+  expected_counts.request_headers = 1;
+  expected_counts.response_headers = 1;
+  expected_counts.response_trailers = 1;
+  expected_counts.request_body = 1;
+  expected_counts.response_body = 1;
   ext_proc_server_->ext_proc_service()->WaitForRequestCounts(expected_counts);
   auto counts = ext_proc_server_->ext_proc_service()->GetRequestCounts();
-  EXPECT_EQ(counts.request_headers, req_hdrs ? 1 : 0);
-  EXPECT_EQ(counts.response_headers, resp_hdrs ? 1 : 0);
-  EXPECT_EQ(counts.response_trailers, resp_trls ? 1 : 0);
-  if (req_body) {
-    EXPECT_THAT(counts.request_body, ::testing::AnyOf(1, 2));
-  } else {
-    EXPECT_EQ(counts.request_body, 0);
-  }
-  EXPECT_EQ(counts.response_body, expect_response_body ? 1 : 0);
-  // Verify mutations
-  if (!observability_mode && req_hdrs) {
-    auto it = server_initial_metadata.find("x-extproc-request-headers-mutated");
-    ASSERT_NE(it, server_initial_metadata.end());
-    EXPECT_EQ(it->second, "yes");
-  } else {
-    auto it = server_initial_metadata.find("x-extproc-request-headers-mutated");
-    EXPECT_EQ(it, server_initial_metadata.end());
-  }
-  if (!observability_mode && resp_hdrs) {
-    auto it =
-        server_initial_metadata.find("x-extproc-response-headers-mutated");
-    ASSERT_NE(it, server_initial_metadata.end());
-    EXPECT_EQ(it->second, "yes");
-  } else {
-    auto it =
-        server_initial_metadata.find("x-extproc-response-headers-mutated");
-    EXPECT_EQ(it, server_initial_metadata.end());
-  }
-  if (!observability_mode && resp_trls) {
-    auto it =
-        server_trailing_metadata.find("x-extproc-response-trailers-mutated");
-    ASSERT_NE(it, server_trailing_metadata.end());
-    EXPECT_EQ(it->second, "yes");
-  } else {
-    auto it =
-        server_trailing_metadata.find("x-extproc-response-trailers-mutated");
-    EXPECT_EQ(it, server_trailing_metadata.end());
-  }
-  std::string expected_message = kRequestMessage;
-  if (!observability_mode) {
-    if (req_body) {
-      absl::StrAppend(&expected_message, "-request-body-mutated");
-    }
-    if (expect_response_body) {
-      absl::StrAppend(&expected_message, "-response-body-mutated");
-    }
-  }
-  EXPECT_EQ(response.message(), expected_message);
-  bool any_mode_enabled =
-      req_hdrs || resp_hdrs || resp_trls || req_body || expect_response_body;
-  EXPECT_EQ(ext_proc_server_->ext_proc_service()->num_calls(),
-            any_mode_enabled ? 1 : 0);
+  EXPECT_EQ(counts.request_headers, 1);
+  EXPECT_EQ(counts.response_headers, 1);
+  EXPECT_EQ(counts.response_trailers, 1);
+  EXPECT_THAT(counts.request_body, ::testing::AnyOf(1, 2));
+  EXPECT_EQ(counts.response_body, 1);
+  // Verify mutations (none expected in observability mode)
+  auto it = server_initial_metadata.find("x-extproc-request-headers-mutated");
+  EXPECT_EQ(it, server_initial_metadata.end());
+  it = server_initial_metadata.find("x-extproc-response-headers-mutated");
+  EXPECT_EQ(it, server_initial_metadata.end());
+  it = server_trailing_metadata.find("x-extproc-response-trailers-mutated");
+  EXPECT_EQ(it, server_trailing_metadata.end());
+  EXPECT_EQ(response.message(), kRequestMessage);
+  EXPECT_EQ(ext_proc_server_->ext_proc_service()->num_calls(), 1);
 }
 
-void XdsExtProcEnd2endTest::RunTrailersOnlyTest(bool observability_mode) {
+TEST_P(XdsExtProcEnd2endTest, TrailersOnlyProcessingModeAllEnabled) {
   CreateAndStartBackends(1);
-  auto ext_proc_config_builder = ExternalProcessorBuilder()
-                                     .SetTargetUri(ext_proc_server_->target())
-                                     .SetInsecureChannelCredentials()
-                                     .SetObservabilityMode(observability_mode);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  // Enable ALL processing modes
-  ext_proc_config_builder.SetRequestHeaderMode(ProcessingMode::SEND);
-  ext_proc_config_builder.SetResponseHeaderMode(ProcessingMode::SEND);
-  ext_proc_config_builder.SetResponseTrailerMode(ProcessingMode::SEND);
-  ext_proc_config_builder.SetRequestBodyMode(ProcessingMode::GRPC);
-  ext_proc_config_builder.SetResponseBodyMode(ProcessingMode::GRPC);
-  auto ext_proc_config = ext_proc_config_builder.Build();
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetObservabilityMode(false)
+          .SetRequestHeaderMode(envoy::extensions::filters::http::ext_proc::v3::
+                                    ProcessingMode::SEND)
+          .SetResponseHeaderMode(envoy::extensions::filters::http::ext_proc::
+                                     v3::ProcessingMode::SEND)
+          .SetResponseTrailerMode(envoy::extensions::filters::http::ext_proc::
+                                      v3::ProcessingMode::SEND)
+          .SetRequestBodyMode(envoy::extensions::filters::http::ext_proc::v3::
+                                  ProcessingMode::GRPC)
+          .SetResponseBodyMode(envoy::extensions::filters::http::ext_proc::v3::
+                                   ProcessingMode::GRPC)
+          .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
@@ -726,7 +798,6 @@ void XdsExtProcEnd2endTest::RunTrailersOnlyTest(bool observability_mode) {
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  // Force trailers-only failure
   rpc_options.set_server_fail(true);
   EchoResponse response;
   std::multimap<std::string, std::string> server_initial_metadata;
@@ -734,9 +805,6 @@ void XdsExtProcEnd2endTest::RunTrailersOnlyTest(bool observability_mode) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  // The V2-V3 bridge does not handle trailers-only responses
-  // correctly and double-delivers the metadata, which confuses the client
-  // and sometimes results in FAILED_PRECONDITION instead of UNAVAILABLE.
   EXPECT_THAT(status.error_code(),
               ::testing::AnyOf(StatusCode::UNAVAILABLE,
                                StatusCode::FAILED_PRECONDITION))
@@ -757,157 +825,61 @@ void XdsExtProcEnd2endTest::RunTrailersOnlyTest(bool observability_mode) {
   EXPECT_EQ(counts.response_trailers, 0);
 }
 
-TEST_P(XdsExtProcEnd2endTest, TrailersOnly_AllEnabled) {
-  RunTrailersOnlyTest(/*observability_mode=*/false);
+TEST_P(XdsExtProcEnd2endTest,
+       TrailersOnlyProcessingModeAllEnabledWithObservabilityMode) {
+  CreateAndStartBackends(1);
+  auto ext_proc_config =
+      ExternalProcessorBuilder()
+          .SetTargetUri(ext_proc_server_->target())
+          .SetInsecureChannelCredentials()
+          .SetObservabilityMode(true)
+          .SetRequestHeaderMode(envoy::extensions::filters::http::ext_proc::v3::
+                                    ProcessingMode::SEND)
+          .SetResponseHeaderMode(envoy::extensions::filters::http::ext_proc::
+                                     v3::ProcessingMode::SEND)
+          .SetResponseTrailerMode(envoy::extensions::filters::http::ext_proc::
+                                      v3::ProcessingMode::SEND)
+          .SetRequestBodyMode(envoy::extensions::filters::http::ext_proc::v3::
+                                  ProcessingMode::GRPC)
+          .SetResponseBodyMode(envoy::extensions::filters::http::ext_proc::v3::
+                                   ProcessingMode::GRPC)
+          .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = default_route_config_;
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(default_cluster_);
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  rpc_options.set_echo_metadata_initially(true);
+  rpc_options.set_echo_metadata(true);
+  rpc_options.set_server_fail(true);
+  EchoResponse response;
+  std::multimap<std::string, std::string> server_initial_metadata;
+  std::multimap<std::string, std::string> server_trailing_metadata;
+  Status status =
+      SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
+                         &server_trailing_metadata);
+  EXPECT_THAT(status.error_code(),
+              ::testing::AnyOf(StatusCode::UNAVAILABLE,
+                               StatusCode::FAILED_PRECONDITION))
+      << "Actual error message: " << status.error_message();
+  // Wait for expected counts
+  MockExternalProcessorService::RequestCounts expected_counts;
+  expected_counts.request_headers = 1;
+  expected_counts.request_body = 1;
+  expected_counts.response_headers = 1;
+  expected_counts.response_body = 0;
+  expected_counts.response_trailers = 0;
+  ext_proc_server_->ext_proc_service()->WaitForRequestCounts(expected_counts);
+  auto counts = ext_proc_server_->ext_proc_service()->GetRequestCounts();
+  EXPECT_EQ(counts.request_headers, 1);
+  EXPECT_THAT(counts.request_body, ::testing::AnyOf(1, 2));
+  EXPECT_EQ(counts.response_headers, 1);
+  EXPECT_EQ(counts.response_body, 0);
+  EXPECT_EQ(counts.response_trailers, 0);
 }
-
-TEST_P(XdsExtProcEnd2endTest, TrailersOnly_Observability_AllEnabled) {
-  RunTrailersOnlyTest(/*observability_mode=*/true);
-}
-
-#define EXT_PROC_TEST_P(name, req_hdrs, resp_hdrs, resp_trls, req_body, \
-                        resp_body)                                      \
-  TEST_P(XdsExtProcEnd2endTest, ProcessingMode_##name) {                \
-    RunProcessingModeTest(req_hdrs, resp_hdrs, resp_trls, req_body,     \
-                          resp_body);                                   \
-  }
-
-// 24 combinations
-EXT_PROC_TEST_P(NoReqHeaders_NoRespHeaders_NoRespTrailers_NoReqBody_NoRespBody,
-                false, false, false, false, false)
-EXT_PROC_TEST_P(NoReqHeaders_NoRespHeaders_RespTrailers_NoReqBody_NoRespBody,
-                false, false, true, false, false)
-EXT_PROC_TEST_P(NoReqHeaders_RespHeaders_NoRespTrailers_NoReqBody_NoRespBody,
-                false, true, false, false, false)
-EXT_PROC_TEST_P(NoReqHeaders_RespHeaders_RespTrailers_NoReqBody_NoRespBody,
-                false, true, true, false, false)
-EXT_PROC_TEST_P(ReqHeaders_NoRespHeaders_NoRespTrailers_NoReqBody_NoRespBody,
-                true, false, false, false, false)
-EXT_PROC_TEST_P(ReqHeaders_NoRespHeaders_RespTrailers_NoReqBody_NoRespBody,
-                true, false, true, false, false)
-EXT_PROC_TEST_P(ReqHeaders_RespHeaders_NoRespTrailers_NoReqBody_NoRespBody,
-                true, true, false, false, false)
-EXT_PROC_TEST_P(ReqHeaders_RespHeaders_RespTrailers_NoReqBody_NoRespBody, true,
-                true, true, false, false)
-
-EXT_PROC_TEST_P(NoReqHeaders_NoRespHeaders_NoRespTrailers_ReqBody_NoRespBody,
-                false, false, false, true, false)
-EXT_PROC_TEST_P(NoReqHeaders_NoRespHeaders_RespTrailers_ReqBody_NoRespBody,
-                false, false, true, true, false)
-EXT_PROC_TEST_P(NoReqHeaders_RespHeaders_NoRespTrailers_ReqBody_NoRespBody,
-                false, true, false, true, false)
-EXT_PROC_TEST_P(NoReqHeaders_RespHeaders_RespTrailers_ReqBody_NoRespBody, false,
-                true, true, true, false)
-EXT_PROC_TEST_P(ReqHeaders_NoRespHeaders_NoRespTrailers_ReqBody_NoRespBody,
-                true, false, false, true, false)
-EXT_PROC_TEST_P(ReqHeaders_NoRespHeaders_RespTrailers_ReqBody_NoRespBody, true,
-                false, true, true, false)
-EXT_PROC_TEST_P(ReqHeaders_RespHeaders_NoRespTrailers_ReqBody_NoRespBody, true,
-                true, false, true, false)
-EXT_PROC_TEST_P(ReqHeaders_RespHeaders_RespTrailers_ReqBody_NoRespBody, true,
-                true, true, true, false)
-
-EXT_PROC_TEST_P(NoReqHeaders_NoRespHeaders_RespTrailers_NoReqBody_RespBody,
-                false, false, true, false, true)
-EXT_PROC_TEST_P(NoReqHeaders_RespHeaders_RespTrailers_NoReqBody_RespBody, false,
-                true, true, false, true)
-EXT_PROC_TEST_P(ReqHeaders_NoRespHeaders_RespTrailers_NoReqBody_RespBody, true,
-                false, true, false, true)
-EXT_PROC_TEST_P(ReqHeaders_RespHeaders_RespTrailers_NoReqBody_RespBody, true,
-                true, true, false, true)
-
-EXT_PROC_TEST_P(NoReqHeaders_NoRespHeaders_RespTrailers_ReqBody_RespBody, false,
-                false, true, true, true)
-EXT_PROC_TEST_P(NoReqHeaders_RespHeaders_RespTrailers_ReqBody_RespBody, false,
-                true, true, true, true)
-EXT_PROC_TEST_P(ReqHeaders_NoRespHeaders_RespTrailers_ReqBody_RespBody, true,
-                false, true, true, true)
-EXT_PROC_TEST_P(ReqHeaders_RespHeaders_RespTrailers_ReqBody_RespBody, true,
-                true, true, true, true)
-
-#define EXT_PROC_OBSERVABILITY_TEST_P(name, req_hdrs, resp_hdrs, resp_trls,    \
-                                      req_body, resp_body)                     \
-  TEST_P(XdsExtProcEnd2endTest, ProcessingMode_Observability_##name) {         \
-    RunProcessingModeTest(req_hdrs, resp_hdrs, resp_trls, req_body, resp_body, \
-                          /*observability_mode=*/true);                        \
-  }
-
-// 24 combinations for Observability Mode
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_NoRespHeaders_NoRespTrailers_NoReqBody_NoRespBody, false,
-    false, false, false, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_NoRespHeaders_RespTrailers_NoReqBody_NoRespBody, false, false,
-    true, false, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_RespHeaders_NoRespTrailers_NoReqBody_NoRespBody, false, true,
-    false, false, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_RespHeaders_RespTrailers_NoReqBody_NoRespBody, false, true,
-    true, false, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_NoRespHeaders_NoRespTrailers_NoReqBody_NoRespBody, true, false,
-    false, false, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_NoRespHeaders_RespTrailers_NoReqBody_NoRespBody, true, false,
-    true, false, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_RespHeaders_NoRespTrailers_NoReqBody_NoRespBody, true, true,
-    false, false, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_RespHeaders_RespTrailers_NoReqBody_NoRespBody, true, true, true,
-    false, false)
-
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_NoRespHeaders_NoRespTrailers_ReqBody_NoRespBody, false, false,
-    false, true, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_NoRespHeaders_RespTrailers_ReqBody_NoRespBody, false, false,
-    true, true, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_RespHeaders_NoRespTrailers_ReqBody_NoRespBody, false, true,
-    false, true, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_RespHeaders_RespTrailers_ReqBody_NoRespBody, false, true, true,
-    true, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_NoRespHeaders_NoRespTrailers_ReqBody_NoRespBody, true, false,
-    false, true, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_NoRespHeaders_RespTrailers_ReqBody_NoRespBody, true, false, true,
-    true, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_RespHeaders_NoRespTrailers_ReqBody_NoRespBody, true, true, false,
-    true, false)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_RespHeaders_RespTrailers_ReqBody_NoRespBody, true, true, true,
-    true, false)
-
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_NoRespHeaders_RespTrailers_NoReqBody_RespBody, false, false,
-    true, false, true)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_RespHeaders_RespTrailers_NoReqBody_RespBody, false, true, true,
-    false, true)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_NoRespHeaders_RespTrailers_NoReqBody_RespBody, true, false, true,
-    false, true)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_RespHeaders_RespTrailers_NoReqBody_RespBody, true, true, true,
-    false, true)
-
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_NoRespHeaders_RespTrailers_ReqBody_RespBody, false, false,
-    true, true, true)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    NoReqHeaders_RespHeaders_RespTrailers_ReqBody_RespBody, false, true, true,
-    true, true)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_NoRespHeaders_RespTrailers_ReqBody_RespBody, true, false, true,
-    true, true)
-EXT_PROC_OBSERVABILITY_TEST_P(
-    ReqHeaders_RespHeaders_RespTrailers_ReqBody_RespBody, true, true, true,
-    true, true)
 
 TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseRequestHeaders) {
   auto mock_service = std::make_unique<GenericMockService>(
