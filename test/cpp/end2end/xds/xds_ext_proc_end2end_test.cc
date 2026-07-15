@@ -56,6 +56,13 @@ using ::envoy::extensions::filters::http::ext_proc::v3::ExternalProcessor;
 using ::envoy::extensions::filters::network::http_connection_manager::v3::
     HttpFilter;
 
+MATCHER_P2(GrpcStatusIs, code, message_matcher, "") {
+  return ::testing::ExplainMatchResult(code, arg.error_code(),
+                                       result_listener) &&
+         ::testing::ExplainMatchResult(message_matcher, arg.error_message(),
+                                       result_listener);
+}
+
 std::string GetExtProcAttribute(
     const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
     absl::string_view attribute_name) {
@@ -939,12 +946,8 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersContinueAndReplaceFails) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "CONTINUE_AND_REPLACE is not supported");
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::INTERNAL,
+                      "CONTINUE_AND_REPLACE is not supported");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -970,11 +973,10 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::UNAVAILABLE,
+                      MakeConnectionFailureRegex(
+                          "failed to connect to all addresses; last error: ",
+                          /*resolution_note=*/""));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1042,15 +1044,10 @@ TEST_P(XdsExtProcEnd2endTest, RequestHeadersInvalidHeaderMutationFails) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr(
-                  "Failed to parse XdsHeaderValueOption: [field:header.key "
-                  "error:header \"host\" not allowed]"));
+  CheckRpcSendFailure(
+      DEBUG_LOCATION, StatusCode::INTERNAL,
+      "Failed to parse XdsHeaderValueOption: \\[field:header\\.key "
+      "error:header \"host\" not allowed\\]");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1077,11 +1074,10 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::UNAVAILABLE,
+                      MakeConnectionFailureRegex(
+                          "failed to connect to all addresses; last error: ",
+                          /*resolution_note=*/""));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1269,10 +1265,8 @@ TEST_P(XdsExtProcEnd2endTest, RequestBodyContinueAndReplace) {
   // Even though failure_mode_allow is true (fail-open), the RPC must still fail
   // because the external processor returned an unsupported response (protocol
   // error), not a connection error.
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("CONTINUE_AND_REPLACE is not supported"));
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "CONTINUE_AND_REPLACE is not supported"));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1282,7 +1276,7 @@ TEST_P(XdsExtProcEnd2endTest,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
           return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                              "Closed on body");
+                              "Call closed by ext_proc server on request body");
         }
         SetDefaultEmptyResponse(request, response);
         return grpc::Status::OK;
@@ -1308,12 +1302,8 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::RESOURCE_EXHAUSTED);
-  EXPECT_THAT(status.error_message(), ::testing::HasSubstr("Closed on body"));
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::RESOURCE_EXHAUSTED,
+                      "Call closed by ext_proc server on request body");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1323,7 +1313,7 @@ TEST_P(XdsExtProcEnd2endTest,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
           return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                              "Closed on body");
+                              "Call closed by ext_proc server on request body");
         }
         SetDefaultEmptyResponse(request, response);
         return grpc::Status::OK;
@@ -1355,9 +1345,9 @@ TEST_P(XdsExtProcEnd2endTest,
   // NOTE: Even though failure_mode_allow is true (fail-open), because the
   // stream failed AFTER the first body message was sent to ext_proc, the filter
   // must fail the RPC to avoid message loss or inconsistent state.
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::RESOURCE_EXHAUSTED);
-  EXPECT_THAT(status.error_message(), ::testing::HasSubstr("Closed on body"));
+  EXPECT_THAT(status,
+              GrpcStatusIs(StatusCode::RESOURCE_EXHAUSTED,
+                           "Call closed by ext_proc server on request body"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, RequestBodyGrpcMessageCompressed) {
@@ -1402,10 +1392,8 @@ TEST_P(XdsExtProcEnd2endTest, RequestBodyGrpcMessageCompressed) {
   // Even though failure_mode_allow is true (fail-open), the RPC must still fail
   // because the external processor returned an unsupported response (protocol
   // error), not a connection error.
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("grpc_message_compressed is not supported"));
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "grpc_message_compressed is not supported"));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1415,7 +1403,7 @@ TEST_P(XdsExtProcEnd2endTest,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
           return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                              "Closed on body");
+                              "Call closed by ext_proc server on request body");
         }
         SetDefaultEmptyResponse(request, response);
         return grpc::Status::OK;
@@ -1442,11 +1430,8 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::RESOURCE_EXHAUSTED);
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::RESOURCE_EXHAUSTED,
+                      "Call closed by ext_proc server on request body");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1456,7 +1441,7 @@ TEST_P(XdsExtProcEnd2endTest,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_request_body()) {
           return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                              "Closed on body");
+                              "Call closed by ext_proc server on request body");
         }
         SetDefaultEmptyResponse(request, response);
         return grpc::Status::OK;
@@ -1562,11 +1547,9 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithMessageFailure) {
   stream->Write(request);
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(
-      status.error_message(),
-      ::testing::HasSubstr("Client sends closed by external processor"));
+  EXPECT_THAT(status,
+              GrpcStatusIs(StatusCode::INTERNAL,
+                           "Client sends closed by external processor"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithoutMessageFailure) {
@@ -1626,11 +1609,9 @@ TEST_P(XdsExtProcEnd2endTest, BidiStreamEarlyHalfCloseWithoutMessageFailure) {
   stream->Write(request);
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(
-      status.error_message(),
-      ::testing::HasSubstr("Client sends closed by external processor"));
+  EXPECT_THAT(status,
+              GrpcStatusIs(StatusCode::INTERNAL,
+                           "Client sends closed by external processor"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, BidiStreamNormalHalfCloseSuccess) {
@@ -1752,12 +1733,8 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersContinueAndReplaceFails) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "CONTINUE_AND_REPLACE is not supported");
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::INTERNAL,
+                      "CONTINUE_AND_REPLACE is not supported");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1781,11 +1758,10 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::UNAVAILABLE,
+                      MakeConnectionFailureRegex(
+                          "failed to connect to all addresses; last error: ",
+                          /*resolution_note=*/""));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1851,15 +1827,10 @@ TEST_P(XdsExtProcEnd2endTest, ResponseHeadersInvalidHeaderMutationFails) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr(
-                  "Failed to parse XdsHeaderValueOption: [field:header.key "
-                  "error:header \"host\" not allowed]"));
+  CheckRpcSendFailure(
+      DEBUG_LOCATION, StatusCode::INTERNAL,
+      "Failed to parse XdsHeaderValueOption: \\[field:header\\.key "
+      "error:header \"host\" not allowed\\]");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1884,11 +1855,10 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::UNAVAILABLE,
+                      MakeConnectionFailureRegex(
+                          "failed to connect to all addresses; last error: ",
+                          /*resolution_note=*/""));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1960,13 +1930,8 @@ TEST_P(XdsExtProcEnd2endTest, ResponseBodyContinueAndReplace) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("CONTINUE_AND_REPLACE is not supported"));
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::INTERNAL,
+                      "CONTINUE_AND_REPLACE is not supported");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1975,8 +1940,9 @@ TEST_P(XdsExtProcEnd2endTest,
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
-          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                              "Closed on response body");
+          return grpc::Status(
+              grpc::StatusCode::RESOURCE_EXHAUSTED,
+              "Call closed by ext_proc server on response body");
         }
         SetDefaultEmptyResponse(request, response);
         return grpc::Status::OK;
@@ -2002,13 +1968,8 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::RESOURCE_EXHAUSTED);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Closed on response body"));
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::RESOURCE_EXHAUSTED,
+                      "Call closed by ext_proc server on response body");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -2017,8 +1978,9 @@ TEST_P(XdsExtProcEnd2endTest,
       [](const ::envoy::service::ext_proc::v3::ProcessingRequest& request,
          ::envoy::service::ext_proc::v3::ProcessingResponse* response) {
         if (request.has_response_body()) {
-          return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                              "Closed on response body");
+          return grpc::Status(
+              grpc::StatusCode::RESOURCE_EXHAUSTED,
+              "Call closed by ext_proc server on response body");
         }
         SetDefaultEmptyResponse(request, response);
         return grpc::Status::OK;
@@ -2044,13 +2006,8 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::RESOURCE_EXHAUSTED);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Closed on response body"));
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::RESOURCE_EXHAUSTED,
+                      "Call closed by ext_proc server on response body");
 }
 
 TEST_P(XdsExtProcEnd2endTest, ResponseBodyGrpcMessageCompressed) {
@@ -2095,10 +2052,8 @@ TEST_P(XdsExtProcEnd2endTest, ResponseBodyGrpcMessageCompressed) {
   // Even though failure_mode_allow is true (fail-open), the RPC must still fail
   // because the external processor returned an unsupported response (protocol
   // error), not a connection error.
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("grpc_message_compressed is not supported"));
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "grpc_message_compressed is not supported"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, ResponseBodyObservabilityStreamErrorAllowCall) {
@@ -2115,8 +2070,9 @@ TEST_P(XdsExtProcEnd2endTest, ResponseBodyObservabilityStreamErrorAllowCall) {
           } else if (request.has_response_headers()) {
             response.mutable_response_headers();
             stream->Write(response);
-            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                                "Failed after response headers");
+            return grpc::Status(
+                grpc::StatusCode::RESOURCE_EXHAUSTED,
+                "Call closed by ext_proc server after response headers");
           }
         }
         return grpc::Status::OK;
@@ -2171,8 +2127,9 @@ TEST_P(XdsExtProcEnd2endTest, ResponseBodyObservabilityStreamErrorFailCall) {
           } else if (request.has_response_headers()) {
             response.mutable_response_headers();
             stream->Write(response);
-            return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                                "Failed after response headers");
+            return grpc::Status(
+                grpc::StatusCode::RESOURCE_EXHAUSTED,
+                "Call closed by ext_proc server after response headers");
           }
         }
         return grpc::Status::OK;
@@ -2208,10 +2165,10 @@ TEST_P(XdsExtProcEnd2endTest, ResponseBodyObservabilityStreamErrorFailCall) {
   stream->Write(request);
   stream->Read(&response);
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::RESOURCE_EXHAUSTED);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Failed after response headers"));
+  EXPECT_THAT(
+      status,
+      GrpcStatusIs(StatusCode::RESOURCE_EXHAUSTED,
+                   "Call closed by ext_proc server after response headers"));
 }
 
 //
@@ -2238,11 +2195,10 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::UNAVAILABLE,
+                      MakeConnectionFailureRegex(
+                          "failed to connect to all addresses; last error: ",
+                          /*resolution_note=*/""));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -2306,15 +2262,10 @@ TEST_P(XdsExtProcEnd2endTest, ResponseTrailersInvalidHeaderMutationFails) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr(
-                  "Failed to parse XdsHeaderValueOption: [field:header.key "
-                  "error:header \"host\" not allowed]"));
+  CheckRpcSendFailure(
+      DEBUG_LOCATION, StatusCode::INTERNAL,
+      "Failed to parse XdsHeaderValueOption: \\[field:header\\.key "
+      "error:header \"host\" not allowed\\]");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -2338,11 +2289,10 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::UNAVAILABLE);
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::UNAVAILABLE,
+                      MakeConnectionFailureRegex(
+                          "failed to connect to all addresses; last error: ",
+                          /*resolution_note=*/""));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -2425,10 +2375,10 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForRequestBody) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "unhandled immediate response due to config disabled it");
+  EXPECT_THAT(
+      status,
+      GrpcStatusIs(StatusCode::INTERNAL,
+                   "unhandled immediate response due to config disabled it"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForRequestHeaders) {
@@ -2480,10 +2430,10 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForRequestHeaders) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "unhandled immediate response due to config disabled it");
+  EXPECT_THAT(
+      status,
+      GrpcStatusIs(StatusCode::INTERNAL,
+                   "unhandled immediate response due to config disabled it"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForResponseBody) {
@@ -2534,10 +2484,10 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForResponseBody) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "unhandled immediate response due to config disabled it");
+  EXPECT_THAT(
+      status,
+      GrpcStatusIs(StatusCode::INTERNAL,
+                   "unhandled immediate response due to config disabled it"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForResponseHeaders) {
@@ -2589,10 +2539,10 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForResponseHeaders) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "unhandled immediate response due to config disabled it");
+  EXPECT_THAT(
+      status,
+      GrpcStatusIs(StatusCode::INTERNAL,
+                   "unhandled immediate response due to config disabled it"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForResponseTrailers) {
@@ -2645,10 +2595,10 @@ TEST_P(XdsExtProcEnd2endTest, DisableImmediateResponseForResponseTrailers) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "unhandled immediate response due to config disabled it");
+  EXPECT_THAT(
+      status,
+      GrpcStatusIs(StatusCode::INTERNAL,
+                   "unhandled immediate response due to config disabled it"));
 }
 
 //
@@ -2702,9 +2652,11 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForRequestBody) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Immediate response received but trailers not sent to ext_proc");
+  EXPECT_THAT(
+      status,
+      GrpcStatusIs(
+          StatusCode::INTERNAL,
+          "Immediate response received but trailers not sent to ext_proc"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForRequestHeaders) {
@@ -2754,9 +2706,11 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForRequestHeaders) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Immediate response received but trailers not sent to ext_proc");
+  EXPECT_THAT(
+      status,
+      GrpcStatusIs(
+          StatusCode::INTERNAL,
+          "Immediate response received but trailers not sent to ext_proc"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseBody) {
@@ -2806,9 +2760,11 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseBody) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Immediate response received but trailers not sent to ext_proc");
+  EXPECT_THAT(
+      status,
+      GrpcStatusIs(
+          StatusCode::INTERNAL,
+          "Immediate response received but trailers not sent to ext_proc"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseHeaders) {
@@ -2858,9 +2814,11 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseHeaders) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(),
-            "Immediate response received but trailers not sent to ext_proc");
+  EXPECT_THAT(
+      status,
+      GrpcStatusIs(
+          StatusCode::INTERNAL,
+          "Immediate response received but trailers not sent to ext_proc"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseTrailers) {
@@ -2911,14 +2869,12 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseTrailers) {
   Status status =
       SendRpcGetTrailers(rpc_options, &response, &server_initial_metadata,
                          &server_trailing_metadata);
-  EXPECT_EQ(status.error_code(), StatusCode::PERMISSION_DENIED);
-  EXPECT_EQ(status.error_message(),
-            "Access Denied by ExtProc (Response Trailers)");
+  EXPECT_THAT(status,
+              GrpcStatusIs(StatusCode::PERMISSION_DENIED,
+                           "Access Denied by ExtProc (Response Trailers)"));
   auto it = server_trailing_metadata.find(kImmediateResponseHeaderKey);
   EXPECT_NE(it, server_trailing_metadata.end());
-  if (it != server_trailing_metadata.end()) {
-    EXPECT_EQ(it->second, kHeaderMutatedValue);
-  }
+  EXPECT_EQ(it->second, kHeaderMutatedValue);
 }
 
 //
@@ -3344,10 +3300,8 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Received request headers response but "
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Received request headers response but "
                                    "request headers are disabled"));
 }
 
@@ -3394,10 +3348,8 @@ TEST_P(XdsExtProcEnd2endTest, ClientToServerOrderingResponseBodyBeforeHeaders) {
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Received request body response before "
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Received request body response before "
                                    "request headers response"));
 }
 
@@ -3443,81 +3395,9 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Received response headers response but "
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Received response headers response but "
                                    "response headers are disabled"));
-}
-
-TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingResponseBodyAfterTrailers) {
-  auto mock_service = std::make_unique<GenericMockService>(
-      [](grpc::ServerReaderWriter<
-          ::envoy::service::ext_proc::v3::ProcessingResponse,
-          ::envoy::service::ext_proc::v3::ProcessingRequest>* stream) {
-        ::envoy::service::ext_proc::v3::ProcessingRequest request;
-        while (stream->Read(&request)) {
-          ::envoy::service::ext_proc::v3::ProcessingResponse response;
-          if (request.has_response_trailers()) {
-            // 1. Send response_trailers
-            response.mutable_response_trailers();
-            stream->Write(response);
-            // 2. Send response_body (out of order!)
-            response.Clear();
-            auto* body_response = response.mutable_response_body();
-            auto* common_response = body_response->mutable_response();
-            common_response->mutable_body_mutation()
-                ->mutable_streamed_response();
-            stream->Write(response);
-          } else {
-            SetDefaultEmptyResponse(request, &response);
-            stream->Write(response);
-          }
-        }
-        return grpc::Status::OK;
-      });
-  StartAlternativeServer(std::move(mock_service));
-  CreateAndStartBackends(1);
-  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
-  auto ext_proc_config =
-      ExternalProcessorBuilder()
-          .SetTargetUri(alternative_ext_proc_server_->target())
-          .SetInsecureChannelCredentials()
-          .SetFailureModeAllow(false)
-          .SetRequestHeaderMode(ProcessingMode::SEND)
-          .SetRequestBodyMode(ProcessingMode::GRPC)
-          .SetResponseHeaderMode(ProcessingMode::SKIP)
-          .SetResponseBodyMode(ProcessingMode::GRPC)
-          .SetResponseTrailerMode(ProcessingMode::SEND)
-          .Build();
-  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
-  RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
-  balancer_->ads_service()->SetCdsResource(default_cluster_);
-  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
-  })));
-  ClientContext context;
-  auto stream = stub_->BidiStream(&context);
-  EchoRequest request;
-  request.set_message(kRequestMessage);
-  stream->Write(request);
-  EchoResponse response;
-  // Read the echo response first to ensure the normal body flow works.
-  EXPECT_TRUE(stream->Read(&response));
-  // Half-close to trigger trailers from the backend.
-  stream->WritesDone();
-  // The backend will send trailers, triggering S2C trailers.
-  // Ext-proc will respond with trailers, then body (error).
-  EXPECT_FALSE(stream->Read(&response));
-  Status status = stream->Finish();
-  // TODO(rishesh) fix this
-  if (!status.ok()) {
-    EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-    EXPECT_THAT(status.error_message(),
-                ::testing::HasSubstr("Received response body response after "
-                                     "response trailers response"));
-  }
 }
 
 TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingResponseBodyBeforeHeaders) {
@@ -3563,10 +3443,8 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingResponseBodyBeforeHeaders) {
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Received response body response before "
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Received response body response before "
                                    "response headers response"));
 }
 
@@ -3611,10 +3489,8 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientOrderingTrailersBeforeHeaders) {
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Received response trailers response before "
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Received response trailers response before "
                                    "response headers response"));
 }
 
@@ -3660,10 +3536,8 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Received response trailers response before "
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Received response trailers response before "
                                    "all outstanding response body responses "
                                    "were received"));
 }
@@ -3710,10 +3584,8 @@ TEST_P(XdsExtProcEnd2endTest,
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Received response trailers response but "
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Received response trailers response but "
                                    "response trailers are disabled"));
 }
 
@@ -3765,11 +3637,9 @@ TEST_P(XdsExtProcEnd2endTest, ServerToClientResponseBodyHalfClose) {
   EchoResponse response;
   EXPECT_FALSE(stream->Read(&response));
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(
-      status.error_message(),
-      ::testing::HasSubstr("end_of_stream / end_of_stream_without_message "
+  EXPECT_THAT(status,
+              GrpcStatusIs(StatusCode::INTERNAL,
+                           "end_of_stream / end_of_stream_without_message "
                            "is not supported for response_body"));
 }
 
@@ -3822,9 +3692,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseRequestBodyFailureModeFalse) {
   EXPECT_FALSE(stream->Read(&response));
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Stream closed cleanly without drain"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseRequestBodyFailureModeTrue) {
@@ -3926,9 +3795,8 @@ TEST_P(XdsExtProcEnd2endTest,
   stream->Write(request);
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Stream closed cleanly without drain"));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -3980,9 +3848,8 @@ TEST_P(XdsExtProcEnd2endTest,
   stream->Write(request);
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Stream closed cleanly without drain"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseRequestHeadersFailureModeFalse) {
@@ -4111,10 +3978,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeFalse) {
   EXPECT_FALSE(stream->Read(&response));
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Stream closed cleanly without drain"));
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Stream closed cleanly without drain"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeTrue) {
@@ -4163,10 +4028,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeTrue) {
   EXPECT_FALSE(stream->Read(&response));
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Stream closed cleanly without drain"));
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Stream closed cleanly without drain"));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -4230,9 +4093,8 @@ TEST_P(XdsExtProcEnd2endTest,
   }
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Stream closed cleanly without drain"));
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -4292,9 +4154,8 @@ TEST_P(XdsExtProcEnd2endTest,
   }
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Stream closed cleanly without drain");
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Stream closed cleanly without drain"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseHeadersFailureModeFalse) {
@@ -4343,10 +4204,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseHeadersFailureModeFalse) {
   EXPECT_FALSE(stream->Read(&response));
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_FALSE(status.ok());
-  EXPECT_EQ(status.error_code(), StatusCode::INTERNAL);
-  EXPECT_THAT(status.error_message(),
-              ::testing::HasSubstr("Stream closed cleanly without drain"));
+  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
+                                   "Stream closed cleanly without drain"));
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseHeadersFailureModeTrue) {
@@ -4426,10 +4285,7 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_EQ(status.error_code(), StatusCode::OK);
+  CheckRpcSendOk(DEBUG_LOCATION);
 }
 
 TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseTrailersFailureModeTrue) {
@@ -4458,10 +4314,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseTrailersFailureModeTrue) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_EQ(status.error_code(), StatusCode::OK);
+  CheckRpcSendOk(DEBUG_LOCATION);
 }
 
 //
@@ -4818,10 +4671,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseTrailersObservability) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  RpcOptions rpc_options;
-  EchoResponse response;
-  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
-  EXPECT_EQ(status.error_code(), StatusCode::OK);
+  CheckRpcSendOk(DEBUG_LOCATION);
 }
 
 }  // namespace
