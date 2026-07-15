@@ -170,6 +170,9 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   absl::AnyInvocable<Poll<absl::Status>()> ClientToServerCallNormalMode(
       CallHandler handler, RefCountedPtr<ExtProcCall> ext_proc_call);
 
+  absl::AnyInvocable<Poll<absl::Status>()> ClientToServerCallNonProcessingMode(
+      CallHandler handler, RefCountedPtr<ExtProcCall> ext_proc_call);
+
   absl::AnyInvocable<Poll<absl::Status>()> ServerToClientCall(
       CallHandler handler, CallInitiator initiator,
       RefCountedPtr<ExtProcCall> ext_proc_call);
