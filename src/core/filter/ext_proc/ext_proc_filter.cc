@@ -230,27 +230,10 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         false, std::memory_order_acq_rel);
   }
 
-  bool IsClientFailOpenAllowed() const {
+  bool IsFailOpenAllowed() const {
     const bool allow = config_->failure_mode_allow.value_or(false);
     if (config_->observability_mode) return allow;
-    return allow &&
-           !c2s_first_body_message_sent_.load(std::memory_order_acquire);
-  }
-
-  bool IsServerFailOpenAllowed() const {
-    const bool allow = config_->failure_mode_allow.value_or(false);
-    if (config_->observability_mode) return allow;
-    return allow &&
-           !s2c_first_body_message_sent_.load(std::memory_order_acquire);
-  }
-
-  bool IsStreamFailOpenAllowed() const {
-    const bool allow = config_->failure_mode_allow.value_or(false);
-    if (config_->observability_mode || !allow) {
-      return allow;
-    }
-    return !(c2s_first_body_message_sent_.load(std::memory_order_acquire) ||
-             s2c_first_body_message_sent_.load(std::memory_order_acquire));
+    return allow && !first_body_message_sent_.load(std::memory_order_acquire);
   }
 
   void MarkClientHalfCloseInitiated() {
@@ -376,12 +359,8 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     };
   }
 
-  void SetC2SFirstBodyMessageSent() {
-    c2s_first_body_message_sent_.store(true, std::memory_order_release);
-  }
-
-  void SetS2CFirstBodyMessageSent() {
-    s2c_first_body_message_sent_.store(true, std::memory_order_release);
+  void SetFirstBodyMessageSent() {
+    first_body_message_sent_.store(true, std::memory_order_release);
   }
 
   absl::AnyInvocable<Poll<absl::Status>()> SendMessage(
@@ -494,7 +473,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         }),
         [ext_proc_call = Ref()](absl::Status status) {
           if (status.ok()) {
-            ext_proc_call->SetS2CFirstBodyMessageSent();
+            ext_proc_call->SetFirstBodyMessageSent();
           }
           return status;
         });
@@ -568,7 +547,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         }),
         [ext_proc_call = Ref()](absl::Status status) {
           if (status.ok()) {
-            ext_proc_call->SetC2SFirstBodyMessageSent();
+            ext_proc_call->SetFirstBodyMessageSent();
           }
           return status;
         });
@@ -662,27 +641,25 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       }
       return;
     }
-    const bool fail_open = IsStreamFailOpenAllowed();
     GRPC_TRACE_LOG(ext_proc_filter, INFO)
         << "ExtProcCall " << this
         << " message received, size=" << payload.size();
     // Parse the response from the external processor.
-    auto parsed_response_or = ExtProcResponse::Parse(payload);
-    if (!parsed_response_or.ok()) {
+    auto parsed_response = ExtProcResponse::Parse(payload);
+    if (!parsed_response.ok()) {
       // If parsing fails, we either fail the stream or close it cleanly
       // (fail-open) depending on configuration.
-      if (!fail_open) {
-        SetStreamError(parsed_response_or.status());
+      if (!IsFailOpenAllowed()) {
+        SetStreamError(parsed_response.status());
       } else {
         CompleteAllLatchesAndPipes(ExtProcResponse{});
         CloseStream();
       }
       return;
     }
-    auto parsed_response = std::move(*parsed_response_or);
     // If the server requests a drain, we half-close the stream to signal
     // we are done sending requests.
-    if (parsed_response.request_drain) {
+    if ((*parsed_response).request_drain) {
       GRPC_TRACE_LOG(ext_proc_filter, INFO)
           << "ExtProcCall " << this << " received request_drain=true";
       SetDrainRequested();
@@ -701,25 +678,23 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     const auto processing_mode =
         config_->processing_mode.value_or(ProcessingMode());
     if (std::holds_alternative<ExtProcResponse::ImmediateResponse>(
-            parsed_response.response)) {
+            (*parsed_response).response)) {
       if (config_->disable_immediate_response || !server_trailers_sent()) {
         auto error = absl::InternalError(
             config_->disable_immediate_response
                 ? "unhandled immediate response due to config disabled it"
                 : "Immediate response received but trailers not sent to "
                   "ext_proc");
-        SetStreamStatus(error);
-        CompleteAllLatchesAndPipes(error);
-        CloseStream();
+        SetStreamError(error);
         return;
       }
       if (processing_mode.send_response_trailers &&
           !response_trailers_latch_.IsSet()) {
-        response_trailers_latch_.Set(std::move(parsed_response));
+        response_trailers_latch_.Set(std::move(*parsed_response));
       }
       return;
     } else if (std::holds_alternative<ExtProcResponse::RequestHeaders>(
-                   parsed_response.response)) {
+                   (*parsed_response).response)) {
       if (!processing_mode.send_request_headers) {
         SetStreamError(
             absl::InternalError("Received request headers response but "
@@ -728,10 +703,10 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       }
       if (processing_mode.send_request_headers &&
           !request_headers_latch_.IsSet()) {
-        request_headers_latch_.Set(std::move(parsed_response));
+        request_headers_latch_.Set(std::move(*parsed_response));
       }
     } else if (std::holds_alternative<ExtProcResponse::ResponseHeaders>(
-                   parsed_response.response)) {
+                   (*parsed_response).response)) {
       if (!processing_mode.send_response_headers) {
         SetStreamError(
             absl::InternalError("Received response headers response but "
@@ -740,10 +715,10 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       }
       if (processing_mode.send_response_headers &&
           !response_headers_latch_.IsSet()) {
-        response_headers_latch_.Set(std::move(parsed_response));
+        response_headers_latch_.Set(std::move(*parsed_response));
       }
     } else if (std::holds_alternative<ExtProcResponse::ResponseTrailers>(
-                   parsed_response.response)) {
+                   (*parsed_response).response)) {
       if (!processing_mode.send_response_trailers) {
         SetStreamError(
             absl::InternalError("Received response trailers response but "
@@ -778,10 +753,10 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       }
       if (processing_mode.send_response_trailers &&
           !response_trailers_latch_.IsSet()) {
-        response_trailers_latch_.Set(std::move(parsed_response));
+        response_trailers_latch_.Set(std::move(*parsed_response));
       }
     } else if (std::holds_alternative<ExtProcResponse::RequestBody>(
-                   parsed_response.response)) {
+                   (*parsed_response).response)) {
       if (!processing_mode.send_request_body) {
         SetStreamError(absl::InternalError(
             "Received request body response but request body is disabled"));
@@ -801,7 +776,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         return;
       }
       const auto& request_body =
-          std::get<ExtProcResponse::RequestBody>(parsed_response.response);
+          std::get<ExtProcResponse::RequestBody>((*parsed_response).response);
       GRPC_TRACE_LOG(ext_proc_filter, INFO)
           << "ExtProc: Parsed request body response, eos: "
           << request_body.mutation.end_of_stream << ", eos_without_msg: "
@@ -818,7 +793,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         }
         return;
       }
-      request_body_pipe_.sender.Push(std::move(parsed_response))();
+      request_body_pipe_.sender.Push(std::move(*parsed_response))();
       if (request_body.mutation.end_of_stream) {
         SetExtProcSetEos();
         if (!request_body_pipe_.sender.IsClosed()) {
@@ -826,7 +801,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         }
       }
     } else if (std::holds_alternative<ExtProcResponse::ResponseBody>(
-                   parsed_response.response)) {
+                   (*parsed_response).response)) {
       if (!processing_mode.send_response_body) {
         SetStreamError(
             absl::InternalError("Received response body response but "
@@ -862,7 +837,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       // This prevents a race where SetServerToClientWritesDone() runs
       // concurrently, sees the outstanding count is 0, and closes the pipe
       // before we can push this last message.
-      response_body_pipe_.sender.Push(std::move(parsed_response))();
+      response_body_pipe_.sender.Push(std::move(*parsed_response))();
       bool should_close = false;
       DecrementOutstandingServerToClientMessages(&should_close);
       if (should_close) {
@@ -903,7 +878,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
             "Stream closed cleanly with outstanding messages");
       }
     }
-    const bool fail_open_allowed = IsStreamFailOpenAllowed();
+    const bool fail_open_allowed = IsFailOpenAllowed();
     const bool should_propagate_error = !status.ok() && !fail_open_allowed;
     bool already_closed = false;
     {
@@ -939,11 +914,9 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   // Used to include overall processing_mode in the initial stream header
   // request.
   std::atomic<bool> is_first_message_on_ext_proc_stream_{true};
-  // Tracks whether the first body message has been sent for client-to-server
-  // (C2S) and server-to-client (S2C) directions respectively, used for
-  // fail-open determination.
-  std::atomic<bool> c2s_first_body_message_sent_{false};
-  std::atomic<bool> s2c_first_body_message_sent_{false};
+  // Tracks whether the first body message has been sent on the stream,
+  // used for fail-open determination.
+  std::atomic<bool> first_body_message_sent_{false};
   // TODO(rishesh): Need to remove this once PH2 work is done.
   // Number of messages sent to ext_proc that are awaiting response processing
   // in S2C and C2S directions respectively.
@@ -1042,7 +1015,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerInitialMetadataNormalMode(
                      "(pre-existing). Status: "
                   << status;
               if (!ext_proc_call->IsStreamClosedCleanly() &&
-                  !ext_proc_call->IsServerFailOpenAllowed()) {
+                  !ext_proc_call->IsFailOpenAllowed()) {
                 return status;
               }
               handler.SpawnPushServerInitialMetadata(std::move(*metadata));
@@ -1129,7 +1102,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerInitialMetadata(
                metadata]() mutable {
       if (ext_proc_call != nullptr && ext_proc_call->IsStreamClosed() &&
           !ext_proc_call->IsStreamClosedCleanly() &&
-          !ext_proc_call->IsStreamFailOpenAllowed()) {
+          !ext_proc_call->IsFailOpenAllowed()) {
         return ext_proc_call->GetStreamStatus();
       }
       GRPC_TRACE_LOG(ext_proc_filter, INFO)
@@ -1233,7 +1206,7 @@ SendServerToClientMessagesToExtProcServer(
                         // If stream did not close cleanly and fail-open is not
                         // allowed, return error status.
                         if (!ext_proc_call->IsStreamClosedCleanly() &&
-                            !ext_proc_call->IsServerFailOpenAllowed()) {
+                            !ext_proc_call->IsFailOpenAllowed()) {
                           return status;
                         }
                         // Otherwise, resume data plane bypass and push message.
@@ -1262,7 +1235,7 @@ SendServerToClientMessagesToExtProcServer(
                                 // If not cleanly closed and fail-open is not
                                 // allowed, return error status immediately.
                                 if (!ext_proc_call->IsStreamClosedCleanly() &&
-                                    !ext_proc_call->IsServerFailOpenAllowed()) {
+                                    !ext_proc_call->IsFailOpenAllowed()) {
                                   return ext_proc_call->IsStreamClosed()
                                              ? ext_proc_call->GetStreamStatus()
                                              : status;
@@ -1282,8 +1255,7 @@ SendServerToClientMessagesToExtProcServer(
                         auto message = std::move(*shared_message);
                         bool is_closed = ext_proc_call->IsStreamClosed();
                         bool is_clean = ext_proc_call->IsStreamClosedCleanly();
-                        bool fail_open =
-                            ext_proc_call->IsServerFailOpenAllowed();
+                        bool fail_open = ext_proc_call->IsFailOpenAllowed();
                         GRPC_TRACE_LOG(ext_proc_filter, INFO)
                             << "ExtProc: S2C bypass check: is_closed="
                             << is_closed << ", is_clean=" << is_clean
@@ -1523,7 +1495,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ServerTrailingMetadataNormalMode(
                      "(pre-existing). Status: "
                   << status;
               if (!ext_proc_call->IsStreamClosedCleanly() &&
-                  !ext_proc_call->IsServerFailOpenAllowed()) {
+                  !ext_proc_call->IsFailOpenAllowed()) {
                 return status;
               }
               handler.SpawnPushServerTrailingMetadata(std::move(*metadata));
@@ -1679,7 +1651,7 @@ ServerTrailingMetadataTrailersOnlyNormalMode(
                      "complete (pre-existing). Status: "
                   << status;
               if (!ext_proc_call->IsStreamClosedCleanly() &&
-                  !ext_proc_call->IsServerFailOpenAllowed()) {
+                  !ext_proc_call->IsFailOpenAllowed()) {
                 return status;
               }
               handler.SpawnPushServerTrailingMetadata(std::move(*metadata));
@@ -1752,7 +1724,7 @@ MaybeHandleClosedStream(CallHandler handler,
   if (ext_proc_call->IsStreamClosed() ||
       ext_proc_call->ext_proc_stream_half_closed()) {
     absl::Status error = ext_proc_call->GetStreamStatus();
-    if (!error.ok() && !ext_proc_call->IsServerFailOpenAllowed()) {
+    if (!error.ok() && !ext_proc_call->IsFailOpenAllowed()) {
       return [error]() -> Poll<absl::Status> { return error; };
     }
     return ServerTrailingMetadataNonProcessingMode(
@@ -2025,7 +1997,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToSidestreamNormalMode(
                                // If stream did not close cleanly and fail-open
                                // is not allowed, return error status.
                                if (!ext_proc_call->IsStreamClosedCleanly() &&
-                                   !ext_proc_call->IsClientFailOpenAllowed()) {
+                                   !ext_proc_call->IsFailOpenAllowed()) {
                                  return ext_proc_call->GetStreamStatus();
                                }
                                // Otherwise, resume data plane bypass and
@@ -2076,7 +2048,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToSidestreamNormalMode(
                                 // cleanly closed and fail-open is not allowed,
                                 // return error status immediately.
                                 if (!ext_proc_call->IsStreamClosedCleanly() &&
-                                    !ext_proc_call->IsClientFailOpenAllowed()) {
+                                    !ext_proc_call->IsFailOpenAllowed()) {
                                   return ext_proc_call->IsStreamClosed()
                                              ? ext_proc_call->GetStreamStatus()
                                              : status;
@@ -2095,7 +2067,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToSidestreamNormalMode(
                                 // If not cleanly closed and fail-open is not
                                 // allowed, return error status immediately.
                                 if (!ext_proc_call->IsStreamClosedCleanly() &&
-                                    !ext_proc_call->IsClientFailOpenAllowed()) {
+                                    !ext_proc_call->IsFailOpenAllowed()) {
                                   return ext_proc_call->IsStreamClosed()
                                              ? ext_proc_call->GetStreamStatus()
                                              : status;
@@ -2151,7 +2123,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToSidestreamNormalMode(
                     if (!send_message) {
                       if (ext_proc_call->drain_requested() ||
                           ext_proc_call->IsStreamClosedCleanly() ||
-                          ext_proc_call->IsClientFailOpenAllowed()) {
+                          ext_proc_call->IsFailOpenAllowed()) {
                         // Bypass error: signal half-close to backend
                         // immediately since we won't get a response from
                         // ext_proc.
@@ -2167,7 +2139,7 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToSidestreamNormalMode(
                     }
                     if (!status.ok() || ext_proc_call->IsStreamClosed()) {
                       if (ext_proc_call->IsStreamClosedCleanly() ||
-                          ext_proc_call->IsClientFailOpenAllowed()) {
+                          ext_proc_call->IsFailOpenAllowed()) {
                         // Bypass error: signal half-close to backend
                         // immediately.
                         initiator.SpawnFinishSends();
@@ -2207,7 +2179,7 @@ absl::AnyInvocable<Poll<absl::Status>()> SidestreamToServerNormalMode(
                 if (!result.ok()) {
                   // If the stream failed but fail-open is allowed, we ignore
                   // the error and proceed. Otherwise, we propagate the error.
-                  if (ext_proc_call->IsClientFailOpenAllowed()) {
+                  if (ext_proc_call->IsFailOpenAllowed()) {
                     return absl::OkStatus();
                   }
                   return result.status();
@@ -2268,13 +2240,12 @@ absl::AnyInvocable<Poll<absl::Status>()> ClientToServerMessagesNormalMode(
       [ext_proc_call = std::move(ext_proc_call)](auto result) -> absl::Status {
         GRPC_TRACE_LOG(ext_proc_filter, INFO)
             << "ClientToServerMessagesNormalMode result: " << result.status()
-            << ", fail_open_allowed: "
-            << ext_proc_call->IsClientFailOpenAllowed()
+            << ", fail_open_allowed: " << ext_proc_call->IsFailOpenAllowed()
             << ", stream_error: " << ext_proc_call->GetStreamStatus();
         if (!result.ok()) {
           return result.status();
         }
-        if (ext_proc_call->IsClientFailOpenAllowed()) {
+        if (ext_proc_call->IsFailOpenAllowed()) {
           return absl::OkStatus();
         }
         return ext_proc_call->GetStreamStatus();
