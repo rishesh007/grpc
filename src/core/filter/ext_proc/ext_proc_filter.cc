@@ -187,9 +187,10 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   }
 
   ~ExtProcCall() override {
-    if (deferred_close_timeout() != Duration::Zero() && observability_mode()) {
+    if (config_->deferred_close_timeout != Duration::Zero() &&
+        config_->observability_mode) {
       auto ee = grpc_event_engine::experimental::GetDefaultEventEngine();
-      ee->RunAfter(deferred_close_timeout(),
+      ee->RunAfter(config_->deferred_close_timeout,
                    [call = std::move(streaming_call_),
                     transport = std::move(transport_)]() mutable {
                      call.reset();
@@ -225,42 +226,41 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   RefCountedPtr<const Config> config() const { return config_; }
 
   bool IsFirstMessageOnStream() {
-    MutexLock lock(&mu_);
-    bool is_first = is_first_message_on_ext_proc_stream_;
-    is_first_message_on_ext_proc_stream_ = false;
-    return is_first;
+    return is_first_message_on_ext_proc_stream_.exchange(
+        false, std::memory_order_acq_rel);
   }
 
   bool IsClientFailOpenAllowed() const {
-    MutexLock lock(&mu_);
-    if (observability_mode()) return failure_mode_allow();
-    return failure_mode_allow() && !c2s_first_body_message_sent_;
+    const bool allow = config_->failure_mode_allow.value_or(false);
+    if (config_->observability_mode) return allow;
+    return allow &&
+           !c2s_first_body_message_sent_.load(std::memory_order_acquire);
   }
 
   bool IsServerFailOpenAllowed() const {
-    MutexLock lock(&mu_);
-    if (observability_mode()) return failure_mode_allow();
-    return failure_mode_allow() && !s2c_first_body_message_sent_;
+    const bool allow = config_->failure_mode_allow.value_or(false);
+    if (config_->observability_mode) return allow;
+    return allow &&
+           !s2c_first_body_message_sent_.load(std::memory_order_acquire);
   }
 
   bool IsStreamFailOpenAllowed() const {
-    MutexLock lock(&mu_);
-    if (observability_mode() || !failure_mode_allow()) {
-      return failure_mode_allow();
+    const bool allow = config_->failure_mode_allow.value_or(false);
+    if (config_->observability_mode || !allow) {
+      return allow;
     }
-    return !(c2s_first_body_message_sent_ || s2c_first_body_message_sent_);
+    return !(c2s_first_body_message_sent_.load(std::memory_order_acquire) ||
+             s2c_first_body_message_sent_.load(std::memory_order_acquire));
   }
 
   void MarkClientHalfCloseInitiated() {
-    MutexLock lock(&mu_);
-    c2s_half_close_initiated_ = true;
+    c2s_half_close_initiated_.store(true, std::memory_order_release);
   }
 
   bool IsStreamClosed() const { return stream_status_.IsSet(); }
 
   bool ext_proc_stream_half_closed() const {
-    MutexLock lock(&mu_);
-    return ext_proc_stream_half_closed_;
+    return ext_proc_stream_half_closed_.load(std::memory_order_acquire);
   }
 
   bool drain_requested() const {
@@ -273,12 +273,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
 
   bool IsStreamClosedCleanly() const {
     auto status = stream_status_.Get();
-    bool closed = status.has_value();
-    absl::Status s = closed ? status->status : absl::OkStatus();
-    GRPC_TRACE_LOG(ext_proc_filter, INFO)
-        << "ExtProc: IsStreamClosedCleanly: closed=" << closed
-        << ", status=" << s;
-    return closed && s.ok();
+    return status.has_value() && status->status.ok();
   }
 
   void IncrementOutstandingServerToClientMessages() {
@@ -297,7 +292,8 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       return false;
     }
     outstanding_s2c_messages_--;
-    if (s2c_writes_done_ && outstanding_s2c_messages_ == 0) {
+    if (s2c_writes_done_.load(std::memory_order_acquire) &&
+        outstanding_s2c_messages_ == 0) {
       *should_close = true;
     }
     return true;
@@ -318,8 +314,8 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   }
 
   void SetServerToClientWritesDone() {
+    s2c_writes_done_.store(true, std::memory_order_release);
     MutexLock lock(&mu_);
-    s2c_writes_done_ = true;
     if (outstanding_s2c_messages_ == 0) {
       if (!response_body_pipe_.sender.IsClosed()) {
         response_body_pipe_.sender.MarkClosed();
@@ -328,38 +324,35 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   }
 
   void SetIsTrailersOnly() {
-    MutexLock lock(&mu_);
-    is_trailers_only_ = true;
+    is_trailers_only_.store(true, std::memory_order_release);
   }
 
   bool is_trailers_only() const {
-    MutexLock lock(&mu_);
-    return is_trailers_only_;
+    return is_trailers_only_.load(std::memory_order_acquire);
   }
 
   void SetServerTrailersSent() {
-    MutexLock lock(&mu_);
-    server_trailers_sent_ = true;
+    server_trailers_sent_.store(true, std::memory_order_release);
   }
 
   bool server_trailers_sent() const {
-    MutexLock lock(&mu_);
-    return server_trailers_sent_;
+    return server_trailers_sent_.load(std::memory_order_acquire);
+  }
+
+  void SetExtProcSetEos() {
+    ext_proc_set_eos_.store(true, std::memory_order_release);
   }
 
   bool ext_proc_set_eos() const {
-    MutexLock lock(&mu_);
-    return ext_proc_set_eos_;
+    return ext_proc_set_eos_.load(std::memory_order_acquire);
   }
 
   void SetClientSendsDone() {
-    MutexLock lock(&mu_);
-    c2s_writes_done_ = true;
+    c2s_writes_done_.store(true, std::memory_order_release);
   }
 
   bool c2s_write_done() const {
-    MutexLock lock(&mu_);
-    return c2s_writes_done_;
+    return c2s_writes_done_.load(std::memory_order_acquire);
   }
 
   absl::Status GetStreamStatus() const {
@@ -383,7 +376,13 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     };
   }
 
-  Mutex* mu() ABSL_LOCK_RETURNED(mu_) { return &mu_; }
+  void SetC2SFirstBodyMessageSent() {
+    c2s_first_body_message_sent_.store(true, std::memory_order_release);
+  }
+
+  void SetS2CFirstBodyMessageSent() {
+    s2c_first_body_message_sent_.store(true, std::memory_order_release);
+  }
 
   absl::AnyInvocable<Poll<absl::Status>()> SendMessage(
       absl::AnyInvocable<absl::StatusOr<std::string>()> payload_generator) {
@@ -426,353 +425,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     }
   }
 
- private:
-  class StreamEventHandler final
-      : public XdsTransportFactory::XdsTransport::StreamingCall::EventHandler {
-   public:
-    explicit StreamEventHandler(WeakRefCountedPtr<ExtProcCall> call)
-        : call_(std::move(call)) {}
-
-    void OnRequestSent(bool ok) override {
-      if (auto call = call_->RefIfNonZero(); call != nullptr) {
-        call->OnRequestSent(ok);
-      }
-    }
-
-    void OnRecvMessage(absl::string_view payload) override {
-      if (auto call = call_->RefIfNonZero(); call != nullptr) {
-        call->OnRecvMessage(payload);
-      }
-    }
-
-    void OnStatusReceived(absl::Status status) override {
-      if (auto call = call_->RefIfNonZero(); call != nullptr) {
-        call->OnStatusReceived(std::move(status));
-      }
-    }
-
-   private:
-    WeakRefCountedPtr<ExtProcCall> call_;
-  };
-
-  void CompleteAllLatchesAndPipes(absl::StatusOr<ExtProcResponse> response) {
-    if (processing_mode().send_request_headers &&
-        !request_headers_latch_.IsSet()) {
-      request_headers_latch_.Set(response);
-    }
-    if (processing_mode().send_response_headers &&
-        !response_headers_latch_.IsSet()) {
-      response_headers_latch_.Set(response);
-    }
-    if (processing_mode().send_response_trailers &&
-        !response_trailers_latch_.IsSet()) {
-      response_trailers_latch_.Set(response);
-    }
-    if (processing_mode().send_request_body &&
-        !request_body_pipe_.sender.IsClosed()) {
-      if (!response.ok()) {
-        request_body_pipe_.sender.Push(response.status())();
-      }
-      request_body_pipe_.sender.MarkClosed();
-    }
-    if (processing_mode().send_response_body &&
-        !response_body_pipe_.sender.IsClosed()) {
-      if (!response.ok()) {
-        response_body_pipe_.sender.Push(response.status())();
-      }
-      response_body_pipe_.sender.MarkClosed();
-    }
-  }
-
-  void SetStreamStatus(absl::Status status) {
-    MutexLock lock(&mu_);
-    if (!stream_status_.IsSet()) {
-      stream_status_.Set(CopyableStatus(status));
-    }
-  }
-
-  void SetExtProcSetEos() {
-    MutexLock lock(&mu_);
-    ext_proc_set_eos_ = true;
-  }
-
-  void OnRequestSent(bool ok) {}
-
-  void OnRecvMessage(absl::string_view payload) {
-    // In observability mode, we only log the message and ignore it.
-    // We must continue reading the stream to keep it alive.
-    if (observability_mode()) {
-      GRPC_TRACE_LOG(ext_proc_filter, INFO)
-          << "ExtProcCall " << this
-          << " message received in observability mode (ignored), size="
-          << payload.size();
-      MutexLock lock(&mu_);
-      if (streaming_call_ != nullptr) {
-        streaming_call_->StartRecvMessage();
-      }
-      return;
-    }
-    const bool fail_open = IsStreamFailOpenAllowed();
-    GRPC_TRACE_LOG(ext_proc_filter, INFO)
-        << "ExtProcCall " << this
-        << " message received, size=" << payload.size();
-    // Parse the response from the external processor.
-    auto parsed_response_or = ExtProcResponse::Parse(payload);
-    if (!parsed_response_or.ok()) {
-      // If parsing fails, we either fail the stream or close it cleanly
-      // (fail-open) depending on configuration.
-      if (!fail_open) {
-        SetStreamError(parsed_response_or.status());
-      } else {
-        CompleteAllLatchesAndPipes(ExtProcResponse{});
-        CloseStream();
-      }
-      return;
-    }
-    auto parsed_response = std::move(*parsed_response_or);
-    // If the server requests a drain, we half-close the stream to signal
-    // we are done sending requests.
-    if (parsed_response.request_drain) {
-      GRPC_TRACE_LOG(ext_proc_filter, INFO)
-          << "ExtProcCall " << this << " received request_drain=true";
-      SetDrainRequested();
-      {
-        MutexLock lock(&mu_);
-        ext_proc_stream_half_closed_ = true;
-        if (streaming_call_ != nullptr) {
-          GRPC_TRACE_LOG(ext_proc_filter, INFO)
-              << "ExtProcCall " << this << " sending half-close";
-          streaming_call_->SendHalfClose();
-        }
-      }
-    }
-    // Dispatch the parsed response to the appropriate latch based on the
-    // response type.
-    if (std::holds_alternative<ExtProcResponse::ImmediateResponse>(
-            parsed_response.response)) {
-      if (disable_immediate_response() || !server_trailers_sent()) {
-        auto error = absl::InternalError(
-            disable_immediate_response()
-                ? "unhandled immediate response due to config disabled it"
-                : "Immediate response received but trailers not sent to "
-                  "ext_proc");
-        SetStreamStatus(error);
-        CompleteAllLatchesAndPipes(error);
-        CloseStream();
-        return;
-      }
-      if (processing_mode().send_response_trailers &&
-          !response_trailers_latch_.IsSet()) {
-        response_trailers_latch_.Set(std::move(parsed_response));
-      }
-      return;
-    } else if (std::holds_alternative<ExtProcResponse::RequestHeaders>(
-                   parsed_response.response)) {
-      if (!processing_mode().send_request_headers) {
-        SetStreamError(
-            absl::InternalError("Received request headers response but "
-                                "request headers are disabled"));
-        return;
-      }
-      if (processing_mode().send_request_headers &&
-          !request_headers_latch_.IsSet()) {
-        request_headers_latch_.Set(std::move(parsed_response));
-      }
-    } else if (std::holds_alternative<ExtProcResponse::ResponseHeaders>(
-                   parsed_response.response)) {
-      if (!processing_mode().send_response_headers) {
-        SetStreamError(
-            absl::InternalError("Received response headers response but "
-                                "response headers are disabled"));
-        return;
-      }
-      if (processing_mode().send_response_headers &&
-          !response_headers_latch_.IsSet()) {
-        response_headers_latch_.Set(std::move(parsed_response));
-      }
-    } else if (std::holds_alternative<ExtProcResponse::ResponseTrailers>(
-                   parsed_response.response)) {
-      if (!processing_mode().send_response_trailers) {
-        SetStreamError(
-            absl::InternalError("Received response trailers response but "
-                                "response trailers are disabled"));
-        return;
-      }
-      if (is_trailers_only()) {
-        SetStreamError(absl::InternalError(
-            "Received response trailers response in a Trailers-Only call"));
-        return;
-      }
-      if (processing_mode().send_response_headers &&
-          !response_headers_latch_.IsSet()) {
-        SetStreamError(
-            absl::InternalError("Received response trailers response before "
-                                "response headers response"));
-        return;
-      }
-      bool s2c_body_outstanding = false;
-      {
-        MutexLock lock(&mu_);
-        if (processing_mode().send_response_body &&
-            outstanding_s2c_messages_ > 0) {
-          s2c_body_outstanding = true;
-        }
-      }
-      if (s2c_body_outstanding) {
-        SetStreamError(absl::InternalError(
-            "Received response trailers response before all "
-            "outstanding response body responses were received"));
-        return;
-      }
-      if (processing_mode().send_response_trailers &&
-          !response_trailers_latch_.IsSet()) {
-        response_trailers_latch_.Set(std::move(parsed_response));
-      }
-    } else if (std::holds_alternative<ExtProcResponse::RequestBody>(
-                   parsed_response.response)) {
-      if (!processing_mode().send_request_body) {
-        SetStreamError(absl::InternalError(
-            "Received request body response but request body is disabled"));
-        return;
-      }
-      if (processing_mode().send_request_headers &&
-          !request_headers_latch_.IsSet()) {
-        SetStreamError(
-            absl::InternalError("Received request body response before "
-                                "request headers response"));
-        return;
-      }
-      if (!DecrementOutstandingClientToServerMessages()) {
-        SetStreamError(absl::InternalError(
-            "Received unexpected request body response from "
-            "external processor"));
-        return;
-      }
-      const auto& request_body =
-          std::get<ExtProcResponse::RequestBody>(parsed_response.response);
-      GRPC_TRACE_LOG(ext_proc_filter, INFO)
-          << "ExtProc: Parsed request body response, eos: "
-          << request_body.mutation.end_of_stream << ", eos_without_msg: "
-          << request_body.mutation.end_of_stream_without_message;
-      if (request_body.mutation.end_of_stream_without_message) {
-        if (!c2s_write_done()) {
-          SetStreamError(
-              absl::InternalError("Client sends closed by external processor"));
-          return;
-        }
-        SetExtProcSetEos();
-        if (!request_body_pipe_.sender.IsClosed()) {
-          request_body_pipe_.sender.MarkClosed();
-        }
-        return;
-      }
-      request_body_pipe_.sender.Push(std::move(parsed_response))();
-      if (request_body.mutation.end_of_stream) {
-        SetExtProcSetEos();
-        if (!request_body_pipe_.sender.IsClosed()) {
-          request_body_pipe_.sender.MarkClosed();
-        }
-      }
-    } else if (std::holds_alternative<ExtProcResponse::ResponseBody>(
-                   parsed_response.response)) {
-      if (!processing_mode().send_response_body) {
-        SetStreamError(
-            absl::InternalError("Received response body response but "
-                                "response body is disabled"));
-        return;
-      }
-      if (is_trailers_only()) {
-        SetStreamError(absl::InternalError(
-            "Received response body response in a Trailers-Only call"));
-        return;
-      }
-      if (processing_mode().send_response_headers &&
-          !response_headers_latch_.IsSet()) {
-        SetStreamError(
-            absl::InternalError("Received response body response before "
-                                "response headers response"));
-        return;
-      }
-      if (processing_mode().send_response_trailers &&
-          response_trailers_latch_.IsSet()) {
-        SetStreamError(absl::InternalError(
-            "Received response body response after response "
-            "trailers response"));
-        return;
-      }
-      if (!HasOutstandingServerToClientMessages()) {
-        SetStreamError(absl::InternalError(
-            "Received unexpected response body response from "
-            "external processor"));
-        return;
-      }
-      // Push the message to the pipe BEFORE decrementing the outstanding count.
-      // This prevents a race where SetServerToClientWritesDone() runs
-      // concurrently, sees the outstanding count is 0, and closes the pipe
-      // before we can push this last message.
-      response_body_pipe_.sender.Push(std::move(parsed_response))();
-      bool should_close = false;
-      DecrementOutstandingServerToClientMessages(&should_close);
-      if (should_close) {
-        // If writes are done and this was the last outstanding message, we can
-        // close the pipe early to signal completion to the read loop.
-        if (!response_body_pipe_.sender.IsClosed()) {
-          response_body_pipe_.sender.MarkClosed();
-        }
-      }
-    }
-    MutexLock lock(&mu_);
-    if (streaming_call_ != nullptr) {
-      streaming_call_->StartRecvMessage();
-    }
-  }
-
-  void OnStatusReceived(absl::Status status) {
-    GRPC_TRACE_LOG(ext_proc_filter, INFO)
-        << "ExtProcCall " << this << " status received: " << status;
-    bool has_outstanding_messages = false;
-    {
-      MutexLock lock(&mu_);
-      has_outstanding_messages =
-          outstanding_c2s_messages_ > 0 || outstanding_s2c_messages_ > 0;
-    }
-    const bool must_drain =
-        !observability_mode() && (processing_mode().send_request_body ||
-                                  processing_mode().send_response_body);
-    const bool drain_requested =
-        drain_requested_.load(std::memory_order_relaxed);
-    if (status.ok()) {
-      if (must_drain && !drain_requested) {
-        status = absl::InternalError("Stream closed cleanly without drain");
-      } else if (has_outstanding_messages && !observability_mode()) {
-        status = absl::InternalError(
-            "Stream closed cleanly with outstanding messages");
-      }
-    }
-    const bool fail_open_allowed = IsStreamFailOpenAllowed();
-    const bool should_propagate_error = !status.ok() && !fail_open_allowed;
-    bool already_closed = false;
-    {
-      MutexLock lock(&mu_);
-      already_closed = stream_status_.IsSet();
-      if (!already_closed) {
-        stream_status_.Set(CopyableStatus(status));
-      }
-    }
-    // Always complete latches on status received to avoid hangs.
-    if (should_propagate_error) {
-      CompleteAllLatchesAndPipes(status);
-    } else {
-      CompleteAllLatchesAndPipes(ExtProcResponse{});
-    }
-    if (!already_closed) {
-      CloseStream();
-    }
-  }
-
-  void Orphaned() override { CloseStream(); }
-
- public:
   auto SendClientInitialMetadataRequest(
       std::shared_ptr<ClientMetadataHandle> metadata,
       absl::string_view default_authority) {
@@ -818,7 +470,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   }
 
   auto SendServerMessageRequest(const MessageHandle& message) {
-    if (!observability_mode()) {
+    if (!config_->observability_mode) {
       IncrementOutstandingServerToClientMessages();
     }
     std::string message_bytes;
@@ -829,7 +481,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     return Map(
         SendMessage([ext_proc_call = Ref(), is_first_message,
                      message_bytes = std::move(message_bytes)]() mutable {
-          ext_proc_call->mu()->AssertHeld();
           GRPC_TRACE_LOG(ext_proc_filter, INFO)
               << "ExtProc: ServerToClientMessages body message intercepted";
           std::optional<ExtProcProcessingMode> processing_mode;
@@ -843,8 +494,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         }),
         [ext_proc_call = Ref()](absl::Status status) {
           if (status.ok()) {
-            MutexLock lock(ext_proc_call->mu());
-            ext_proc_call->s2c_first_body_message_sent_ = true;
+            ext_proc_call->SetS2CFirstBodyMessageSent();
           }
           return status;
         });
@@ -891,7 +541,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     if (message != nullptr) {
       message_bytes = message->payload()->JoinIntoString();
     }
-    if (!observability_mode()) {
+    if (!config_->observability_mode) {
       IncrementOutstandingClientToServerMessages();
     }
     if (end_of_stream_without_message) {
@@ -903,7 +553,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
                      message_bytes = std::move(message_bytes), end_of_stream,
                      end_of_stream_without_message, attributes,
                      is_first_message]() mutable {
-          ext_proc_call->mu()->AssertHeld();
           GRPC_TRACE_LOG(ext_proc_filter, INFO)
               << "ExtProc: ClientToServerMessages body message intercepted "
                  "(observability mode)";
@@ -919,54 +568,398 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
         }),
         [ext_proc_call = Ref()](absl::Status status) {
           if (status.ok()) {
-            MutexLock lock(ext_proc_call->mu());
-            ext_proc_call->c2s_first_body_message_sent_ = true;
+            ext_proc_call->SetC2SFirstBodyMessageSent();
           }
           return status;
         });
   }
 
  private:
+  // Event handler callback for the ext_proc stream. Wraps a weak reference to
+  // ExtProcCall to safely dispatch asynchronous stream lifecycle events
+  // (message sent, message received, stream closed/status received) back to the
+  // owning ExtProcCall instance without preventing destruction or causing
+  // cyclic reference memory leaks.
+  class StreamEventHandler final
+      : public XdsTransportFactory::XdsTransport::StreamingCall::EventHandler {
+   public:
+    explicit StreamEventHandler(WeakRefCountedPtr<ExtProcCall> call)
+        : call_(std::move(call)) {}
+
+    void OnRequestSent(bool ok) override {
+      if (auto call = call_->RefIfNonZero(); call != nullptr) {
+        call->OnRequestSent(ok);
+      }
+    }
+
+    void OnRecvMessage(absl::string_view payload) override {
+      if (auto call = call_->RefIfNonZero(); call != nullptr) {
+        call->OnRecvMessage(payload);
+      }
+    }
+
+    void OnStatusReceived(absl::Status status) override {
+      if (auto call = call_->RefIfNonZero(); call != nullptr) {
+        call->OnStatusReceived(std::move(status));
+      }
+    }
+
+   private:
+    WeakRefCountedPtr<ExtProcCall> call_;
+  };
+
+  void CompleteAllLatchesAndPipes(absl::StatusOr<ExtProcResponse> response) {
+    const auto processing_mode =
+        config_->processing_mode.value_or(ProcessingMode());
+    if (processing_mode.send_request_headers &&
+        !request_headers_latch_.IsSet()) {
+      request_headers_latch_.Set(response);
+    }
+    if (processing_mode.send_response_headers &&
+        !response_headers_latch_.IsSet()) {
+      response_headers_latch_.Set(response);
+    }
+    if (processing_mode.send_response_trailers &&
+        !response_trailers_latch_.IsSet()) {
+      response_trailers_latch_.Set(response);
+    }
+    if (processing_mode.send_request_body &&
+        !request_body_pipe_.sender.IsClosed()) {
+      if (!response.ok()) {
+        request_body_pipe_.sender.Push(response.status())();
+      }
+      request_body_pipe_.sender.MarkClosed();
+    }
+    if (processing_mode.send_response_body &&
+        !response_body_pipe_.sender.IsClosed()) {
+      if (!response.ok()) {
+        response_body_pipe_.sender.Push(response.status())();
+      }
+      response_body_pipe_.sender.MarkClosed();
+    }
+  }
+
+  void SetStreamStatus(absl::Status status) {
+    MutexLock lock(&mu_);
+    if (!stream_status_.IsSet()) {
+      stream_status_.Set(CopyableStatus(status));
+    }
+  }
+
+  void OnRequestSent(bool ok) {}
+
+  void OnRecvMessage(absl::string_view payload) {
+    // In observability mode, we only log the message and ignore it.
+    // We must continue reading the stream to keep it alive.
+    if (config_->observability_mode) {
+      GRPC_TRACE_LOG(ext_proc_filter, INFO)
+          << "ExtProcCall " << this
+          << " message received in observability mode (ignored), size="
+          << payload.size();
+      MutexLock lock(&mu_);
+      if (streaming_call_ != nullptr) {
+        streaming_call_->StartRecvMessage();
+      }
+      return;
+    }
+    const bool fail_open = IsStreamFailOpenAllowed();
+    GRPC_TRACE_LOG(ext_proc_filter, INFO)
+        << "ExtProcCall " << this
+        << " message received, size=" << payload.size();
+    // Parse the response from the external processor.
+    auto parsed_response_or = ExtProcResponse::Parse(payload);
+    if (!parsed_response_or.ok()) {
+      // If parsing fails, we either fail the stream or close it cleanly
+      // (fail-open) depending on configuration.
+      if (!fail_open) {
+        SetStreamError(parsed_response_or.status());
+      } else {
+        CompleteAllLatchesAndPipes(ExtProcResponse{});
+        CloseStream();
+      }
+      return;
+    }
+    auto parsed_response = std::move(*parsed_response_or);
+    // If the server requests a drain, we half-close the stream to signal
+    // we are done sending requests.
+    if (parsed_response.request_drain) {
+      GRPC_TRACE_LOG(ext_proc_filter, INFO)
+          << "ExtProcCall " << this << " received request_drain=true";
+      SetDrainRequested();
+      ext_proc_stream_half_closed_.store(true, std::memory_order_release);
+      {
+        MutexLock lock(&mu_);
+        if (streaming_call_ != nullptr) {
+          GRPC_TRACE_LOG(ext_proc_filter, INFO)
+              << "ExtProcCall " << this << " sending half-close";
+          streaming_call_->SendHalfClose();
+        }
+      }
+    }
+    // Dispatch the parsed response to the appropriate latch based on the
+    // response type.
+    const auto processing_mode =
+        config_->processing_mode.value_or(ProcessingMode());
+    if (std::holds_alternative<ExtProcResponse::ImmediateResponse>(
+            parsed_response.response)) {
+      if (config_->disable_immediate_response || !server_trailers_sent()) {
+        auto error = absl::InternalError(
+            config_->disable_immediate_response
+                ? "unhandled immediate response due to config disabled it"
+                : "Immediate response received but trailers not sent to "
+                  "ext_proc");
+        SetStreamStatus(error);
+        CompleteAllLatchesAndPipes(error);
+        CloseStream();
+        return;
+      }
+      if (processing_mode.send_response_trailers &&
+          !response_trailers_latch_.IsSet()) {
+        response_trailers_latch_.Set(std::move(parsed_response));
+      }
+      return;
+    } else if (std::holds_alternative<ExtProcResponse::RequestHeaders>(
+                   parsed_response.response)) {
+      if (!processing_mode.send_request_headers) {
+        SetStreamError(
+            absl::InternalError("Received request headers response but "
+                                "request headers are disabled"));
+        return;
+      }
+      if (processing_mode.send_request_headers &&
+          !request_headers_latch_.IsSet()) {
+        request_headers_latch_.Set(std::move(parsed_response));
+      }
+    } else if (std::holds_alternative<ExtProcResponse::ResponseHeaders>(
+                   parsed_response.response)) {
+      if (!processing_mode.send_response_headers) {
+        SetStreamError(
+            absl::InternalError("Received response headers response but "
+                                "response headers are disabled"));
+        return;
+      }
+      if (processing_mode.send_response_headers &&
+          !response_headers_latch_.IsSet()) {
+        response_headers_latch_.Set(std::move(parsed_response));
+      }
+    } else if (std::holds_alternative<ExtProcResponse::ResponseTrailers>(
+                   parsed_response.response)) {
+      if (!processing_mode.send_response_trailers) {
+        SetStreamError(
+            absl::InternalError("Received response trailers response but "
+                                "response trailers are disabled"));
+        return;
+      }
+      if (is_trailers_only()) {
+        SetStreamError(absl::InternalError(
+            "Received response trailers response in a Trailers-Only call"));
+        return;
+      }
+      if (processing_mode.send_response_headers &&
+          !response_headers_latch_.IsSet()) {
+        SetStreamError(
+            absl::InternalError("Received response trailers response before "
+                                "response headers response"));
+        return;
+      }
+      bool s2c_body_outstanding = false;
+      {
+        MutexLock lock(&mu_);
+        if (processing_mode.send_response_body &&
+            outstanding_s2c_messages_ > 0) {
+          s2c_body_outstanding = true;
+        }
+      }
+      if (s2c_body_outstanding) {
+        SetStreamError(absl::InternalError(
+            "Received response trailers response before all "
+            "outstanding response body responses were received"));
+        return;
+      }
+      if (processing_mode.send_response_trailers &&
+          !response_trailers_latch_.IsSet()) {
+        response_trailers_latch_.Set(std::move(parsed_response));
+      }
+    } else if (std::holds_alternative<ExtProcResponse::RequestBody>(
+                   parsed_response.response)) {
+      if (!processing_mode.send_request_body) {
+        SetStreamError(absl::InternalError(
+            "Received request body response but request body is disabled"));
+        return;
+      }
+      if (processing_mode.send_request_headers &&
+          !request_headers_latch_.IsSet()) {
+        SetStreamError(
+            absl::InternalError("Received request body response before "
+                                "request headers response"));
+        return;
+      }
+      if (!DecrementOutstandingClientToServerMessages()) {
+        SetStreamError(absl::InternalError(
+            "Received unexpected request body response from "
+            "external processor"));
+        return;
+      }
+      const auto& request_body =
+          std::get<ExtProcResponse::RequestBody>(parsed_response.response);
+      GRPC_TRACE_LOG(ext_proc_filter, INFO)
+          << "ExtProc: Parsed request body response, eos: "
+          << request_body.mutation.end_of_stream << ", eos_without_msg: "
+          << request_body.mutation.end_of_stream_without_message;
+      if (request_body.mutation.end_of_stream_without_message) {
+        if (!c2s_write_done()) {
+          SetStreamError(
+              absl::InternalError("Client sends closed by external processor"));
+          return;
+        }
+        SetExtProcSetEos();
+        if (!request_body_pipe_.sender.IsClosed()) {
+          request_body_pipe_.sender.MarkClosed();
+        }
+        return;
+      }
+      request_body_pipe_.sender.Push(std::move(parsed_response))();
+      if (request_body.mutation.end_of_stream) {
+        SetExtProcSetEos();
+        if (!request_body_pipe_.sender.IsClosed()) {
+          request_body_pipe_.sender.MarkClosed();
+        }
+      }
+    } else if (std::holds_alternative<ExtProcResponse::ResponseBody>(
+                   parsed_response.response)) {
+      if (!processing_mode.send_response_body) {
+        SetStreamError(
+            absl::InternalError("Received response body response but "
+                                "response body is disabled"));
+        return;
+      }
+      if (is_trailers_only()) {
+        SetStreamError(absl::InternalError(
+            "Received response body response in a Trailers-Only call"));
+        return;
+      }
+      if (processing_mode.send_response_headers &&
+          !response_headers_latch_.IsSet()) {
+        SetStreamError(
+            absl::InternalError("Received response body response before "
+                                "response headers response"));
+        return;
+      }
+      if (processing_mode.send_response_trailers &&
+          response_trailers_latch_.IsSet()) {
+        SetStreamError(absl::InternalError(
+            "Received response body response after response "
+            "trailers response"));
+        return;
+      }
+      if (!HasOutstandingServerToClientMessages()) {
+        SetStreamError(absl::InternalError(
+            "Received unexpected response body response from "
+            "external processor"));
+        return;
+      }
+      // Push the message to the pipe BEFORE decrementing the outstanding count.
+      // This prevents a race where SetServerToClientWritesDone() runs
+      // concurrently, sees the outstanding count is 0, and closes the pipe
+      // before we can push this last message.
+      response_body_pipe_.sender.Push(std::move(parsed_response))();
+      bool should_close = false;
+      DecrementOutstandingServerToClientMessages(&should_close);
+      if (should_close) {
+        // If writes are done and this was the last outstanding message, we can
+        // close the pipe early to signal completion to the read loop.
+        if (!response_body_pipe_.sender.IsClosed()) {
+          response_body_pipe_.sender.MarkClosed();
+        }
+      }
+    }
+    MutexLock lock(&mu_);
+    if (streaming_call_ != nullptr) {
+      streaming_call_->StartRecvMessage();
+    }
+  }
+
+  void OnStatusReceived(absl::Status status) {
+    GRPC_TRACE_LOG(ext_proc_filter, INFO)
+        << "ExtProcCall " << this << " status received: " << status;
+    bool has_outstanding_messages = false;
+    {
+      MutexLock lock(&mu_);
+      has_outstanding_messages =
+          outstanding_c2s_messages_ > 0 || outstanding_s2c_messages_ > 0;
+    }
+    const bool must_drain = !config_->observability_mode &&
+                            (config_->processing_mode.value_or(ProcessingMode())
+                                 .send_request_body ||
+                             config_->processing_mode.value_or(ProcessingMode())
+                                 .send_response_body);
+    const bool drain_requested =
+        drain_requested_.load(std::memory_order_relaxed);
+    if (status.ok()) {
+      if (must_drain && !drain_requested) {
+        status = absl::InternalError("Stream closed cleanly without drain");
+      } else if (has_outstanding_messages && !config_->observability_mode) {
+        status = absl::InternalError(
+            "Stream closed cleanly with outstanding messages");
+      }
+    }
+    const bool fail_open_allowed = IsStreamFailOpenAllowed();
+    const bool should_propagate_error = !status.ok() && !fail_open_allowed;
+    bool already_closed = false;
+    {
+      MutexLock lock(&mu_);
+      already_closed = stream_status_.IsSet();
+      if (!already_closed) {
+        stream_status_.Set(CopyableStatus(status));
+      }
+    }
+    // Always complete latches on status received to avoid hangs.
+    if (should_propagate_error) {
+      CompleteAllLatchesAndPipes(status);
+    } else {
+      CompleteAllLatchesAndPipes(ExtProcResponse{});
+    }
+    if (!already_closed) {
+      CloseStream();
+    }
+  }
+
+  void Orphaned() override { CloseStream(); }
+
   InterActivityLatch<absl::StatusOr<ExtProcResponse>> request_headers_latch_;
   InterActivityLatch<absl::StatusOr<ExtProcResponse>> response_headers_latch_;
   InterActivityLatch<absl::StatusOr<ExtProcResponse>> response_trailers_latch_;
   InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16> request_body_pipe_;
   InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16> response_body_pipe_;
-
   RefCountedPtr<const Config> config_;
-
-  bool observability_mode() const { return config_->observability_mode; }
-  bool failure_mode_allow() const {
-    return config_->failure_mode_allow.value_or(false);
-  }
-  bool disable_immediate_response() const {
-    return config_->disable_immediate_response;
-  }
-  ProcessingMode processing_mode() const {
-    return config_->processing_mode.value_or(ProcessingMode());
-  }
-  Duration deferred_close_timeout() const {
-    return config_->deferred_close_timeout;
-  }
+  // Indicates whether a stream drain operation has been requested by the
+  // filter.
   std::atomic<bool> drain_requested_{false};
-
-  bool is_first_message_on_ext_proc_stream_ ABSL_GUARDED_BY(&mu_) = true;
-
-  bool c2s_first_body_message_sent_ ABSL_GUARDED_BY(&mu_) = false;
-  bool s2c_first_body_message_sent_ ABSL_GUARDED_BY(&mu_) = false;
-
+  // True if no messages have been sent on the external processor stream yet.
+  // Used to include overall processing_mode in the initial stream header
+  // request.
+  std::atomic<bool> is_first_message_on_ext_proc_stream_{true};
+  // Tracks whether the first body message has been sent for client-to-server
+  // (C2S) and server-to-client (S2C) directions respectively, used for
+  // fail-open determination.
+  std::atomic<bool> c2s_first_body_message_sent_{false};
+  std::atomic<bool> s2c_first_body_message_sent_{false};
+  // TODO(rishesh): Need to remove this once PH2 work is done.
+  // Number of messages sent to ext_proc that are awaiting response processing
+  // in S2C and C2S directions respectively.
   size_t outstanding_s2c_messages_ ABSL_GUARDED_BY(&mu_) = 0;
   size_t outstanding_c2s_messages_ ABSL_GUARDED_BY(&mu_) = 0;
-
-  bool c2s_writes_done_ ABSL_GUARDED_BY(&mu_) = false;
-  bool s2c_writes_done_ ABSL_GUARDED_BY(&mu_) = false;
-  bool c2s_half_close_initiated_ ABSL_GUARDED_BY(&mu_) = false;
-  bool is_trailers_only_ ABSL_GUARDED_BY(&mu_) = false;
-  bool server_trailers_sent_ ABSL_GUARDED_BY(&mu_) = false;
-
-  bool ext_proc_set_eos_ ABSL_GUARDED_BY(&mu_) = false;
-  bool ext_proc_stream_half_closed_ ABSL_GUARDED_BY(&mu_) = false;
-
+  // Stream state flags tracking directional write completion, half-close,
+  // trailers-only RPC mode, and server trailers transmission.
+  std::atomic<bool> c2s_writes_done_{false};
+  std::atomic<bool> s2c_writes_done_{false};
+  std::atomic<bool> c2s_half_close_initiated_{false};
+  std::atomic<bool> is_trailers_only_{false};
+  std::atomic<bool> server_trailers_sent_{false};
+  // Set by external processor server when it requests end of stream (EOS).
+  std::atomic<bool> ext_proc_set_eos_{false};
+  // Indicates that the external processor stream has been half closed.
+  std::atomic<bool> ext_proc_stream_half_closed_{false};
   // Helper struct to wrap absl::Status.
   // InterActivityLatch::Wait() moves the value out of the latch, which would
   // leave it in an invalid (moved-from) state for subsequent reads. Since
@@ -985,7 +978,6 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
       return *this;
     }
   };
-
   InterActivityLatch<CopyableStatus> stream_status_;
 
   mutable Mutex mu_;
