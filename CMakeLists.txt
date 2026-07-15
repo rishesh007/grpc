@@ -17992,6 +17992,7 @@ if(WIN32 AND MSVC)
     PRIVATE
       "GPR_DLL_IMPORTS"
       "GRPC_DLL_IMPORTS"
+      "GRPCXX_DLL_IMPORTS"
     )
   endif()
 endif()
@@ -18018,8 +18019,7 @@ target_include_directories(ext_proc_message_test
 target_link_libraries(ext_proc_message_test
   ${_gRPC_ALLTARGETS_LIBRARIES}
   gtest
-  grpc
-  ${_gRPC_PROTOBUF_LIBRARIES}
+  grpc++
 )
 
 
