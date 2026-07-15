@@ -32,6 +32,7 @@
 #include "src/core/filter/filter_args.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/promise_based_filter.h"
+#include "src/core/telemetry/metrics.h"
 #include "src/core/util/matchers.h"
 #include "src/core/util/ref_counted_ptr.h"
 #include "src/core/xds/grpc/blackboard.h"
@@ -140,6 +141,11 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   RefCountedPtr<const Config> config() const { return config_; }
   RefCountedPtr<ExtProcChannel> channel() const { return config_->channel(); }
 
+  void RecordClientHeadersDuration(double duration_seconds) const;
+  void RecordClientHalfCloseDuration(double duration_seconds) const;
+  void RecordServerHeadersDuration(double duration_seconds) const;
+  void RecordServerTrailersDuration(double duration_seconds) const;
+
   class ExtProcChannel final : public Blackboard::Entry {
    public:
     static UniqueTypeName Type() {
@@ -180,6 +186,11 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
   RefCountedPtr<const Config> config_;
   Slice default_authority_;
+  std::string target_;
+  std::string backend_service_;
+  bool is_client_ = true;
+  std::shared_ptr<GlobalStatsPluginRegistry::StatsPluginGroup>
+      stats_plugin_group_;
 };
 
 }  // namespace grpc_core

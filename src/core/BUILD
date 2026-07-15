@@ -5785,6 +5785,7 @@ grpc_cc_library(
         "message",
         "metadata",
         "metadata_batch",
+        "metrics",
         "pipe",
         "prioritized_race",
         "seq",

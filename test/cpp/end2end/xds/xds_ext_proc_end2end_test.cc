@@ -19,27 +19,21 @@
 
 #include <atomic>
 #include <map>
-#include <mutex>
 #include <string>
 #include <vector>
 
 #include "envoy/config/cluster/v3/cluster.pb.h"
 #include "envoy/config/common/mutation_rules/v3/mutation_rules.pb.h"
 #include "envoy/extensions/filters/http/ext_proc/v3/ext_proc.pb.h"
-#include "envoy/extensions/filters/http/router/v3/router.pb.h"
 #include "envoy/extensions/filters/network/http_connection_manager/v3/http_connection_manager.pb.h"
 #include "envoy/extensions/grpc_service/call_credentials/access_token/v3/access_token_credentials.pb.h"
 #include "envoy/extensions/grpc_service/channel_credentials/google_default/v3/google_default_credentials.pb.h"
 #include "envoy/extensions/grpc_service/channel_credentials/insecure/v3/insecure_credentials.pb.h"
 #include "envoy/service/ext_proc/v3/external_processor.grpc.pb.h"
-#include "envoy/type/v3/http_status.pb.h"
-#include "src/core/client_channel/backup_poller.h"
 #include "src/core/config/config_vars.h"
-#include "src/core/filter/ext_proc/ext_proc_filter.h"
-#include "src/core/lib/debug/trace.h"
 #include "src/core/lib/experiments/config.h"
-#include "src/core/lib/experiments/experiments.h"
-#include "test/core/test_util/scoped_env_var.h"
+#include "src/core/util/env.h"
+#include "test/core/test_util/fake_stats_plugin.h"
 #include "test/core/test_util/test_config.h"
 #include "test/cpp/end2end/xds/xds_end2end_test_lib.h"
 #include "test/cpp/end2end/xds/xds_utils.h"
@@ -501,14 +495,6 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
 
   void SetUp() override {
     grpc_core::SetEnv("GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_CLIENT", "true");
-    grpc_tracer_set_enabled("ext_proc_filter", 1);
-    grpc_tracer_set_enabled("promise_primitives", 0);
-    grpc_tracer_set_enabled("call_state", 0);
-    grpc_tracer_set_enabled("channel", 1);
-    grpc_tracer_set_enabled("xds_resolver", 1);
-    grpc_tracer_set_enabled("xds_client", 1);
-    grpc_tracer_set_enabled("transport", 0);
-    grpc_core::SetEnv("GRPC_VERBOSITY", "INFO");
     InitClient(MakeBootstrapBuilder().SetTrustedXdsServer(),
                /*lb_expected_authority=*/"",
                /*xds_resource_does_not_exist_timeout_ms=*/0,
@@ -4674,12 +4660,244 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseTrailersObservability) {
   CheckRpcSendOk(DEBUG_LOCATION);
 }
 
+//
+// ExtProcClientMetrics
+//
+
+TEST_P(XdsExtProcEnd2endTest, ExtProcClientHeadersDurationMetric) {
+  // Register a fake stats plugin to capture optional/disabled-by-default
+  // metrics.
+  auto stats_plugin = grpc_core::FakeStatsPluginBuilder()
+                          .UseDisabledByDefaultMetrics(true)
+                          .BuildAndRegister();
+  ResetStubWithUniqueArg();
+  CreateAndStartBackends(1);
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  // Enable request headers processing mode in ext_proc config.
+  auto ext_proc_config = ExternalProcessorBuilder()
+                             .SetTargetUri(ext_proc_server_->target())
+                             .SetInsecureChannelCredentials()
+                             .SetFailureModeAllow(false)
+                             .SetRequestHeaderMode(ProcessingMode::SEND)
+                             .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = DefaultRouteConfig();
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(DefaultCluster());
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  rpc_options.set_echo_metadata_initially(true);
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_TRUE(status.ok()) << status.error_message();
+  // Wait for ext_proc server to receive request headers processing request.
+  MockExternalProcessorService::RequestCounts expected_counts;
+  expected_counts.request_headers = 1;
+  ext_proc_server_->ext_proc_service()->WaitForRequestCounts(expected_counts);
+  // Retrieve the client headers duration histogram instrument and verify metric
+  // recording.
+  const std::string expected_target = absl::StrCat("xds:", kServerName);
+  auto handle = grpc_core::GlobalInstrumentsRegistryTestPeer::
+                    FindDoubleHistogramHandleByName(
+                        "grpc.client_ext_proc.client_headers_duration")
+                        .value();
+  auto get_histogram =
+      [&](grpc_core::GlobalInstrumentsRegistry::GlobalInstrumentHandle handle) {
+        auto deadline =
+            absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
+        while (absl::Now() < deadline) {
+          auto val = stats_plugin->GetDoubleHistogramValue(
+              handle, {expected_target}, {""});
+          if (val.has_value()) return val;
+          absl::SleepFor(absl::Milliseconds(20));
+        }
+        return stats_plugin->GetDoubleHistogramValue(handle, {expected_target},
+                                                     {""});
+      };
+  EXPECT_TRUE(get_histogram(handle).has_value());
+}
+
+TEST_P(XdsExtProcEnd2endTest, ExtProcClientHalfCloseDurationMetric) {
+  // Register a fake stats plugin to capture optional/disabled-by-default
+  // metrics.
+  auto stats_plugin = grpc_core::FakeStatsPluginBuilder()
+                          .UseDisabledByDefaultMetrics(true)
+                          .BuildAndRegister();
+  ResetStubWithUniqueArg();
+  CreateAndStartBackends(1);
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  // Enable full processing mode including request body and response handling.
+  auto ext_proc_config = ExternalProcessorBuilder()
+                             .SetTargetUri(ext_proc_server_->target())
+                             .SetInsecureChannelCredentials()
+                             .SetFailureModeAllow(false)
+                             .SetRequestHeaderMode(ProcessingMode::SEND)
+                             .SetResponseHeaderMode(ProcessingMode::SEND)
+                             .SetResponseTrailerMode(ProcessingMode::SEND)
+                             .SetRequestBodyMode(ProcessingMode::GRPC)
+                             .SetResponseBodyMode(ProcessingMode::GRPC)
+                             .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = DefaultRouteConfig();
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(DefaultCluster());
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  rpc_options.set_echo_metadata_initially(true);
+  rpc_options.set_echo_metadata(true);
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_TRUE(status.ok()) << status.error_message();
+  // Wait for all ext_proc stream messages to be processed.
+  MockExternalProcessorService::RequestCounts expected_counts;
+  expected_counts.request_headers = 1;
+  expected_counts.response_headers = 1;
+  expected_counts.response_trailers = 1;
+  expected_counts.request_body = 1;
+  expected_counts.response_body = 1;
+  ext_proc_server_->ext_proc_service()->WaitForRequestCounts(expected_counts);
+  // Retrieve the client half-close duration histogram instrument and verify
+  // metric recording.
+  const std::string expected_target = absl::StrCat("xds:", kServerName);
+  auto handle = grpc_core::GlobalInstrumentsRegistryTestPeer::
+                    FindDoubleHistogramHandleByName(
+                        "grpc.client_ext_proc.client_half_close_duration")
+                        .value();
+  auto get_histogram =
+      [&](grpc_core::GlobalInstrumentsRegistry::GlobalInstrumentHandle handle) {
+        auto deadline =
+            absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
+        while (absl::Now() < deadline) {
+          auto val = stats_plugin->GetDoubleHistogramValue(
+              handle, {expected_target}, {""});
+          if (val.has_value()) return val;
+          absl::SleepFor(absl::Milliseconds(20));
+        }
+        return stats_plugin->GetDoubleHistogramValue(handle, {expected_target},
+                                                     {""});
+      };
+  EXPECT_TRUE(get_histogram(handle).has_value());
+}
+
+TEST_P(XdsExtProcEnd2endTest, ExtProcServerHeadersDurationMetric) {
+  // Register a fake stats plugin to capture optional/disabled-by-default
+  // metrics.
+  auto stats_plugin = grpc_core::FakeStatsPluginBuilder()
+                          .UseDisabledByDefaultMetrics(true)
+                          .BuildAndRegister();
+  ResetStubWithUniqueArg();
+  CreateAndStartBackends(1);
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  // Enable response headers processing mode in ext_proc config.
+  auto ext_proc_config = ExternalProcessorBuilder()
+                             .SetTargetUri(ext_proc_server_->target())
+                             .SetInsecureChannelCredentials()
+                             .SetFailureModeAllow(false)
+                             .SetResponseHeaderMode(ProcessingMode::SEND)
+                             .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = DefaultRouteConfig();
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(DefaultCluster());
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  rpc_options.set_echo_metadata_initially(true);
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_TRUE(status.ok()) << status.error_message();
+  // Wait for ext_proc server to receive response headers processing request.
+  MockExternalProcessorService::RequestCounts expected_counts;
+  expected_counts.response_headers = 1;
+  ext_proc_server_->ext_proc_service()->WaitForRequestCounts(expected_counts);
+  // Retrieve the server headers duration histogram instrument and verify metric
+  // recording.
+  const std::string expected_target = absl::StrCat("xds:", kServerName);
+  auto handle = grpc_core::GlobalInstrumentsRegistryTestPeer::
+                    FindDoubleHistogramHandleByName(
+                        "grpc.client_ext_proc.server_headers_duration")
+                        .value();
+  auto get_histogram =
+      [&](grpc_core::GlobalInstrumentsRegistry::GlobalInstrumentHandle handle) {
+        auto deadline =
+            absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
+        while (absl::Now() < deadline) {
+          auto val = stats_plugin->GetDoubleHistogramValue(
+              handle, {expected_target}, {""});
+          if (val.has_value()) return val;
+          absl::SleepFor(absl::Milliseconds(20));
+        }
+        return stats_plugin->GetDoubleHistogramValue(handle, {expected_target},
+                                                     {""});
+      };
+  EXPECT_TRUE(get_histogram(handle).has_value());
+}
+
+TEST_P(XdsExtProcEnd2endTest, ExtProcServerTrailersDurationMetric) {
+  // Register a fake stats plugin to capture optional/disabled-by-default
+  // metrics.
+  auto stats_plugin = grpc_core::FakeStatsPluginBuilder()
+                          .UseDisabledByDefaultMetrics(true)
+                          .BuildAndRegister();
+  ResetStubWithUniqueArg();
+  CreateAndStartBackends(1);
+  using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
+  // Enable response trailers processing mode in ext_proc config.
+  auto ext_proc_config = ExternalProcessorBuilder()
+                             .SetTargetUri(ext_proc_server_->target())
+                             .SetInsecureChannelCredentials()
+                             .SetFailureModeAllow(false)
+                             .SetResponseTrailerMode(ProcessingMode::SEND)
+                             .Build();
+  Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
+  RouteConfiguration route_config = DefaultRouteConfig();
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  balancer_->ads_service()->SetCdsResource(DefaultCluster());
+  balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
+      {"locality0", CreateEndpointsForBackends(0, 1)},
+  })));
+  RpcOptions rpc_options;
+  rpc_options.set_echo_metadata(true);
+  EchoResponse response;
+  Status status = SendRpcGetTrailers(rpc_options, &response, nullptr, nullptr);
+  EXPECT_TRUE(status.ok()) << status.error_message();
+  // Wait for ext_proc server to receive response trailers processing request.
+  MockExternalProcessorService::RequestCounts expected_counts;
+  expected_counts.response_trailers = 1;
+  ext_proc_server_->ext_proc_service()->WaitForRequestCounts(expected_counts);
+  // Retrieve the server trailers duration histogram instrument and verify
+  // metric recording.
+  const std::string expected_target = absl::StrCat("xds:", kServerName);
+  auto handle = grpc_core::GlobalInstrumentsRegistryTestPeer::
+                    FindDoubleHistogramHandleByName(
+                        "grpc.client_ext_proc.server_trailers_duration")
+                        .value();
+  auto get_histogram =
+      [&](grpc_core::GlobalInstrumentsRegistry::GlobalInstrumentHandle handle) {
+        auto deadline =
+            absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
+        while (absl::Now() < deadline) {
+          auto val = stats_plugin->GetDoubleHistogramValue(
+              handle, {expected_target}, {""});
+          if (val.has_value()) return val;
+          absl::SleepFor(absl::Milliseconds(20));
+        }
+        return stats_plugin->GetDoubleHistogramValue(handle, {expected_target},
+                                                     {""});
+      };
+  EXPECT_TRUE(get_histogram(handle).has_value());
+}
+
 }  // namespace
 }  // namespace testing
 }  // namespace grpc
 
 int main(int argc, char** argv) {
-  grpc_core::SetEnv("GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_CLIENT", "true");
   grpc::testing::TestEnvironment env(&argc, argv);
   ::testing::InitGoogleTest(&argc, argv);
   // Make the backup poller poll very frequently in order to pick up
