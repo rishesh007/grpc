@@ -13380,8 +13380,7 @@ targets:
   - test/core/filters/ext_proc_message_test.cc
   deps:
   - gtest
-  - grpc
-  - protobuf
+  - grpc++
 - name: factory_test
   gtest: true
   build: test

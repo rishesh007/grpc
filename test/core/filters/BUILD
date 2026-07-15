@@ -234,6 +234,7 @@ grpc_cc_test(
         "//:envoy_config_core_upb",
         "//:envoy_service_ext_proc_upb",
         "//:grpc",
+        "//:grpc++",
         "//src/core:ext_proc_messages",
         "//src/core:upb_utils",
         "@envoy_api//envoy/config/core/v3:pkg_cc_proto",

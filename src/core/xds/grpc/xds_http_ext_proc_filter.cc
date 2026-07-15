@@ -293,7 +293,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
   auto* overrides =
       envoy_extensions_filters_http_ext_proc_v3_ExtProcPerRoute_overrides(
           ext_proc_per_route);
-  if (overrides == nullptr) return config;
+  if (overrides == nullptr) return nullptr;
   ValidationErrors::ScopedField field(errors, ".overrides");
   // processing_mode
   if (auto* processing_mode =
@@ -404,7 +404,8 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
   }
   // Blackboard handling
   if (const auto* target =
-          std::get_if<GrpcXdsServerTarget>(&config->channel_info)) {
+          std::get_if<GrpcXdsServerTarget>(&config->channel_info);
+      target != nullptr) {
     std::string key = target->Key();
     config->channel_info =
         blackboard.GetOrSet<ExtProcFilter::ExtProcChannel>(key, [&]() {
