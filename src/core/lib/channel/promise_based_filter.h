@@ -1262,11 +1262,11 @@ class V3InterceptorToV2Bridge : public ChannelFilter, public Interceptor {
     // passed to the v3 interceptor.  The interceptor will wind up returning
     // a handler to us via state->call_handler_latch, which will represent
     // the server side of the v3 interceptor.
-    auto call_pair = MakeCallPair(std::move(call_args.client_initial_metadata),
-                                  GetContext<Arena>()->Ref());
-    auto initiator = call_pair.initiator;
+    auto [initiator, unstarted_handler] =
+        MakeCallPair(std::move(call_args.client_initial_metadata),
+                     GetContext<Arena>()->Ref());
     // Inject the unstarted handler into the interceptor.
-    StartCall(std::move(call_pair.handler));
+    StartCall(std::move(unstarted_handler));
     // We need inter-activity mechanisms to move data between the v2 and v3
     // activities.
     struct PipeOwner {
@@ -1438,18 +1438,9 @@ class V3InterceptorToV2Bridge : public ChannelFilter, public Interceptor {
                         return ForEach(
                             MessagesFrom(initiator),
                             [pipe_owner](MessageHandle message) {
-                              LOG(INFO)
-                                  << "V2Bridge: pull_server_to_client_message "
-                                     "got message from V3, pushing to V2 pipe";
                               return Map(pipe_owner->server_to_client_messages
                                              .sender.Push(std::move(message)),
-                                         [](bool x) {
-                                           LOG(INFO) << "V2Bridge: "
-                                                        "pull_server_to_client_"
-                                                        "message push result="
-                                                     << x;
-                                           return StatusFlag(x);
-                                         });
+                                         [](bool x) { return StatusFlag(x); });
                             });
                       });
                   call_args.server_to_client_messages->InterceptAndMap(
@@ -1457,8 +1448,6 @@ class V3InterceptorToV2Bridge : public ChannelFilter, public Interceptor {
                        pipe_owner](MessageHandle message) mutable {
                         // Step 1: Push the message onto the v3 handler in
                         // its activity.
-                        LOG(INFO) << "V2Bridge: S2C InterceptAndMap got "
-                                     "message, pushing to V3 handler";
                         handler.SpawnPushMessage(std::move(message));
                         // Step 3: Here in the v2 activity, read from the
                         // inter-activity pipe and return the messages.
@@ -1467,11 +1456,7 @@ class V3InterceptorToV2Bridge : public ChannelFilter, public Interceptor {
                                 .Next(),
                             [](InterActivityPipe<MessageHandle, 1>::NextResult
                                    message) -> std::optional<MessageHandle> {
-                              bool has_val = message.has_value();
-                              LOG(INFO) << "V2Bridge: S2C InterceptAndMap "
-                                           "pulled from V3, has_val="
-                                        << has_val;
-                              if (!has_val) return std::nullopt;
+                              if (!message.has_value()) return std::nullopt;
                               return std::move(*message);
                             });
                       });
