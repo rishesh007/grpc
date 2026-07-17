@@ -285,7 +285,10 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     c2s_half_close_initiated_.store(true, std::memory_order_release);
   }
 
-  bool IsStreamClosed() const { return stream_status_.IsSet(); }
+  bool IsStreamClosed() const {
+    MutexLock lock(&mu_);
+    return stream_status_value_.has_value();
+  }
 
   bool ext_proc_stream_half_closed() const {
     return ext_proc_stream_half_closed_.load(std::memory_order_acquire);
@@ -300,8 +303,8 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   }
 
   bool IsStreamClosedCleanly() const {
-    auto status = stream_status_.Get();
-    return status.has_value() && status->status.ok();
+    MutexLock lock(&mu_);
+    return stream_status_value_.has_value() && stream_status_value_->ok();
   }
 
   void IncrementOutstandingServerToClientMessages() {
@@ -384,21 +387,22 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   }
 
   absl::Status GetStreamStatus() const {
-    auto status = stream_status_.Get();
-    if (status.has_value()) {
-      return status->status;
-    }
-    return absl::OkStatus();
+    MutexLock lock(&mu_);
+    return stream_status_value_.value_or(absl::OkStatus());
   }
 
   auto WaitForStreamStatus() {
     return [this]() -> Poll<absl::Status> {
-      if (stream_status_.IsSet()) {
-        return GetStreamStatus();
+      {
+        MutexLock lock(&mu_);
+        if (stream_status_value_.has_value()) {
+          return *stream_status_value_;
+        }
       }
       auto poll = stream_status_.Wait()();
-      if (auto* status = poll.value_if_ready()) {
-        return status->status;
+      if (poll.ready()) {
+        MutexLock lock(&mu_);
+        return stream_status_value_.value_or(absl::OkStatus());
       }
       return Pending{};
     };
@@ -411,7 +415,7 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   absl::AnyInvocable<Poll<absl::Status>()> SendMessage(
       absl::AnyInvocable<absl::StatusOr<std::string>()> payload_generator) {
     MutexLock lock(&mu_);
-    if (stream_status_.IsSet() || streaming_call_ == nullptr) {
+    if (stream_status_value_.has_value() || streaming_call_ == nullptr) {
       return []() -> Poll<absl::Status> {
         return absl::CancelledError("Stream closed");
       };
@@ -435,8 +439,9 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     OrphanablePtr<SerializedStreamingCall> streaming_call;
     {
       MutexLock lock(&mu_);
-      if (!stream_status_.IsSet()) {
-        stream_status_.Set(CopyableStatus(absl::OkStatus()));
+      if (!stream_status_value_.has_value()) {
+        stream_status_value_ = absl::OkStatus();
+        stream_status_.Set();
       }
       streaming_call = std::move(streaming_call_);
     }
@@ -665,8 +670,9 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
 
   void SetStreamStatus(absl::Status status) {
     MutexLock lock(&mu_);
-    if (!stream_status_.IsSet()) {
-      stream_status_.Set(CopyableStatus(status));
+    if (!stream_status_value_.has_value()) {
+      stream_status_value_ = status;
+      stream_status_.Set();
     }
   }
 
@@ -927,9 +933,10 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
     bool already_closed = false;
     {
       MutexLock lock(&mu_);
-      already_closed = stream_status_.IsSet();
+      already_closed = stream_status_value_.has_value();
       if (!already_closed) {
-        stream_status_.Set(CopyableStatus(status));
+        stream_status_value_ = status;
+        stream_status_.Set();
       }
     }
     // Always complete latches on status received to avoid hangs.
@@ -977,25 +984,8 @@ class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
   std::atomic<bool> ext_proc_set_eos_{false};
   // Indicates that the external processor stream has been half closed.
   std::atomic<bool> ext_proc_stream_half_closed_{false};
-  // Helper struct to wrap absl::Status.
-  // InterActivityLatch::Wait() moves the value out of the latch, which would
-  // leave it in an invalid (moved-from) state for subsequent reads. Since
-  // multiple promises need to query the stream status from ExtProcCall, we
-  // override the move constructor/assignment to perform a copy instead,
-  // ensuring the status remains valid for all readers.
-  struct CopyableStatus {
-    absl::Status status;
-    CopyableStatus() = default;
-    explicit CopyableStatus(absl::Status s) : status(std::move(s)) {}
-    CopyableStatus(const CopyableStatus&) = default;
-    CopyableStatus(CopyableStatus&& other) noexcept : status(other.status) {}
-    CopyableStatus& operator=(const CopyableStatus&) = default;
-    CopyableStatus& operator=(CopyableStatus&& other) noexcept {
-      status = other.status;
-      return *this;
-    }
-  };
-  InterActivityLatch<CopyableStatus> stream_status_;
+  InterActivityLatch<void> stream_status_;
+  std::optional<absl::Status> stream_status_value_ ABSL_GUARDED_BY(mu_);
 
   mutable Mutex mu_;
 
