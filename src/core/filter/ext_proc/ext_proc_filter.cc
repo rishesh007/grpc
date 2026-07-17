@@ -16,12 +16,29 @@
 
 #include "src/core/filter/ext_proc/ext_proc_filter.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "src/core/call/call_spine.h"
+#include "src/core/call/metadata.h"
+#include "src/core/lib/channel/channel_args.h"
+#include "src/core/lib/channel/channel_fwd.h"
+#include "src/core/lib/channel/promise_based_filter.h"
+#include "src/core/lib/debug/trace_impl.h"
 #include "src/core/lib/promise/try_seq.h"
+#include "src/core/util/down_cast.h"
+#include "src/core/util/grpc_check.h"
 #include "src/core/util/match.h"
+#include "src/core/util/ref_counted_ptr.h"
 #include "src/core/util/string.h"
+#include "src/core/util/time.h"
+#include "src/core/xds/grpc/xds_server_grpc.h"
+#include "src/core/xds/xds_client/xds_bootstrap.h"
+#include "src/core/xds/xds_client/xds_transport.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_join.h"
 
 namespace grpc_core {
@@ -119,6 +136,21 @@ std::string ExtProcFilter::Config::ToString() const {
   }
   StrAppend(result, "}");
   return result;
+}
+
+bool ExtProcFilter::Config::Equals(const FilterConfig& other) const {
+  const auto& o = DownCast<const Config&>(other);
+  return channel_info == o.channel_info &&
+         failure_mode_allow == o.failure_mode_allow &&
+         processing_mode == o.processing_mode &&
+         request_attributes == o.request_attributes &&
+         response_attributes == o.response_attributes &&
+         mutation_rules == o.mutation_rules &&
+         forwarding_allowed_headers == o.forwarding_allowed_headers &&
+         forwarding_disallowed_headers == o.forwarding_disallowed_headers &&
+         disable_immediate_response == o.disable_immediate_response &&
+         observability_mode == o.observability_mode &&
+         deferred_close_timeout == o.deferred_close_timeout;
 }
 
 //

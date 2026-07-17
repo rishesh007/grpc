@@ -23,7 +23,6 @@
 #include <utility>
 #include <vector>
 
-#include "envoy/config/common/mutation_rules/v3/mutation_rules.upb.h"
 #include "envoy/extensions/filters/http/ext_proc/v3/ext_proc.upb.h"
 #include "envoy/extensions/filters/http/ext_proc/v3/ext_proc.upbdefs.h"
 #include "envoy/extensions/filters/http/ext_proc/v3/processing_mode.upb.h"
@@ -35,14 +34,10 @@
 #include "src/core/util/grpc_check.h"
 #include "src/core/util/ref_counted_ptr.h"
 #include "src/core/util/validation_errors.h"
-#include "src/core/xds/grpc/xds_bootstrap_grpc.h"
 #include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/grpc/xds_common_types_parser.h"
 #include "src/core/xds/grpc/xds_grpc_service_parser.h"
-#include "src/core/xds/grpc/xds_http_filter.h"
-#include "src/core/xds/grpc/xds_http_filter_registry.h"
 #include "src/core/xds/grpc/xds_server_grpc.h"
-#include "src/core/xds/xds_client/xds_client.h"
 #include "src/core/xds/xds_client/xds_resource_type.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
