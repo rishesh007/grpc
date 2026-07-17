@@ -435,6 +435,23 @@ class GenericMockService : public MockExternalProcessorBase {
   StreamCallback stream_callback_;
 };
 
+class CustomBidiStreamServiceImpl : public TestServiceImpl {
+ public:
+  Status BidiStream(
+      ServerContext* /*context*/,
+      ServerReaderWriter<EchoResponse, EchoRequest>* stream) override {
+    EchoRequest request1;
+    if (!stream->Read(&request1)) return Status::OK;
+    stream->SendInitialMetadata();
+    EchoRequest request2;
+    if (!stream->Read(&request2)) return Status::OK;
+    EchoResponse response;
+    response.set_message(request1.message());
+    stream->Write(response);
+    return Status::OK;
+  }
+};
+
 class XdsExtProcEnd2endTest : public XdsEnd2endTest {
  public:
   class ExtProcServerBase {
@@ -3985,7 +4002,14 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeTrue) {
         return grpc::Status::OK;
       });
   StartAlternativeServer(std::move(mock_service));
-  CreateAndStartBackends(1);
+  CustomBidiStreamServiceImpl custom_backend_service;
+  ServerBuilder backend_builder;
+  int custom_backend_port = grpc_pick_unused_port_or_die();
+  backend_builder.AddListeningPort(
+      absl::StrCat("localhost:", custom_backend_port),
+      CreateFakeServerCredentials());
+  backend_builder.RegisterService(&custom_backend_service);
+  auto custom_backend_server = backend_builder.BuildAndStart();
   ResetStubWithUniqueArg();
   using envoy::extensions::filters::http::ext_proc::v3::ProcessingMode;
   auto ext_proc_config =
@@ -4003,7 +4027,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeTrue) {
   SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
   balancer_->ads_service()->SetCdsResource(default_cluster_);
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
-      {"locality0", CreateEndpointsForBackends(0, 1)},
+      {"locality0", {EdsResourceArgs::Endpoint(custom_backend_port)}},
   })));
   ClientContext context;
   auto stream = stub_->BidiStream(&context);
@@ -4011,11 +4035,15 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeTrue) {
   EchoResponse response;
   request.set_message(kMessage1);
   EXPECT_TRUE(stream->Write(request));
-  EXPECT_FALSE(stream->Read(&response));
+  stream->WaitForInitialMetadata();
+  request.set_message(kMessage2);
+  EXPECT_TRUE(stream->Write(request));
+  EXPECT_TRUE(stream->Read(&response));
+  EXPECT_EQ(response.message(), kMessage1);
   stream->WritesDone();
   Status status = stream->Finish();
-  EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
-                                   "Stream closed cleanly without drain"));
+  EXPECT_TRUE(status.ok()) << status.error_message();
+  custom_backend_server->Shutdown();
 }
 
 TEST_P(XdsExtProcEnd2endTest,
