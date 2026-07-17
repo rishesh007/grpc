@@ -19,7 +19,6 @@
 #include <stdint.h>
 
 #include <string>
-#include <type_traits>
 
 #include "src/core/lib/debug/trace.h"
 #include "src/core/lib/promise/activity.h"
