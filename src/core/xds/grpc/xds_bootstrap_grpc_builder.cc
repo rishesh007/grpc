@@ -98,7 +98,7 @@ XdsHttpFilterRegistry GrpcXdsBootstrapBuilder::CreateXdsHttpFilterRegistry(
           std::make_unique<XdsHttpCompositeFilterFactory>());
     }
     if (IsExperimentEnvVarEnabled("GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_CLIENT")) {
-      registry.RegisterFilter(std::make_unique<XdsHttpExtProcFilter>());
+      registry.RegisterFilter(std::make_unique<XdsHttpExtProcFilterFactory>());
     }
     MutexLock lock(g_mu);
     if (*g_http_filter_factory_factory != nullptr) {

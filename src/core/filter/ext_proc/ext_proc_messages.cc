@@ -40,6 +40,7 @@
 #include "upb/base/string_view.h"
 #include "upb/mem/arena.h"
 #include "upb/mem/arena.hpp"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
@@ -580,7 +581,6 @@ class UpbStructHeadersEncoder {
           val_msg, arena);
     } else if (attr == "request.referer" || attr == "request.useragent" ||
                attr == "request.id") {
-      std::string backing_str;
       absl::string_view key;
       if (attr == "request.referer") {
         key = "referer";
@@ -589,6 +589,7 @@ class UpbStructHeadersEncoder {
       } else {
         key = "x-request-id";
       }
+      std::string backing_str;
       std::optional<absl::string_view> val =
           metadata.GetStringValue(key, &backing_str);
       if (val.has_value()) add_field(attr, *val);
@@ -611,12 +612,12 @@ envoy_config_core_v3_HeaderMap* CreateUpbHeaderMap(
   return upb_headers;
 }
 
-template <typename F>
 absl::StatusOr<std::string> CreateRequestAndSerialize(
     upb_Arena* arena, ::google_protobuf_Struct* attributes,
     bool observability_mode,
     std::optional<ExtProcProcessingMode> processing_mode,
-    F&& populate_payload) {
+    absl::FunctionRef<void(envoy_service_ext_proc_v3_ProcessingRequest*)>
+        populate_payload) {
   auto* request = CreateCommonRequest(arena, attributes, observability_mode,
                                       processing_mode);
   populate_payload(request);

@@ -44,27 +44,27 @@
 
 namespace grpc_core {
 
-absl::string_view XdsHttpExtProcFilter::ConfigProtoName() const {
+absl::string_view XdsHttpExtProcFilterFactory::ConfigProtoName() const {
   return "envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor";
 }
 
-absl::string_view XdsHttpExtProcFilter::OverrideConfigProtoName() const {
+absl::string_view XdsHttpExtProcFilterFactory::OverrideConfigProtoName() const {
   return "envoy.extensions.filters.http.ext_proc.v3.ExtProcPerRoute";
 }
 
-void XdsHttpExtProcFilter::PopulateSymtab(upb_DefPool* symtab) const {
+void XdsHttpExtProcFilterFactory::PopulateSymtab(upb_DefPool* symtab) const {
   envoy_extensions_filters_http_ext_proc_v3_ExternalProcessor_getmsgdef(symtab);
   envoy_extensions_filters_http_ext_proc_v3_ExtProcPerRoute_getmsgdef(symtab);
   envoy_extensions_filters_http_ext_proc_v3_ProcessingMode_getmsgdef(symtab);
 }
 
-void XdsHttpExtProcFilter::AddFilter(
+void XdsHttpExtProcFilterFactory::AddFilter(
     FilterChainBuilder& builder,
     RefCountedPtr<const FilterConfig> config) const {
   builder.AddFilter<ExtProcFilter>(std::move(config));
 }
 
-const grpc_channel_filter* XdsHttpExtProcFilter::channel_filter() const {
+const grpc_channel_filter* XdsHttpExtProcFilterFactory::channel_filter() const {
   return &ExtProcFilter::kFilterVtable;
 }
 
@@ -150,7 +150,8 @@ ExtProcFilter::ProcessingMode ParseProcessingMode(
 
 }  // namespace
 
-RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
+RefCountedPtr<const FilterConfig>
+XdsHttpExtProcFilterFactory::ParseTopLevelConfig(
     absl::string_view /*instance_name*/,
     const XdsResourceType::DecodeContext& context,
     const XdsExtension& extension, ValidationErrors* errors) const {
@@ -266,7 +267,8 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseTopLevelConfig(
   return config;
 }
 
-RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
+RefCountedPtr<const FilterConfig>
+XdsHttpExtProcFilterFactory::ParseOverrideConfig(
     absl::string_view /*instance_name*/,
     const XdsResourceType::DecodeContext& context,
     const XdsExtension& extension, ValidationErrors* errors) const {
@@ -335,7 +337,7 @@ RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::ParseOverrideConfig(
   return config;
 }
 
-RefCountedPtr<const FilterConfig> XdsHttpExtProcFilter::MergeConfigs(
+RefCountedPtr<const FilterConfig> XdsHttpExtProcFilterFactory::MergeConfigs(
     RefCountedPtr<const FilterConfig> top_level_config,
     RefCountedPtr<const FilterConfig> virtual_host_override_config,
     RefCountedPtr<const FilterConfig> route_override_config,

@@ -5793,6 +5793,7 @@ grpc_cc_library(
     external_deps = [
         "@com_google_protobuf//upb/base",
         "@com_google_protobuf//upb/mem",
+        "absl/functional:function_ref",
         "absl/status",
         "absl/status:statusor",
         "absl/strings",
