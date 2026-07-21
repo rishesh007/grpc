@@ -39,6 +39,7 @@
 #include "src/core/lib/iomgr/iomgr_fwd.h"
 #include "src/core/lib/promise/arena_promise.h"
 #include "src/core/lib/promise/promise.h"
+#include "src/core/telemetry/metrics.h"
 #include "src/core/transport/auth_context.h"
 #include "src/core/tsi/ssl_transport_security.h"
 #include "src/core/tsi/transport_security.h"
@@ -103,13 +104,19 @@ class grpc_ssl_channel_security_connector final
                        grpc_core::HandshakeManager* handshake_mgr) override {
     // Instantiate TSI handshaker.
     tsi_handshaker* tsi_hs = nullptr;
+    auto stats_plugin_group = args.GetObject<
+        grpc_core::GlobalStatsPluginRegistry::StatsPluginGroup>();
+    grpc_core::RefCountedPtr<grpc_core::CollectionScope> collection_scope =
+        stats_plugin_group != nullptr ? stats_plugin_group->GetCollectionScope()
+                                      : nullptr;
     tsi_result result = tsi_ssl_client_handshaker_factory_create_handshaker(
         client_handshaker_factory_,
         overridden_target_name_.empty() ? target_name_.c_str()
                                         : overridden_target_name_.c_str(),
         /*network_bio_buf_size=*/0,
         /*ssl_bio_buf_size=*/0,
-        args.GetOwnedString(GRPC_ARG_TRANSPORT_PROTOCOLS), &tsi_hs);
+        args.GetOwnedString(GRPC_ARG_TRANSPORT_PROTOCOLS),
+        std::move(collection_scope), &tsi_hs);
     if (result != TSI_OK) {
       LOG(ERROR) << "Handshaker creation failed with error "
                  << tsi_result_to_string(result);
@@ -241,10 +248,8 @@ class grpc_ssl_server_security_connector
       tsi_ssl_server_handshaker_options options;
       options.pem_key_cert_pairs =
           server_credentials->config().pem_key_cert_pairs;
-      options.num_key_cert_pairs =
-          server_credentials->config().num_key_cert_pairs;
       if (server_credentials->config().pem_root_certs != nullptr) {
-        options.root_cert_info = std::make_shared<RootCertInfo>(
+        options.root_cert_info = std::make_shared<tsi::RootCertInfo>(
             server_credentials->config().pem_root_certs);
       }
       options.client_certificate_request =
@@ -276,9 +281,14 @@ class grpc_ssl_server_security_connector
     // Instantiate TSI handshaker.
     try_fetch_ssl_server_credentials();
     tsi_handshaker* tsi_hs = nullptr;
+    auto stats_plugin_group = args.GetObject<
+        grpc_core::GlobalStatsPluginRegistry::StatsPluginGroup>();
+    grpc_core::RefCountedPtr<grpc_core::CollectionScope> collection_scope =
+        stats_plugin_group != nullptr ? stats_plugin_group->GetCollectionScope()
+                                      : nullptr;
     tsi_result result = tsi_ssl_server_handshaker_factory_create_handshaker(
         server_handshaker_factory_, /*network_bio_buf_size=*/0,
-        /*ssl_bio_buf_size=*/0, &tsi_hs);
+        /*ssl_bio_buf_size=*/0, std::move(collection_scope), &tsi_hs);
     if (result != TSI_OK) {
       LOG(ERROR) << "Handshaker creation failed with error "
                  << tsi_result_to_string(result);
@@ -361,10 +371,9 @@ class grpc_ssl_server_security_connector
     tsi_ssl_server_handshaker_options options;
     options.pem_key_cert_pairs = grpc_convert_grpc_to_tsi_cert_pairs(
         config->pem_key_cert_pairs, config->num_key_cert_pairs);
-    options.num_key_cert_pairs = config->num_key_cert_pairs;
     if (config->pem_root_certs != nullptr) {
       options.root_cert_info =
-          std::make_shared<RootCertInfo>(config->pem_root_certs);
+          std::make_shared<tsi::RootCertInfo>(config->pem_root_certs);
     }
     options.client_certificate_request =
         grpc_get_tsi_client_certificate_request_type(
@@ -374,9 +383,6 @@ class grpc_ssl_server_security_connector
     options.num_alpn_protocols = static_cast<uint16_t>(num_alpn_protocols);
     tsi_result result = tsi_create_ssl_server_handshaker_factory_with_options(
         &options, &new_handshaker_factory);
-    grpc_tsi_ssl_pem_key_cert_pairs_destroy(
-        const_cast<tsi_ssl_pem_key_cert_pair*>(options.pem_key_cert_pairs),
-        options.num_key_cert_pairs);
     gpr_free(alpn_protocol_strings);
 
     if (result != TSI_OK) {

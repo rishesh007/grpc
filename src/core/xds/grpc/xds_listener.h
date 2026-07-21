@@ -29,11 +29,13 @@
 #include <variant>
 #include <vector>
 
+#include "src/core/filter/filter_args.h"
 #include "src/core/lib/iomgr/resolved_address.h"
 #include "src/core/util/time.h"
 #include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/grpc/xds_http_filter.h"
 #include "src/core/xds/grpc/xds_route_config.h"
+#include "src/core/xds/grpc/xds_tls_context.h"
 #include "src/core/xds/xds_client/xds_resource_type.h"
 #include "src/core/xds/xds_client/xds_resource_type_impl.h"
 
@@ -53,11 +55,17 @@ struct XdsListenerResource : public XdsResourceType::ResourceData {
       std::string name;
       absl::string_view config_proto_type;
       Json config;
+      RefCountedPtr<const FilterConfig> filter_config;
+      bool disabled = false;
 
       bool operator==(const HttpFilter& other) const {
-        return name == other.name &&
-               config_proto_type == other.config_proto_type &&
-               config == other.config;
+        if (name != other.name) return false;
+        if (config_proto_type != other.config_proto_type) return false;
+        if (config != other.config) return false;
+        if (disabled != other.disabled) return false;
+        if (filter_config == nullptr) return other.filter_config == nullptr;
+        if (other.filter_config == nullptr) return false;
+        return *filter_config == *other.filter_config;
       }
 
       std::string ToString() const;
@@ -132,6 +140,8 @@ struct XdsListenerResource : public XdsResourceType::ResourceData {
         return *data == *other.data;
       }
     };
+    // TODO(roth): Unify this with Rbac::CidrRange, possibly as part of
+    // addressing https://github.com/grpc/grpc/issues/34172.
     struct CidrRange {
       grpc_resolved_address address;
       uint32_t prefix_len;

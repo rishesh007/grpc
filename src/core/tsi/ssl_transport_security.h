@@ -21,15 +21,23 @@
 
 #include <grpc/grpc_crl_provider.h>
 #include <grpc/grpc_security_constants.h>
+#include <grpc/private_key_signer.h>
 #include <grpc/support/port_platform.h>
 #include <openssl/x509.h>
 
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <variant>
+#include <vector>
 
+#include "src/core/credentials/transport/tls/grpc_tls_certificate_selector.h"
 #include "src/core/credentials/transport/tls/spiffe_utils.h"
+#include "src/core/telemetry/metrics.h"
 #include "src/core/tsi/ssl/key_logging/ssl_key_logging.h"
 #include "src/core/tsi/ssl_transport_security_utils.h"
 #include "src/core/tsi/transport_security_interface.h"
+#include "src/core/util/ref_counted_ptr.h"
 #include "absl/strings/string_view.h"
 
 // Value for the TSI_CERTIFICATE_TYPE_PEER_PROPERTY property for X509 certs.
@@ -50,8 +58,15 @@
 #define TSI_X509_IP_PEER_PROPERTY "x509_ip"
 #define TSI_X509_VERIFIED_ROOT_CERT_SUBECT_PEER_PROPERTY \
   "x509_verified_root_cert_subject"
+#define TSI_SSL_NEGOTIATED_KEY_EXCHANGE_GROUP \
+  "ssl_negotiated_key_exchange_group"
 
+namespace tsi {
 using RootCertInfo = std::variant<std::string, grpc_core::SpiffeBundleMap>;
+
+using PrivateKey =
+    std::variant<std::string, std::shared_ptr<grpc_core::PrivateKeySigner>>;
+}  // namespace tsi
 
 // --- tsi_ssl_root_certs_store object ---
 
@@ -105,13 +120,17 @@ typedef struct tsi_ssl_client_handshaker_factory
 
 // Object that holds a private key / certificate chain pair in PEM format.
 struct tsi_ssl_pem_key_cert_pair {
-  // private_key is the NULL-terminated string containing the PEM encoding of
-  // the client's private key.
-  const char* private_key;
+  // private_key is either the string containing the PEM encoding of
+  // the client's private key or an implementation of PrivateKeySigner.
+  tsi::PrivateKey private_key;
 
-  // cert_chain is the NULL-terminated string containing the PEM encoding of
+  // cert_chain is the string containing the PEM encoding of
   // the client's certificate chain.
-  const char* cert_chain;
+  std::string cert_chain;
+
+  tsi_ssl_pem_key_cert_pair() = default;
+  tsi_ssl_pem_key_cert_pair(tsi::PrivateKey pk, std::string cert_chain_pem)
+      : private_key(std::move(pk)), cert_chain(std::move(cert_chain_pem)) {}
 };
 // TO BE DEPRECATED.
 // Creates a client handshaker factory.
@@ -192,7 +211,11 @@ struct tsi_ssl_client_handshaker_options {
 
   // root_cert_info is either the string containing the PEM encoding of the
   // client root certificates or a SPIFFE bundle map.
-  std::shared_ptr<RootCertInfo> root_cert_info;
+  std::shared_ptr<tsi::RootCertInfo> root_cert_info;
+
+  // The list of key exchange groups (TLS curves) that will be negotiated by
+  // the handshaker, in order of preference.
+  std::vector<grpc_tls_key_exchange_group> key_exchange_groups;
 
   // TODO(gtcooke94) this ctor is not needed
   // https://github.com/grpc/grpc/pull/39708/files#r2143735662
@@ -239,6 +262,7 @@ tsi_result tsi_ssl_client_handshaker_factory_create_handshaker(
     const char* server_name_indication, size_t network_bio_buf_size,
     size_t ssl_bio_buf_size,
     std::optional<std::string> alpn_preferred_protocol_list,
+    grpc_core::RefCountedPtr<grpc_core::CollectionScope> collection_scope,
     tsi_handshaker** handshaker);
 
 // Increments reference count of the client handshaker factory.
@@ -258,11 +282,14 @@ void tsi_ssl_client_handshaker_factory_unref(
 typedef struct tsi_ssl_server_handshaker_factory
     tsi_ssl_server_handshaker_factory;
 
+typedef std::variant<std::vector<tsi_ssl_pem_key_cert_pair>,
+                     std::shared_ptr<grpc_core::CertificateSelector>>
+    tsi_ssl_key_cert_pairs;
+
 // TO BE DEPRECATED.
 // Creates a server handshaker factory.
 // - pem_key_cert_pairs is an array private key / certificate chains of the
 //   server.
-// - num_key_cert_pairs is the number of items in the pem_key_cert_pairs array.
 // - pem_root_certs is the NULL-terminated string containing the PEM encoding
 //   of the client root certificates. This parameter may be NULL if the server
 //   does not want the client to be authenticated with SSL.
@@ -281,11 +308,10 @@ typedef struct tsi_ssl_server_handshaker_factory
 // - This method returns TSI_OK on success or TSI_INVALID_PARAMETER in the case
 //   where a parameter is invalid.
 tsi_result tsi_create_ssl_server_handshaker_factory(
-    const tsi_ssl_pem_key_cert_pair* pem_key_cert_pairs,
-    size_t num_key_cert_pairs, const char* pem_client_root_certs,
-    int force_client_auth, const char* cipher_suites,
-    const char** alpn_protocols, uint16_t num_alpn_protocols,
-    tsi_ssl_server_handshaker_factory** factory);
+    tsi_ssl_key_cert_pairs pem_key_cert_pairs,
+    const char* pem_client_root_certs, int force_client_auth,
+    const char* cipher_suites, const char** alpn_protocols,
+    uint16_t num_alpn_protocols, tsi_ssl_server_handshaker_factory** factory);
 
 // TO BE DEPRECATED.
 // Same as tsi_create_ssl_server_handshaker_factory method except uses
@@ -295,19 +321,17 @@ tsi_result tsi_create_ssl_server_handshaker_factory(
 //   authenticate with an SSL cert. Note that this option is ignored if
 //   pem_client_root_certs is NULL or pem_client_roots_certs_size is 0
 tsi_result tsi_create_ssl_server_handshaker_factory_ex(
-    const tsi_ssl_pem_key_cert_pair* pem_key_cert_pairs,
-    size_t num_key_cert_pairs, const char* pem_client_root_certs,
+    tsi_ssl_key_cert_pairs pem_key_cert, const char* pem_client_root_certs,
     tsi_client_certificate_request_type client_certificate_request,
     const char* cipher_suites, const char** alpn_protocols,
     uint16_t num_alpn_protocols, tsi_ssl_server_handshaker_factory** factory);
 
 struct tsi_ssl_server_handshaker_options {
   // pem_key_cert_pairs is an array private key / certificate chains of the
-  // server.
-  const tsi_ssl_pem_key_cert_pair* pem_key_cert_pairs;
-  // num_key_cert_pairs is the number of items in the pem_key_cert_pairs
-  // array.
-  size_t num_key_cert_pairs;
+  // server, or a certificate selector. The array of key / certificate chains is
+  // to support SNI. The certificate selector will be in charge of this. So they
+  // are mutually exclusive.
+  tsi_ssl_key_cert_pairs pem_key_cert_pairs;
   // client_certificate_request, if set to non-zero will force the client to
   // authenticate with an SSL cert. Note that this option is ignored if
   // root_cert_info is NULL
@@ -364,14 +388,16 @@ struct tsi_ssl_server_handshaker_options {
   // root_cert_info is either the string containing the PEM encoding of the
   // server root certificates or a SPIFFE bundle map. This parameter may be NULL
   // if the server does not want the client to be authenticated with SSL.
-  std::shared_ptr<RootCertInfo> root_cert_info;
+  std::shared_ptr<tsi::RootCertInfo> root_cert_info;
+
+  // The list of key exchange groups (TLS curves) that will be negotiated by
+  // the handshaker, in order of preference.
+  std::vector<grpc_tls_key_exchange_group> key_exchange_groups;
 
   // TODO(gtcooke94) this ctor is not needed
   // https://github.com/grpc/grpc/pull/39708/files#r2143735662
   tsi_ssl_server_handshaker_options()
-      : pem_key_cert_pairs(nullptr),
-        num_key_cert_pairs(0),
-        client_certificate_request(TSI_DONT_REQUEST_CLIENT_CERTIFICATE),
+      : client_certificate_request(TSI_DONT_REQUEST_CLIENT_CERTIFICATE),
         cipher_suites(nullptr),
         alpn_protocols(nullptr),
         num_alpn_protocols(0),
@@ -404,7 +430,9 @@ tsi_result tsi_create_ssl_server_handshaker_factory_with_options(
 //  where a parameter is invalid.
 tsi_result tsi_ssl_server_handshaker_factory_create_handshaker(
     tsi_ssl_server_handshaker_factory* factory, size_t network_bio_buf_size,
-    size_t ssl_bio_buf_size, tsi_handshaker** handshaker);
+    size_t ssl_bio_buf_size,
+    grpc_core::RefCountedPtr<grpc_core::CollectionScope> collection_scope,
+    tsi_handshaker** handshaker);
 
 // Decrements reference count of the handshaker factory. Handshaker factory will
 // be destroyed once no references exist.
@@ -448,6 +476,8 @@ tsi_result tsi_ssl_extract_x509_subject_names_from_pem_cert(
 tsi_result tsi_ssl_get_cert_chain_contents(STACK_OF(X509) * peer_chain,
                                            tsi_peer_property* property);
 
+namespace tsi {
 bool IsRootCertInfoEmpty(const RootCertInfo* root_cert_info);
+}  // namespace tsi
 
 #endif  // GRPC_SRC_CORE_TSI_SSL_TRANSPORT_SECURITY_H

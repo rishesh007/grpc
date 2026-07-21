@@ -218,11 +218,11 @@ class FilterTest : public FilterTestBase {
     using FilterTestBase::Channel::Channel;
   };
 
-  absl::StatusOr<Channel> MakeChannel(const ChannelArgs& args,
-                                      const Blackboard* blackboard = nullptr) {
+  absl::StatusOr<Channel> MakeChannel(
+      const ChannelArgs& args,
+      RefCountedPtr<const FilterConfig> config = nullptr) {
     auto filter = Filter::Create(
-        args,
-        ChannelFilter::Args(/*instance_id=*/0, /*config=*/nullptr, blackboard));
+        args, ChannelFilter::Args(/*instance_id=*/0, std::move(config)));
     if (!filter.ok()) return filter.status();
     return Channel(std::move(*filter), this);
   }
