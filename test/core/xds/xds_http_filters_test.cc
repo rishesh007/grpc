@@ -3098,7 +3098,7 @@ TEST_F(XdsExtProcFilterTest, ParseMinimumConfig) {
   ASSERT_EQ(config->type(), ExtProcFilter::Config::Type());
   EXPECT_EQ(config->ToString(),
             "{grpc_service={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "processing_mode={send_request_headers=true, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
@@ -3135,7 +3135,7 @@ TEST_F(XdsExtProcFilterTest, ParseFullConfig) {
   ASSERT_EQ(config->type(), ExtProcFilter::Config::Type());
   EXPECT_EQ(config->ToString(),
             "{grpc_service={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "failure_mode_allow=true, "
             "processing_mode={send_request_headers=false, "
             "send_response_headers=true, send_response_trailers=true, "
@@ -3777,7 +3777,7 @@ TEST_F(XdsExtProcFilterTest, ParseOverrideConfig) {
   ASSERT_EQ(config->type(), ExtProcFilter::Config::Type());
   EXPECT_EQ(config->ToString(),
             "{grpc_service={server_uri=localhost:5678, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "failure_mode_allow=true, "
             "processing_mode={send_request_headers=false, "
             "send_response_headers=true, send_response_trailers=false, "
@@ -3840,7 +3840,7 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsNoOverride) {
   ASSERT_EQ(merged_config->type(), ExtProcFilter::Config::Type());
   EXPECT_EQ(merged_config->ToString(),
             "{ext_proc_channel={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "processing_mode={send_request_headers=true, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
@@ -3883,7 +3883,7 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsWithVirtualHostOverride) {
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
             "{ext_proc_channel={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "processing_mode={send_request_headers=false, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
@@ -3943,7 +3943,7 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsWithRouteOverride) {
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
             "{ext_proc_channel={server_uri=localhost:5678, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "processing_mode={send_request_headers=true, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
@@ -4018,7 +4018,7 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsWithClusterWeightOverride) {
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
             "{ext_proc_channel={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "processing_mode={send_request_headers=false, "
             "send_response_headers=false, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
@@ -4061,7 +4061,7 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsOverrideGrpcService) {
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
             "{ext_proc_channel={server_uri=localhost:5678, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "processing_mode={send_request_headers=true, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
@@ -4104,7 +4104,7 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsOverrideFailureModeAllow) {
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
             "{ext_proc_channel={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "failure_mode_allow=true, "
             "processing_mode={send_request_headers=true, "
             "send_response_headers=true, send_response_trailers=false, "
@@ -4147,7 +4147,7 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsOverrideRequestAttributes) {
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
             "{ext_proc_channel={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "processing_mode={send_request_headers=true, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
@@ -4189,7 +4189,7 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsOverrideResponseAttributes) {
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
             "{ext_proc_channel={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "processing_mode={send_request_headers=true, "
             "send_response_headers=true, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "
@@ -4238,7 +4238,7 @@ TEST_F(XdsExtProcFilterTest, MergeConfigsOverrideProcessingMode) {
   ASSERT_NE(merged, nullptr);
   EXPECT_EQ(merged->ToString(),
             "{ext_proc_channel={server_uri=localhost:1234, "
-            "channel_creds={type=google_default, config={}}}, "
+            "channel_creds={type=google_default, config={}}, timeout=\xE2\x88\x9E}, "
             "processing_mode={send_request_headers=false, "
             "send_response_headers=false, send_response_trailers=false, "
             "send_request_body=false, send_response_body=false}, "

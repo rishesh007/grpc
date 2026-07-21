@@ -74,8 +74,6 @@ class FakeXdsTransportFactory : public XdsTransportFactory {
     void StartRecvMessage() override;
     void SendHalfClose() override;
 
-    void SendHalfClose() override;
-
     using StreamingCall::Ref;  // Make it public.
 
     bool HaveMessageFromClient();
@@ -96,11 +94,6 @@ class FakeXdsTransportFactory : public XdsTransportFactory {
     void MaybeSendStatusToClient(absl::Status status);
 
     bool WaitForReadsStarted(size_t expected);
-
-    bool half_closed() const {
-      MutexLock lock(&mu_);
-      return half_closed_;
-    }
 
    private:
     class RefCountedEventHandler : public RefCounted<RefCountedEventHandler> {
@@ -222,7 +215,8 @@ class FakeXdsTransportFactory : public XdsTransportFactory {
 
     OrphanablePtr<StreamingCall> CreateStreamingCall(
         const char* method,
-        std::unique_ptr<StreamingCall::EventHandler> event_handler) override;
+        std::unique_ptr<StreamingCall::EventHandler> event_handler,
+        bool wait_for_ready = true) override;
 
     void ResetBackoff() override {}
 

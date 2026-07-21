@@ -27,6 +27,7 @@
 #include "src/core/call/call_spine.h"
 #include "src/core/call/message.h"
 #include "src/core/call/metadata.h"
+#include "src/core/client_channel/client_channel_args.h"
 #include "src/core/filter/ext_proc/ext_proc_messages.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/promise_based_filter.h"
