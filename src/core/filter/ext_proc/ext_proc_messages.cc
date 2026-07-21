@@ -16,8 +16,13 @@
 
 #include "src/core/filter/ext_proc/ext_proc_messages.h"
 
+#include <grpc/status.h>
+
+#include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "envoy/config/core/v3/base.upb.h"
@@ -26,7 +31,18 @@
 #include "google/protobuf/struct.upb.h"
 #include "src/core/call/metadata_batch.h"
 #include "src/core/call/status_util.h"
+#include "src/core/lib/slice/slice.h"
+#include "src/core/util/matchers.h"
+#include "src/core/util/string.h"
+#include "src/core/util/upb_utils.h"
+#include "src/core/util/validation_errors.h"
 #include "src/core/xds/grpc/xds_common_types_parser.h"
+#include "upb/base/string_view.h"
+#include "upb/mem/arena.h"
+#include "upb/mem/arena.hpp"
+#include "absl/functional/function_ref.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 
@@ -38,17 +54,17 @@ namespace grpc_core {
 
 std::string ExtProcProcessingMode::ToString() const {
   std::string result = "{";
-  absl::StrAppend(&result, "send_request_headers=");
-  absl::StrAppend(&result, send_request_headers ? "true" : "false");
-  absl::StrAppend(&result, ", send_response_headers=");
-  absl::StrAppend(&result, send_response_headers ? "true" : "false");
-  absl::StrAppend(&result, ", send_response_trailers=");
-  absl::StrAppend(&result, send_response_trailers ? "true" : "false");
-  absl::StrAppend(&result, ", send_request_body=");
-  absl::StrAppend(&result, send_request_body ? "true" : "false");
-  absl::StrAppend(&result, ", send_response_body=");
-  absl::StrAppend(&result, send_response_body ? "true" : "false");
-  absl::StrAppend(&result, "}");
+  StrAppend(result, "send_request_headers=");
+  StrAppend(result, send_request_headers ? "true" : "false");
+  StrAppend(result, ", send_response_headers=");
+  StrAppend(result, send_response_headers ? "true" : "false");
+  StrAppend(result, ", send_response_trailers=");
+  StrAppend(result, send_response_trailers ? "true" : "false");
+  StrAppend(result, ", send_request_body=");
+  StrAppend(result, send_request_body ? "true" : "false");
+  StrAppend(result, ", send_response_body=");
+  StrAppend(result, send_response_body ? "true" : "false");
+  StrAppend(result, "}");
   return result;
 }
 
@@ -88,18 +104,23 @@ absl::StatusOr<ExtProcResponse::HeaderMutation> ParseExtProcHeaderMutation(
   return header_mutation_response;
 }
 
-absl::StatusOr<ExtProcResponse::HeaderMutation> ParseExtProcHeaders(
+absl::Status ValidateCommonResponse(
     const envoy_service_ext_proc_v3_CommonResponse* common_response) {
   if (common_response == nullptr) {
     return absl::InternalError("common_response is not set");
   }
-  // parse ResponseStatus status if CONTINUE_AND_REPLACE return error
   int32_t status =
       envoy_service_ext_proc_v3_CommonResponse_status(common_response);
   if (status == envoy_service_ext_proc_v3_CommonResponse_CONTINUE_AND_REPLACE) {
     return absl::InternalError("CONTINUE_AND_REPLACE is not supported");
   }
-  // otherwise parse HeaderMutation header_mutation and return header mutation
+  return absl::OkStatus();
+}
+
+absl::StatusOr<ExtProcResponse::HeaderMutation> ParseExtProcHeaders(
+    const envoy_service_ext_proc_v3_CommonResponse* common_response) {
+  auto status = ValidateCommonResponse(common_response);
+  if (!status.ok()) return status;
   const envoy_service_ext_proc_v3_HeaderMutation* header_mutation =
       envoy_service_ext_proc_v3_CommonResponse_header_mutation(common_response);
   return ParseExtProcHeaderMutation(header_mutation);
@@ -107,14 +128,8 @@ absl::StatusOr<ExtProcResponse::HeaderMutation> ParseExtProcHeaders(
 
 absl::StatusOr<ExtProcResponse::BodyMutation> ParseExtProcBodyMutation(
     const envoy_service_ext_proc_v3_CommonResponse* common_response) {
-  if (common_response == nullptr) {
-    return absl::InternalError("common_response is not set");
-  }
-  int32_t status =
-      envoy_service_ext_proc_v3_CommonResponse_status(common_response);
-  if (status == envoy_service_ext_proc_v3_CommonResponse_CONTINUE_AND_REPLACE) {
-    return absl::InternalError("CONTINUE_AND_REPLACE is not supported");
-  }
+  auto status = ValidateCommonResponse(common_response);
+  if (!status.ok()) return status;
   const envoy_service_ext_proc_v3_BodyMutation* body_mutation =
       envoy_service_ext_proc_v3_CommonResponse_body_mutation(common_response);
   if (body_mutation == nullptr) {
@@ -314,26 +329,27 @@ class UpbHeaderMapEncoder {
   }
 
  private:
-  bool ShouldForwardHeader(absl::string_view key) const {
-    auto header_in_matcher = [](absl::string_view key,
-                                const std::vector<StringMatcher>& matchers) {
-      for (const auto& matcher : matchers) {
-        if (matcher.Match(key)) return true;
-      }
-      return false;
-    };
-    if (disallowed_headers_.empty()) {
-      return allowed_headers_.empty() ||
-             header_in_matcher(key, allowed_headers_);
+  ABSL_ATTRIBUTE_NOINLINE static bool HeaderInMatcher(
+      absl::string_view key, const std::vector<StringMatcher>& matchers) {
+    for (const auto& matcher : matchers) {
+      if (matcher.Match(key)) return true;
     }
-    // Now disallow list is set.
-    if (header_in_matcher(key, disallowed_headers_)) {
-      return false;
-    }
-    return allowed_headers_.empty() || header_in_matcher(key, allowed_headers_);
+    return false;
   }
 
-  void Append(absl::string_view key, absl::string_view value) {
+  ABSL_ATTRIBUTE_NOINLINE bool ShouldForwardHeader(
+      absl::string_view key) const {
+    if (disallowed_headers_.empty()) {
+      return allowed_headers_.empty() || HeaderInMatcher(key, allowed_headers_);
+    }
+    if (HeaderInMatcher(key, disallowed_headers_)) {
+      return false;
+    }
+    return allowed_headers_.empty() || HeaderInMatcher(key, allowed_headers_);
+  }
+
+  ABSL_ATTRIBUTE_NOINLINE void Append(absl::string_view key,
+                                      absl::string_view value) {
     if (!ShouldForwardHeader(key)) {
       return;
     }
@@ -502,7 +518,8 @@ class UpbStructHeadersEncoder {
   }
 
  private:
-  void Append(absl::string_view key, absl::string_view value) {
+  ABSL_ATTRIBUTE_NOINLINE void Append(absl::string_view key,
+                                      absl::string_view value) {
     ::google_protobuf_Value* val_msg = ::google_protobuf_Value_new(arena_);
     ::google_protobuf_Value_set_string_value(
         val_msg, upb_StringView_FromDataAndSize(value.data(), value.size()));
@@ -529,7 +546,7 @@ class UpbStructHeadersEncoder {
     upb_Arena* arena, const std::vector<std::string>& attributes,
     const grpc_metadata_batch& metadata, absl::string_view default_authority) {
   if (attributes.empty()) return nullptr;
-  ::google_protobuf_Struct* struct_msg = google_protobuf_Struct_new(arena);
+  ::google_protobuf_Struct* struct_msg = ::google_protobuf_Struct_new(arena);
   auto add_field = [&](absl::string_view name, absl::string_view value) {
     ::google_protobuf_Value* val_msg = ::google_protobuf_Value_new(arena);
     ::google_protobuf_Value_set_string_value(
@@ -559,7 +576,7 @@ class UpbStructHeadersEncoder {
       }
     } else if (attr == "request.headers") {
       ::google_protobuf_Struct* headers_struct =
-          google_protobuf_Struct_new(arena);
+          ::google_protobuf_Struct_new(arena);
       UpbStructHeadersEncoder encoder(headers_struct, arena);
       metadata.Encode(&encoder);
       ::google_protobuf_Value* val_msg = ::google_protobuf_Value_new(arena);
@@ -567,17 +584,19 @@ class UpbStructHeadersEncoder {
       ::google_protobuf_Struct_fields_set(
           struct_msg, upb_StringView_FromDataAndSize(attr.data(), attr.size()),
           val_msg, arena);
-    } else if (attr == "request.referer") {
-      std::string ref_str;
-      auto val = metadata.GetStringValue("referer", &ref_str);
-      if (val.has_value()) add_field(attr, *val);
-    } else if (attr == "request.useragent") {
-      std::string ua_str;
-      auto val = metadata.GetStringValue("user-agent", &ua_str);
-      if (val.has_value()) add_field(attr, *val);
-    } else if (attr == "request.id") {
-      std::string id_str;
-      auto val = metadata.GetStringValue("x-request-id", &id_str);
+    } else if (attr == "request.referer" || attr == "request.useragent" ||
+               attr == "request.id") {
+      absl::string_view key;
+      if (attr == "request.referer") {
+        key = "referer";
+      } else if (attr == "request.useragent") {
+        key = "user-agent";
+      } else {
+        key = "x-request-id";
+      }
+      std::string backing_str;
+      std::optional<absl::string_view> val =
+          metadata.GetStringValue(key, &backing_str);
       if (val.has_value()) add_field(attr, *val);
     } else if (attr == "request.query") {
       add_field(attr, "");
@@ -586,19 +605,45 @@ class UpbStructHeadersEncoder {
   return struct_msg;
 }
 
+namespace {
+
+envoy_config_core_v3_HeaderMap* CreateUpbHeaderMap(
+    upb_Arena* arena, grpc_metadata_batch& metadata,
+    const std::vector<StringMatcher>& allowed_headers,
+    const std::vector<StringMatcher>& disallowed_headers) {
+  auto* upb_headers = envoy_config_core_v3_HeaderMap_new(arena);
+  PopulateMetadataBatchToHeaderMap(metadata, allowed_headers,
+                                   disallowed_headers, arena, upb_headers);
+  return upb_headers;
+}
+
+absl::StatusOr<std::string> CreateRequestAndSerialize(
+    upb_Arena* arena, ::google_protobuf_Struct* attributes,
+    bool observability_mode,
+    std::optional<ExtProcProcessingMode> processing_mode,
+    absl::FunctionRef<void(envoy_service_ext_proc_v3_ProcessingRequest*)>
+        populate_payload) {
+  auto* request = CreateCommonRequest(arena, attributes, observability_mode,
+                                      processing_mode);
+  populate_payload(request);
+  return SerializeExtProcMessage(request, arena);
+}
+
+}  // namespace
+
 absl::StatusOr<std::string> CreateExtProcClientHeadersRequest(
     upb_Arena* arena, grpc_metadata_batch* metadata,
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
     std::optional<ExtProcProcessingMode> processing_mode) {
-  auto* request = CreateCommonRequest(arena, attributes, observability_mode,
-                                      processing_mode);
-  auto* upb_headers = envoy_config_core_v3_HeaderMap_new(arena);
-  PopulateMetadataBatchToHeaderMap(*metadata, allowed_headers,
-                                   disallowed_headers, arena, upb_headers);
-  SetExtProcRequestHeaders(arena, upb_headers, request);
-  return SerializeExtProcMessage(request, arena);
+  return CreateRequestAndSerialize(
+      arena, attributes, observability_mode, processing_mode,
+      [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
+        auto* upb_headers = CreateUpbHeaderMap(
+            arena, *metadata, allowed_headers, disallowed_headers);
+        SetExtProcRequestHeaders(arena, upb_headers, request);
+      });
 }
 
 absl::StatusOr<std::string> CreateExtProcServerHeadersRequest(
@@ -607,13 +652,13 @@ absl::StatusOr<std::string> CreateExtProcServerHeadersRequest(
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
     std::optional<ExtProcProcessingMode> processing_mode, bool end_of_stream) {
-  auto* request = CreateCommonRequest(arena, attributes, observability_mode,
-                                      processing_mode);
-  auto* upb_headers = envoy_config_core_v3_HeaderMap_new(arena);
-  PopulateMetadataBatchToHeaderMap(*metadata, allowed_headers,
-                                   disallowed_headers, arena, upb_headers);
-  SetExtProcResponseHeaders(arena, upb_headers, end_of_stream, request);
-  return SerializeExtProcMessage(request, arena);
+  return CreateRequestAndSerialize(
+      arena, attributes, observability_mode, processing_mode,
+      [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
+        auto* upb_headers = CreateUpbHeaderMap(
+            arena, *metadata, allowed_headers, disallowed_headers);
+        SetExtProcResponseHeaders(arena, upb_headers, end_of_stream, request);
+      });
 }
 
 absl::StatusOr<std::string> CreateExtProcClientBodyRequest(
@@ -621,23 +666,26 @@ absl::StatusOr<std::string> CreateExtProcClientBodyRequest(
     ::google_protobuf_Struct* attributes, bool observability_mode,
     std::optional<ExtProcProcessingMode> processing_mode, bool end_of_stream,
     bool end_of_stream_without_message) {
-  auto* request = CreateCommonRequest(arena, attributes, observability_mode,
-                                      processing_mode);
-  SetExtProcRequestBody(
-      arena, upb_StringView_FromDataAndSize(body.data(), body.size()),
-      end_of_stream, end_of_stream_without_message, request);
-  return SerializeExtProcMessage(request, arena);
+  return CreateRequestAndSerialize(
+      arena, attributes, observability_mode, processing_mode,
+      [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
+        SetExtProcRequestBody(
+            arena, upb_StringView_FromDataAndSize(body.data(), body.size()),
+            end_of_stream, end_of_stream_without_message, request);
+      });
 }
 
 absl::StatusOr<std::string> CreateExtProcServerBodyRequest(
     upb_Arena* arena, absl::string_view body,
     ::google_protobuf_Struct* attributes, bool observability_mode,
     std::optional<ExtProcProcessingMode> processing_mode) {
-  auto* request = CreateCommonRequest(arena, attributes, observability_mode,
-                                      processing_mode);
-  SetExtProcResponseBody(
-      arena, upb_StringView_FromDataAndSize(body.data(), body.size()), request);
-  return SerializeExtProcMessage(request, arena);
+  return CreateRequestAndSerialize(
+      arena, attributes, observability_mode, processing_mode,
+      [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
+        SetExtProcResponseBody(
+            arena, upb_StringView_FromDataAndSize(body.data(), body.size()),
+            request);
+      });
 }
 
 absl::StatusOr<std::string> CreateExtProcServerTrailersRequest(
@@ -646,13 +694,13 @@ absl::StatusOr<std::string> CreateExtProcServerTrailersRequest(
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
     std::optional<ExtProcProcessingMode> processing_mode) {
-  auto* request = CreateCommonRequest(arena, attributes, observability_mode,
-                                      processing_mode);
-  auto* upb_trailers = envoy_config_core_v3_HeaderMap_new(arena);
-  PopulateMetadataBatchToHeaderMap(*trailers, allowed_headers,
-                                   disallowed_headers, arena, upb_trailers);
-  SetExtProcResponseTrailers(arena, upb_trailers, request);
-  return SerializeExtProcMessage(request, arena);
+  return CreateRequestAndSerialize(
+      arena, attributes, observability_mode, processing_mode,
+      [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
+        auto* upb_trailers = CreateUpbHeaderMap(
+            arena, *trailers, allowed_headers, disallowed_headers);
+        SetExtProcResponseTrailers(arena, upb_trailers, request);
+      });
 }
 
 }  // namespace grpc_core

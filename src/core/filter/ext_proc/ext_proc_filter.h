@@ -55,20 +55,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     }
     UniqueTypeName type() const override { return Type(); }
 
-    bool Equals(const FilterConfig& other) const override {
-      const auto& o = DownCast<const Config&>(other);
-      return channel_info == o.channel_info &&
-             failure_mode_allow == o.failure_mode_allow &&
-             processing_mode == o.processing_mode &&
-             request_attributes == o.request_attributes &&
-             response_attributes == o.response_attributes &&
-             mutation_rules == o.mutation_rules &&
-             forwarding_allowed_headers == o.forwarding_allowed_headers &&
-             forwarding_disallowed_headers == o.forwarding_disallowed_headers &&
-             disable_immediate_response == o.disable_immediate_response &&
-             observability_mode == o.observability_mode &&
-             deferred_close_timeout == o.deferred_close_timeout;
-    }
+    bool Equals(const FilterConfig& other) const override;
 
     std::string ToString() const override;
 
