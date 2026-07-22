@@ -138,8 +138,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   static absl::StatusOr<RefCountedPtr<ExtProcFilter>> Create(
       const ChannelArgs& args, ChannelFilter::Args filter_args);
 
-  ExtProcFilter(const ChannelArgs& args, RefCountedPtr<const Config> config,
-                ChannelFilter::Args filter_args);
+  ExtProcFilter(const ChannelArgs& args, RefCountedPtr<const Config> config);
 
   RefCountedPtr<ExtProcChannel> channel() const { return config_->channel(); }
 

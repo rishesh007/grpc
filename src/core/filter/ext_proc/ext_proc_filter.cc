@@ -2364,13 +2364,11 @@ absl::StatusOr<RefCountedPtr<ExtProcFilter>> ExtProcFilter::Create(
     return absl::InternalError("ext_proc filter config has wrong type");
   }
   auto config = filter_args.config().TakeAsSubclass<const Config>();
-  return MakeRefCounted<ExtProcFilter>(args, std::move(config),
-                                       std::move(filter_args));
+  return MakeRefCounted<ExtProcFilter>(args, std::move(config));
 }
 
 ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
-                             RefCountedPtr<const Config> config,
-                             ChannelFilter::Args filter_args)
+                             RefCountedPtr<const Config> config)
     : config_(std::move(config)),
       event_engine_(
           args.GetObjectRef<grpc_event_engine::experimental::EventEngine>()),
