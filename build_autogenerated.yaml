@@ -1390,7 +1390,7 @@ libs:
   - src/core/xds/grpc/xds_tls_context_parser.h
   - src/core/xds/grpc/xds_transport_grpc.h
   - src/core/xds/xds_client/lrs_client.h
-  - src/core/xds/xds_client/serialized_streaming_call.h
+  - src/core/xds/xds_client/streaming_call_promise_wrapper.h
   - src/core/xds/xds_client/xds_api.h
   - src/core/xds/xds_client/xds_backend_metric_propagation.h
   - src/core/xds/xds_client/xds_bootstrap.h
@@ -2319,7 +2319,7 @@ libs:
   - src/core/xds/grpc/xds_tls_context_parser.cc
   - src/core/xds/grpc/xds_transport_grpc.cc
   - src/core/xds/xds_client/lrs_client.cc
-  - src/core/xds/xds_client/serialized_streaming_call.cc
+  - src/core/xds/xds_client/streaming_call_promise_wrapper.cc
   - src/core/xds/xds_client/xds_api.cc
   - src/core/xds/xds_client/xds_backend_metric_propagation.cc
   - src/core/xds/xds_client/xds_bootstrap.cc
@@ -23402,24 +23402,6 @@ targets:
   deps:
   - gtest
   - grpc_test_util
-- name: serialized_streaming_call_test
-  gtest: true
-  build: test
-  language: c++
-  headers:
-  - test/core/event_engine/event_engine_test_utils.h
-  - test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.h
-  - test/core/xds/xds_transport_fake.h
-  src:
-  - test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.proto
-  - test/core/event_engine/event_engine_test_utils.cc
-  - test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.cc
-  - test/core/xds/serialized_streaming_call_test.cc
-  - test/core/xds/xds_transport_fake.cc
-  deps:
-  - gtest
-  - protobuf
-  - grpc_test_util
 - name: server_builder_plugin_test
   gtest: true
   build: test
@@ -24477,6 +24459,24 @@ targets:
   - test/core/transport/chttp2/stream_test.cc
   deps:
   - gtest
+  - grpc_test_util
+- name: streaming_call_promise_wrapper_test
+  gtest: true
+  build: test
+  language: c++
+  headers:
+  - test/core/event_engine/event_engine_test_utils.h
+  - test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.h
+  - test/core/xds/xds_transport_fake.h
+  src:
+  - test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.proto
+  - test/core/event_engine/event_engine_test_utils.cc
+  - test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.cc
+  - test/core/xds/streaming_call_promise_wrapper_test.cc
+  - test/core/xds/xds_transport_fake.cc
+  deps:
+  - gtest
+  - protobuf
   - grpc_test_util
 - name: streaming_throughput_test
   gtest: true

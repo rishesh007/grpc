@@ -1763,7 +1763,6 @@ if(gRPC_BUILD_TESTS)
   add_dependencies(buildtests_cxx security_connector_test)
   add_dependencies(buildtests_cxx seq_test)
   add_dependencies(buildtests_cxx sequential_connectivity_test)
-  add_dependencies(buildtests_cxx serialized_streaming_call_test)
   add_dependencies(buildtests_cxx server_builder_plugin_test)
   if(_gRPC_PLATFORM_LINUX OR _gRPC_PLATFORM_MAC OR _gRPC_PLATFORM_POSIX)
     add_dependencies(buildtests_cxx server_builder_test)
@@ -1830,6 +1829,7 @@ if(gRPC_BUILD_TESTS)
   add_dependencies(buildtests_cxx stream_leak_with_queued_flow_control_update_test)
   add_dependencies(buildtests_cxx stream_quota_test)
   add_dependencies(buildtests_cxx stream_test)
+  add_dependencies(buildtests_cxx streaming_call_promise_wrapper_test)
   if(_gRPC_PLATFORM_LINUX OR _gRPC_PLATFORM_MAC OR _gRPC_PLATFORM_POSIX)
     add_dependencies(buildtests_cxx streaming_throughput_test)
   endif()
@@ -3171,7 +3171,7 @@ add_library(grpc
   src/core/xds/grpc/xds_tls_context_parser.cc
   src/core/xds/grpc/xds_transport_grpc.cc
   src/core/xds/xds_client/lrs_client.cc
-  src/core/xds/xds_client/serialized_streaming_call.cc
+  src/core/xds/xds_client/streaming_call_promise_wrapper.cc
   src/core/xds/xds_client/xds_api.cc
   src/core/xds/xds_client/xds_backend_metric_propagation.cc
   src/core/xds/xds_client/xds_bootstrap.cc
@@ -32163,56 +32163,6 @@ target_link_libraries(sequential_connectivity_test
 endif()
 if(gRPC_BUILD_TESTS)
 
-add_executable(serialized_streaming_call_test
-  ${_gRPC_PROTO_GENS_DIR}/test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.pb.cc
-  ${_gRPC_PROTO_GENS_DIR}/test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.grpc.pb.cc
-  ${_gRPC_PROTO_GENS_DIR}/test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.pb.h
-  ${_gRPC_PROTO_GENS_DIR}/test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.grpc.pb.h
-  test/core/event_engine/event_engine_test_utils.cc
-  test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.cc
-  test/core/xds/serialized_streaming_call_test.cc
-  test/core/xds/xds_transport_fake.cc
-)
-if(WIN32 AND MSVC)
-  if(BUILD_SHARED_LIBS)
-    target_compile_definitions(serialized_streaming_call_test
-    PRIVATE
-      "GPR_DLL_IMPORTS"
-      "GRPC_DLL_IMPORTS"
-    )
-  endif()
-endif()
-target_compile_features(serialized_streaming_call_test PUBLIC cxx_std_17)
-target_include_directories(serialized_streaming_call_test
-  PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${_gRPC_ADDRESS_SORTING_INCLUDE_DIR}
-    ${_gRPC_RE2_INCLUDE_DIR}
-    ${_gRPC_SSL_INCLUDE_DIR}
-    ${_gRPC_UPB_GENERATED_DIR}
-    ${_gRPC_UPB_GRPC_GENERATED_DIR}
-    ${_gRPC_UPB_INCLUDE_DIR}
-    ${_gRPC_XXHASH_INCLUDE_DIR}
-    ${_gRPC_ZLIB_INCLUDE_DIR}
-    third_party/googletest/googletest/include
-    third_party/googletest/googletest
-    third_party/googletest/googlemock/include
-    third_party/googletest/googlemock
-    ${_gRPC_PROTO_GENS_DIR}
-)
-
-target_link_libraries(serialized_streaming_call_test
-  ${_gRPC_ALLTARGETS_LIBRARIES}
-  gtest
-  ${_gRPC_PROTOBUF_LIBRARIES}
-  grpc_test_util
-)
-
-
-endif()
-if(gRPC_BUILD_TESTS)
-
 add_executable(server_builder_plugin_test
   ${_gRPC_PROTO_GENS_DIR}/src/proto/grpc/testing/duplicate/echo_duplicate.pb.cc
   ${_gRPC_PROTO_GENS_DIR}/src/proto/grpc/testing/duplicate/echo_duplicate.grpc.pb.cc
@@ -34752,6 +34702,56 @@ target_include_directories(stream_test
 target_link_libraries(stream_test
   ${_gRPC_ALLTARGETS_LIBRARIES}
   gtest
+  grpc_test_util
+)
+
+
+endif()
+if(gRPC_BUILD_TESTS)
+
+add_executable(streaming_call_promise_wrapper_test
+  ${_gRPC_PROTO_GENS_DIR}/test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.pb.cc
+  ${_gRPC_PROTO_GENS_DIR}/test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.grpc.pb.cc
+  ${_gRPC_PROTO_GENS_DIR}/test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.pb.h
+  ${_gRPC_PROTO_GENS_DIR}/test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.grpc.pb.h
+  test/core/event_engine/event_engine_test_utils.cc
+  test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.cc
+  test/core/xds/streaming_call_promise_wrapper_test.cc
+  test/core/xds/xds_transport_fake.cc
+)
+if(WIN32 AND MSVC)
+  if(BUILD_SHARED_LIBS)
+    target_compile_definitions(streaming_call_promise_wrapper_test
+    PRIVATE
+      "GPR_DLL_IMPORTS"
+      "GRPC_DLL_IMPORTS"
+    )
+  endif()
+endif()
+target_compile_features(streaming_call_promise_wrapper_test PUBLIC cxx_std_17)
+target_include_directories(streaming_call_promise_wrapper_test
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${_gRPC_ADDRESS_SORTING_INCLUDE_DIR}
+    ${_gRPC_RE2_INCLUDE_DIR}
+    ${_gRPC_SSL_INCLUDE_DIR}
+    ${_gRPC_UPB_GENERATED_DIR}
+    ${_gRPC_UPB_GRPC_GENERATED_DIR}
+    ${_gRPC_UPB_INCLUDE_DIR}
+    ${_gRPC_XXHASH_INCLUDE_DIR}
+    ${_gRPC_ZLIB_INCLUDE_DIR}
+    third_party/googletest/googletest/include
+    third_party/googletest/googletest
+    third_party/googletest/googlemock/include
+    third_party/googletest/googlemock
+    ${_gRPC_PROTO_GENS_DIR}
+)
+
+target_link_libraries(streaming_call_promise_wrapper_test
+  ${_gRPC_ALLTARGETS_LIBRARIES}
+  gtest
+  ${_gRPC_PROTOBUF_LIBRARIES}
   grpc_test_util
 )
 

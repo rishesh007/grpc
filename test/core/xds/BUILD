@@ -940,8 +940,8 @@ grpc_cc_test(
 )
 
 grpc_cc_test(
-    name = "serialized_streaming_call_test",
-    srcs = ["serialized_streaming_call_test.cc"],
+    name = "streaming_call_promise_wrapper_test",
+    srcs = ["streaming_call_promise_wrapper_test.cc"],
     external_deps = [
         "gtest",
         "absl/status",
@@ -954,6 +954,7 @@ grpc_cc_test(
         ":xds_transport_fake",
         "//:gpr",
         "//:grpc",
+        "//:streaming_call_promise_wrapper",
         "//:xds_client",
         "//src/core:1999",
         "//src/core:activity",

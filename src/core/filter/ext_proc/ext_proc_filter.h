@@ -37,7 +37,6 @@
 #include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/grpc/xds_server_grpc.h"
 #include "src/core/xds/xds_client/xds_transport.h"
-#include "absl/status/status.h"
 
 namespace grpc_core {
 class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
@@ -60,8 +59,6 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     std::shared_ptr<const XdsBootstrap::XdsServerTarget> server_;
     RefCountedPtr<XdsTransportFactory::XdsTransport> transport_;
   };
-
-  class ExtProcCall;
 
   using ProcessingMode = ExtProcProcessingMode;
 
@@ -142,26 +139,15 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
   RefCountedPtr<ExtProcChannel> channel() const { return config_->channel(); }
 
+ private:
+  class ExtProcCall;
+
   void RecordClientHeadersDuration(double duration_seconds) const;
   void RecordClientHalfCloseDuration(double duration_seconds) const;
   void RecordServerHeadersDuration(double duration_seconds) const;
   void RecordServerTrailersDuration(double duration_seconds) const;
 
- private:
   void Orphaned() override {}
-
-  absl::AnyInvocable<Poll<absl::Status>()> ClientToServerObservabilityMode(
-      CallHandler handler, RefCountedPtr<ExtProcCall> ext_proc_call);
-
-  absl::AnyInvocable<Poll<absl::Status>()> ClientToServerCallNormalMode(
-      CallHandler handler, RefCountedPtr<ExtProcCall> ext_proc_call);
-
-  absl::AnyInvocable<Poll<absl::Status>()> ClientToServerCallNonProcessingMode(
-      CallHandler handler, RefCountedPtr<ExtProcCall> ext_proc_call);
-
-  absl::AnyInvocable<Poll<absl::Status>()> ServerToClientCall(
-      CallHandler handler, CallInitiator initiator,
-      RefCountedPtr<ExtProcCall> ext_proc_call);
 
   void InterceptCall(UnstartedCallHandler unstarted_call_handler) override;
 

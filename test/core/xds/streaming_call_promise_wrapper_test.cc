@@ -14,26 +14,19 @@
 // limitations under the License.
 //
 
-#include "src/core/xds/xds_client/serialized_streaming_call.h"
+#include "src/core/xds/xds_client/streaming_call_promise_wrapper.h"
 
 #include <grpc/grpc.h>
 
-#include <atomic>
 #include <cstdio>
 #include <deque>
 #include <memory>
 #include <optional>
-#include <random>
 #include <string>
-#include <thread>
-#include <vector>
 
 #include "src/core/lib/iomgr/timer_manager.h"
-#include "src/core/lib/promise/activity.h"
 #include "src/core/lib/promise/party.h"
-#include "src/core/lib/promise/poll.h"
 #include "src/core/lib/resource_quota/arena.h"
-#include "src/core/util/orphanable.h"
 #include "src/core/util/sync.h"
 #include "src/core/util/wait_for_single_owner.h"
 #include "test/core/event_engine/fuzzing_event_engine/fuzzing_event_engine.h"
@@ -151,9 +144,9 @@ class FakeXdsServerTarget : public XdsBootstrap::XdsServerTarget {
   std::string server_uri_;
 };
 
-class SerializedStreamingCallTest : public ::testing::Test {
+class StreamingCallPromiseWrapperTest : public ::testing::Test {
  protected:
-  SerializedStreamingCallTest() : server_target_("localhost:4321") {}
+  StreamingCallPromiseWrapperTest() : server_target_("localhost:4321") {}
 
   void SetUp() override {
     event_engine_ =
@@ -206,7 +199,7 @@ class SerializedStreamingCallTest : public ::testing::Test {
   FakeEventHandler* event_handler_ = nullptr;
 };
 
-TEST_F(SerializedStreamingCallTest, SingleWriteSuccess) {
+TEST_F(StreamingCallPromiseWrapperTest, SingleWriteSuccess) {
   InitTransport(true);
   auto wrapper = MakeSerializedCall();
   auto fake_stream = transport_factory_->WaitForStream(
@@ -231,7 +224,7 @@ TEST_F(SerializedStreamingCallTest, SingleWriteSuccess) {
   EXPECT_TRUE(status.ok());
 }
 
-TEST_F(SerializedStreamingCallTest, SequentialWrites) {
+TEST_F(StreamingCallPromiseWrapperTest, SequentialWrites) {
   InitTransport(true);
   auto wrapper = MakeSerializedCall();
   auto fake_stream = transport_factory_->WaitForStream(
@@ -259,7 +252,7 @@ TEST_F(SerializedStreamingCallTest, SequentialWrites) {
   }
 }
 
-TEST_F(SerializedStreamingCallTest, SerializationAndFifo) {
+TEST_F(StreamingCallPromiseWrapperTest, SerializationAndFifo) {
   InitTransport(false);
   auto wrapper = MakeSerializedCall();
   auto fake_stream = transport_factory_->WaitForStream(
@@ -329,7 +322,7 @@ TEST_F(SerializedStreamingCallTest, SerializationAndFifo) {
   EXPECT_TRUE(status3.ok());
 }
 
-TEST_F(SerializedStreamingCallTest, SendNonBlocking) {
+TEST_F(StreamingCallPromiseWrapperTest, SendNonBlocking) {
   InitTransport(false);
   auto wrapper = MakeSerializedCall();
   auto fake_stream = transport_factory_->WaitForStream(
@@ -351,7 +344,7 @@ TEST_F(SerializedStreamingCallTest, SendNonBlocking) {
   EXPECT_EQ(*msg, "non_blocking");
 }
 
-TEST_F(SerializedStreamingCallTest, WriteFailureQueueClearing) {
+TEST_F(StreamingCallPromiseWrapperTest, WriteFailureQueueClearing) {
   InitTransport(false);
   auto wrapper = MakeSerializedCall();
   auto fake_stream = transport_factory_->WaitForStream(
@@ -390,7 +383,7 @@ TEST_F(SerializedStreamingCallTest, WriteFailureQueueClearing) {
   EXPECT_FALSE(fake_stream->HaveMessageFromClient());
 }
 
-TEST_F(SerializedStreamingCallTest, StreamOrphaning) {
+TEST_F(StreamingCallPromiseWrapperTest, StreamOrphaning) {
   InitTransport(false);
   auto wrapper = MakeSerializedCall();
   auto fake_stream = transport_factory_->WaitForStream(
@@ -429,7 +422,7 @@ TEST_F(SerializedStreamingCallTest, StreamOrphaning) {
   EXPECT_FALSE(status2.ok());
 }
 
-TEST_F(SerializedStreamingCallTest, RapidSequentialCalls) {
+TEST_F(StreamingCallPromiseWrapperTest, RapidSequentialCalls) {
   InitTransport(false);
   auto wrapper = MakeSerializedCall();
   auto fake_stream = transport_factory_->WaitForStream(
@@ -471,7 +464,7 @@ TEST_F(SerializedStreamingCallTest, RapidSequentialCalls) {
   }
 }
 
-TEST_F(SerializedStreamingCallTest, InterleavedReadsAndWrites) {
+TEST_F(StreamingCallPromiseWrapperTest, InterleavedReadsAndWrites) {
   InitTransport(false);
   auto wrapper = MakeSerializedCall();
   auto fake_stream = transport_factory_->WaitForStream(
@@ -530,7 +523,7 @@ TEST_F(SerializedStreamingCallTest, InterleavedReadsAndWrites) {
   EXPECT_TRUE(status2.ok());
 }
 
-TEST_F(SerializedStreamingCallTest, StreamDestructionCleanup) {
+TEST_F(StreamingCallPromiseWrapperTest, StreamDestructionCleanup) {
   transport_factory_ = MakeRefCounted<FakeXdsTransportFactory>(
       []() { FAIL() << "Multiple concurrent reads"; }, event_engine_);
   transport_factory_->SetAbortOnUndrainedMessages(false);
@@ -585,7 +578,7 @@ TEST_F(SerializedStreamingCallTest, StreamDestructionCleanup) {
   EXPECT_FALSE(status3.ok());
 }
 
-TEST_F(SerializedStreamingCallTest, HalfCloseSerialization) {
+TEST_F(StreamingCallPromiseWrapperTest, HalfCloseSerialization) {
   InitTransport(false);
   auto wrapper = MakeSerializedCall();
   auto fake_stream = transport_factory_->WaitForStream(

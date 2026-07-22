@@ -5805,6 +5805,7 @@ grpc_cc_library(
         "//:grpc_trace",
         "//:orphanable",
         "//:ref_counted_ptr",
+        "//:streaming_call_promise_wrapper",
         "//:xds_client",
     ],
 )

@@ -4783,17 +4783,39 @@ grpc_cc_library(
 )
 
 grpc_cc_library(
+    name = "streaming_call_promise_wrapper",
+    srcs = [
+        "//src/core:xds/xds_client/streaming_call_promise_wrapper.cc",
+    ],
+    hdrs = [
+        "//src/core:xds/xds_client/streaming_call_promise_wrapper.h",
+    ],
+    external_deps = [
+        "absl/functional:any_invocable",
+        "absl/status",
+        "absl/strings",
+    ],
+    deps = [
+        "gpr_platform",
+        "orphanable",
+        "ref_counted_ptr",
+        "xds_client",
+        "//src/core:activity",
+        "//src/core:dual_ref_counted",
+        "//src/core:poll",
+    ],
+)
+
+grpc_cc_library(
     name = "xds_client",
     srcs = [
         "//src/core:xds/xds_client/lrs_client.cc",
-        "//src/core:xds/xds_client/serialized_streaming_call.cc",
         "//src/core:xds/xds_client/xds_api.cc",
         "//src/core:xds/xds_client/xds_bootstrap.cc",
         "//src/core:xds/xds_client/xds_client.cc",
     ],
     hdrs = [
         "//src/core:xds/xds_client/lrs_client.h",
-        "//src/core:xds/xds_client/serialized_streaming_call.h",
         "//src/core:xds/xds_client/xds_api.h",
         "//src/core:xds/xds_client/xds_bootstrap.h",
         "//src/core:xds/xds_client/xds_channel_args.h",

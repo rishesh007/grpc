@@ -14,7 +14,7 @@
 // limitations under the License.
 //
 
-#include "src/core/xds/xds_client/serialized_streaming_call.h"
+#include "src/core/xds/xds_client/streaming_call_promise_wrapper.h"
 
 #include <grpc/support/port_platform.h>
 

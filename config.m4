@@ -996,7 +996,7 @@ if test "$PHP_GRPC" != "no"; then
     src/core/xds/grpc/xds_tls_context_parser.cc \
     src/core/xds/grpc/xds_transport_grpc.cc \
     src/core/xds/xds_client/lrs_client.cc \
-    src/core/xds/xds_client/serialized_streaming_call.cc \
+    src/core/xds/xds_client/streaming_call_promise_wrapper.cc \
     src/core/xds/xds_client/xds_api.cc \
     src/core/xds/xds_client/xds_backend_metric_propagation.cc \
     src/core/xds/xds_client/xds_bootstrap.cc \
