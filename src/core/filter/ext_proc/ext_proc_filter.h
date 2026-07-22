@@ -170,7 +170,6 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   std::shared_ptr<grpc_event_engine::experimental::EventEngine> event_engine_;
   Slice default_authority_;
   std::string target_;
-  std::string backend_service_;
   bool is_client_ = true;
   std::shared_ptr<GlobalStatsPluginRegistry::StatsPluginGroup>
       stats_plugin_group_;

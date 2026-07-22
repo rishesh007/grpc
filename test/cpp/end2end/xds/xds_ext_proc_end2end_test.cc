@@ -4737,12 +4737,12 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcClientHeadersDurationMetric) {
             absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
         while (absl::Now() < deadline) {
           auto val = stats_plugin->GetDoubleHistogramValue(
-              handle, {expected_target}, {""});
+              handle, {expected_target}, {});
           if (val.has_value()) return val;
           absl::SleepFor(absl::Milliseconds(20));
         }
         return stats_plugin->GetDoubleHistogramValue(handle, {expected_target},
-                                                     {""});
+                                                     {});
       };
   EXPECT_TRUE(get_histogram(handle).has_value());
 }
@@ -4801,12 +4801,12 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcClientHalfCloseDurationMetric) {
             absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
         while (absl::Now() < deadline) {
           auto val = stats_plugin->GetDoubleHistogramValue(
-              handle, {expected_target}, {""});
+              handle, {expected_target}, {});
           if (val.has_value()) return val;
           absl::SleepFor(absl::Milliseconds(20));
         }
         return stats_plugin->GetDoubleHistogramValue(handle, {expected_target},
-                                                     {""});
+                                                     {});
       };
   EXPECT_TRUE(get_histogram(handle).has_value());
 }
@@ -4856,12 +4856,12 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcServerHeadersDurationMetric) {
             absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
         while (absl::Now() < deadline) {
           auto val = stats_plugin->GetDoubleHistogramValue(
-              handle, {expected_target}, {""});
+              handle, {expected_target}, {});
           if (val.has_value()) return val;
           absl::SleepFor(absl::Milliseconds(20));
         }
         return stats_plugin->GetDoubleHistogramValue(handle, {expected_target},
-                                                     {""});
+                                                     {});
       };
   EXPECT_TRUE(get_histogram(handle).has_value());
 }
@@ -4911,12 +4911,12 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcServerTrailersDurationMetric) {
             absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
         while (absl::Now() < deadline) {
           auto val = stats_plugin->GetDoubleHistogramValue(
-              handle, {expected_target}, {""});
+              handle, {expected_target}, {});
           if (val.has_value()) return val;
           absl::SleepFor(absl::Milliseconds(20));
         }
         return stats_plugin->GetDoubleHistogramValue(handle, {expected_target},
-                                                     {""});
+                                                     {});
       };
   EXPECT_TRUE(get_histogram(handle).has_value());
 }
