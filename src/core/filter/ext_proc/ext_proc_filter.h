@@ -50,18 +50,17 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
       return GRPC_UNIQUE_TYPE_NAME_HERE("ext_proc_channel");
     }
     ExtProcChannel(std::shared_ptr<const XdsBootstrap::XdsServerTarget> server,
-                   RefCountedPtr<XdsTransportFactory> transport_factory);
+                   RefCountedPtr<XdsTransportFactory::XdsTransport> transport);
     ~ExtProcChannel() override;
-    std::shared_ptr<const XdsBootstrap::XdsServerTarget> server() const {
-      return server_;
-    }
+    const XdsBootstrap::XdsServerTarget& server() const { return *server_; }
 
-    absl::StatusOr<RefCountedPtr<XdsTransportFactory::XdsTransport>>
-    GetTransport();
+    RefCountedPtr<XdsTransportFactory::XdsTransport> transport() const {
+      return transport_;
+    }
 
    private:
     std::shared_ptr<const XdsBootstrap::XdsServerTarget> server_;
-    RefCountedPtr<XdsTransportFactory> transport_factory_;
+    RefCountedPtr<XdsTransportFactory::XdsTransport> transport_;
   };
 
   class ExtProcCall;

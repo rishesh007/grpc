@@ -114,7 +114,7 @@ std::string ExtProcFilter::Config::ToString() const {
       [&](const RefCountedPtr<ExtProcChannel>& channel) {
         if (channel != nullptr) {
           StrAppend(result, "ext_proc_channel=");
-          StrAppend(result, channel->server()->Key());
+          StrAppend(result, channel->server().Key());
           is_first = false;
         }
       });
@@ -213,9 +213,8 @@ bool ExtProcFilter::Config::Equals(const FilterConfig& other) const {
 
 ExtProcFilter::ExtProcChannel::ExtProcChannel(
     std::shared_ptr<const XdsBootstrap::XdsServerTarget> server,
-    RefCountedPtr<XdsTransportFactory> transport_factory)
-    : server_(std::move(server)),
-      transport_factory_(std::move(transport_factory)) {
+    RefCountedPtr<XdsTransportFactory::XdsTransport> transport)
+    : server_(std::move(server)), transport_(std::move(transport)) {
   GRPC_TRACE_LOG(ext_proc_filter, INFO)
       << "creating channel " << this << " for server " << server_->server_uri();
 }
@@ -225,24 +224,11 @@ ExtProcFilter::ExtProcChannel::~ExtProcChannel() {
       << "destroying ext_proc channel " << this << " for server "
       << server_->server_uri();
 }
-
-absl::StatusOr<RefCountedPtr<XdsTransportFactory::XdsTransport>>
-ExtProcFilter::ExtProcChannel::GetTransport() {
-  absl::Status status;
-  auto transport = transport_factory_->GetTransport(*server_, &status);
-  if (!status.ok()) {
-    return status;
-  }
-  if (transport == nullptr) {
-    return absl::InternalError("Failed to get transport (returned nullptr)");
-  }
-  return transport;
-}
 //
 // ExtProcFilter::ExtProcCall
 //
 
-class ExtProcFilter::ExtProcCall : public DualRefCounted<ExtProcCall> {
+class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
  public:
   ExtProcCall(RefCountedPtr<XdsTransportFactory::XdsTransport> transport,
               RefCountedPtr<const Config> config)
@@ -2810,15 +2796,14 @@ void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {
           -> ArenaPromise<absl::Status> {
         GRPC_TRACE_LOG(ext_proc_filter, INFO)
             << "ExtProc: InterceptCall promise chain start";
-        auto transport = ext_proc_filter->channel()->GetTransport();
-        if (!transport.ok()) {
-          return ArenaPromise<absl::Status>(
-              [status = transport.status()]() -> Poll<absl::Status> {
-                return status;
-              });
+        auto transport = ext_proc_filter->channel()->transport();
+        if (transport == nullptr) {
+          return ArenaPromise<absl::Status>([]() -> Poll<absl::Status> {
+            return absl::InternalError("ExtProc channel transport is null");
+          });
         }
         auto ext_proc_call = MakeRefCounted<ExtProcCall>(
-            std::move(*transport), ext_proc_filter->config_);
+            std::move(transport), ext_proc_filter->config_);
         return ArenaPromise<absl::Status>(If(
             !ext_proc_filter->config_->processing_mode
                  .value_or(ProcessingMode())
