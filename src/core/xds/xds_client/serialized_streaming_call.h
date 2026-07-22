@@ -22,116 +22,48 @@
 #include <atomic>
 #include <memory>
 #include <string>
-#include <utility>
+#include <vector>
 
 #include "src/core/lib/promise/activity.h"
-#include "src/core/lib/promise/mpsc.h"
-#include "src/core/lib/promise/party.h"
 #include "src/core/lib/promise/poll.h"
+#include "src/core/util/dual_ref_counted.h"
 #include "src/core/util/orphanable.h"
-#include "src/core/util/ref_counted_ptr.h"
-#include "src/core/util/sync.h"
 #include "src/core/xds/xds_client/xds_transport.h"
-#include "absl/base/thread_annotations.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
-#include "absl/strings/string_view.h"
 
 namespace grpc_core {
 
-// Shared state for lock-free coordination between producer (Send) and consumer
-// (Write Loop)
-struct WriteState {
-  std::string payload;
-  bool is_half_close = false;
-  Mutex mu;
-  bool done ABSL_GUARDED_BY(&mu) = false;
-  absl::Status status ABSL_GUARDED_BY(&mu);
-  Waker waker ABSL_GUARDED_BY(&mu);
-};
-
-// A decorator wrapper for XdsTransportFactory::XdsTransport::StreamingCall
-// that serializes writes lock-free using Mpsc queue and thread-safe Wakers.
-class SerializedStreamingCall
-    : public XdsTransportFactory::XdsTransport::StreamingCall {
+class StreamingCallPromiseWrapper final
+    : public DualRefCounted<StreamingCallPromiseWrapper> {
  public:
-  SerializedStreamingCall(
-      RefCountedPtr<XdsTransportFactory::XdsTransport> transport,
-      const char* method,
+  using XdsTransport = XdsTransportFactory::XdsTransport;
+
+  StreamingCallPromiseWrapper(
+      XdsTransport& transport, const char* method,
       std::unique_ptr<
           XdsTransportFactory::XdsTransport::StreamingCall::EventHandler>
-          user_event_handler,
+          event_handler = nullptr,
       bool wait_for_ready = true);
 
-  ~SerializedStreamingCall() override;
+  ~StreamingCallPromiseWrapper() override = default;
 
-  auto Send(std::string payload) {
-    auto state = std::make_shared<WriteState>();
-    state->payload = std::move(payload);
-    // Push to cleanup list lock-free!
-    CleanupNode* node = new CleanupNode{state, nullptr};
-    CleanupNode* old_head = cleanup_list_.load(std::memory_order_relaxed);
-    do {
-      node->next = old_head;
-    } while (!cleanup_list_.compare_exchange_weak(
-        old_head, node, std::memory_order_release, std::memory_order_relaxed));
-    auto send_result = mpsc_sender_.UnbufferedImmediateSend(
-        std::shared_ptr<WriteState>(state), 1);
-    bool send_ok = send_result.ok();
-    return [state, send_ok]() -> Poll<absl::Status> {
-      if (!send_ok) {
-        return absl::CancelledError("Stream closed");
-      }
-      MutexLock lock(&state->mu);
-      if (state->done) {
-        return state->status;
-      }
-      state->waker = GetContext<Activity>()->MakeNonOwningWaker();
-      if (state->done) {
-        return state->status;
-      }
-      return Pending{};
-    };
-  }
+  void Orphaned() override;
 
-  // Standard interface methods
-  void SendMessage(std::string payload) override;
-  void StartRecvMessage() override;
-  void SendHalfClose() override;
-  void Orphan() override;
+  // Returns a promise that does not resolve until the send is complete.
+  absl::AnyInvocable<Poll<absl::Status>()> Send(std::string msg);
+
+  void StartRecvMessage();
+  void SendHalfClose();
 
  private:
-  class InternalEventHandler;
+  class EventHandler;
 
-  struct CleanupNode {
-    std::weak_ptr<WriteState> state;
-    CleanupNode* next;
-  };
-
-  // Callback handlers called by InternalEventHandler
-  void OnRequestSent(bool ok);
-  void OnRecvMessage(absl::string_view payload);
-  void OnStatusReceived(absl::Status status);
-
-  void DrainQueueAndFail(absl::Status status);
-  void CleanupExpiredNodes();
-
-  const std::unique_ptr<
-      XdsTransportFactory::XdsTransport::StreamingCall::EventHandler>
-      user_event_handler_;
-  OrphanablePtr<XdsTransportFactory::XdsTransport::StreamingCall>
-      underlying_call_;
-
-  MpscReceiver<std::shared_ptr<WriteState>> receiver_;
-  MpscSender<std::shared_ptr<WriteState>> mpsc_sender_;
-  RefCountedPtr<Party> party_;
-
-  Mutex mu_;
-  std::shared_ptr<WriteState> active_write_ ABSL_GUARDED_BY(&mu_);
-  Waker write_waker_ ABSL_GUARDED_BY(&mu_);
-  bool write_completed_ ABSL_GUARDED_BY(&mu_) = false;
-  bool write_ok_ ABSL_GUARDED_BY(&mu_) = false;
-
-  std::atomic<CleanupNode*> cleanup_list_{nullptr};
+  OrphanablePtr<XdsTransportFactory::XdsTransport::StreamingCall> call_;
+  std::atomic<bool> send_message_in_flight_{false};
+  std::atomic<bool> half_close_pending_{false};
+  std::atomic<bool> send_failed_{false};
+  std::vector<Waker> send_message_wakers_;
 };
 
 }  // namespace grpc_core

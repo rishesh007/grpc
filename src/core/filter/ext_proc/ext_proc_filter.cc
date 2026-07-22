@@ -234,8 +234,8 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
         transport_(std::move(transport)),
         event_engine_(std::move(event_engine)) {
     const char* method = "/envoy.service.ext_proc.v3.ExternalProcessor/Process";
-    streaming_call_ = MakeOrphanable<SerializedStreamingCall>(
-        transport_, method, std::make_unique<StreamEventHandler>(WeakRef()),
+    streaming_call_ = MakeRefCounted<StreamingCallPromiseWrapper>(
+        *transport_, method, std::make_unique<StreamEventHandler>(WeakRef()),
         /*wait_for_ready=*/false);
     streaming_call_->StartRecvMessage();
   }
@@ -446,7 +446,7 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
   }
 
   void CloseStream() {
-    OrphanablePtr<SerializedStreamingCall> streaming_call;
+    RefCountedPtr<StreamingCallPromiseWrapper> streaming_call;
     {
       MutexLock lock(&mu_);
       if (!stream_status_value_.has_value()) {
@@ -989,7 +989,7 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
 
   RefCountedPtr<XdsTransportFactory::XdsTransport> transport_;
   std::shared_ptr<grpc_event_engine::experimental::EventEngine> event_engine_;
-  OrphanablePtr<SerializedStreamingCall> streaming_call_;
+  RefCountedPtr<StreamingCallPromiseWrapper> streaming_call_;
 };
 
 namespace {

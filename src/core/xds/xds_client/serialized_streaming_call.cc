@@ -16,363 +16,150 @@
 
 #include "src/core/xds/xds_client/serialized_streaming_call.h"
 
-#include <grpc/event_engine/event_engine.h>
 #include <grpc/support/port_platform.h>
 
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 
-#include "src/core/lib/event_engine/event_engine_context.h"
 #include "src/core/lib/promise/activity.h"
-#include "src/core/lib/promise/loop.h"
-#include "src/core/lib/promise/mpsc.h"
-#include "src/core/lib/promise/party.h"
 #include "src/core/lib/promise/poll.h"
-#include "src/core/lib/promise/seq.h"
-#include "src/core/lib/resource_quota/arena.h"
-#include "src/core/util/orphanable.h"
-#include "src/core/util/ref_counted_ptr.h"
-#include "src/core/util/sync.h"
-#include "src/core/xds/xds_client/xds_transport.h"
+#include "absl/functional/any_invocable.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
 
 namespace grpc_core {
 
-// Private nested event handler to intercept callbacks from the underlying
-// stream
-class SerializedStreamingCall::InternalEventHandler
+class StreamingCallPromiseWrapper::EventHandler final
     : public XdsTransportFactory::XdsTransport::StreamingCall::EventHandler {
  public:
-  explicit InternalEventHandler(RefCountedPtr<SerializedStreamingCall> parent)
-      : parent_(std::move(parent)) {}
+  explicit EventHandler(
+      WeakRefCountedPtr<StreamingCallPromiseWrapper> promise_wrapper,
+      std::unique_ptr<
+          XdsTransportFactory::XdsTransport::StreamingCall::EventHandler>
+          user_event_handler)
+      : promise_wrapper_(std::move(promise_wrapper)),
+        user_event_handler_(std::move(user_event_handler)) {}
 
   void OnRequestSent(bool ok) override {
-    RefCountedPtr<SerializedStreamingCall> parent = parent_;
-    parent->OnRequestSent(ok);
+    if (promise_wrapper_ != nullptr) {
+      if (!ok) {
+        promise_wrapper_->send_failed_.store(true);
+      }
+      promise_wrapper_->send_message_in_flight_.store(false);
+      auto wakeups = std::move(promise_wrapper_->send_message_wakers_);
+      for (auto& waker : wakeups) {
+        waker.Wakeup();
+      }
+      if (promise_wrapper_->half_close_pending_.exchange(false) &&
+          promise_wrapper_->call_ != nullptr) {
+        promise_wrapper_->call_->SendHalfClose();
+      }
+    }
+    if (user_event_handler_ != nullptr) {
+      user_event_handler_->OnRequestSent(ok);
+    }
   }
 
   void OnRecvMessage(absl::string_view payload) override {
-    RefCountedPtr<SerializedStreamingCall> parent = parent_;
-    parent->OnRecvMessage(payload);
+    if (user_event_handler_ != nullptr) {
+      user_event_handler_->OnRecvMessage(payload);
+    }
   }
 
   void OnStatusReceived(absl::Status status) override {
-    RefCountedPtr<SerializedStreamingCall> parent = parent_;
-    parent->OnStatusReceived(std::move(status));
+    if (promise_wrapper_ != nullptr) {
+      if (!status.ok()) {
+        promise_wrapper_->send_failed_.store(true);
+      }
+      promise_wrapper_->send_message_in_flight_.store(false);
+      auto wakeups = std::move(promise_wrapper_->send_message_wakers_);
+      for (auto& waker : wakeups) {
+        waker.Wakeup();
+      }
+    }
+    if (user_event_handler_ != nullptr) {
+      user_event_handler_->OnStatusReceived(std::move(status));
+    }
   }
 
  private:
-  RefCountedPtr<SerializedStreamingCall> parent_;
+  WeakRefCountedPtr<StreamingCallPromiseWrapper> promise_wrapper_;
+  std::unique_ptr<
+      XdsTransportFactory::XdsTransport::StreamingCall::EventHandler>
+      user_event_handler_;
 };
 
-SerializedStreamingCall::SerializedStreamingCall(
-    RefCountedPtr<XdsTransportFactory::XdsTransport> transport,
-    const char* method,
+StreamingCallPromiseWrapper::StreamingCallPromiseWrapper(
+    XdsTransport& transport, const char* method,
     std::unique_ptr<
         XdsTransportFactory::XdsTransport::StreamingCall::EventHandler>
-        user_event_handler,
-    bool wait_for_ready)
-    : user_event_handler_(std::move(user_event_handler)),
-      receiver_(100),
-      mpsc_sender_(receiver_.MakeSender()) {
-  RefCountedPtr<Arena> arena = SimpleArenaAllocator(0)->MakeArena();
-  arena->SetContext<grpc_event_engine::experimental::EventEngine>(
-      grpc_event_engine::experimental::GetDefaultEventEngine().get());
-  party_ = Party::Make(std::move(arena));
-  auto internal_event_handler = std::make_unique<InternalEventHandler>(
-      RefAsSubclass<SerializedStreamingCall>());
-  underlying_call_ = transport->CreateStreamingCall(
+        event_handler,
+    bool wait_for_ready) {
+  auto internal_event_handler = std::make_unique<EventHandler>(
+      WeakRefAsSubclass<StreamingCallPromiseWrapper>(),
+      std::move(event_handler));
+  call_ = transport.CreateStreamingCall(
       method, std::move(internal_event_handler), wait_for_ready);
-  party_->Spawn(
-      "write_loop",
-      [self = RefAsSubclass<SerializedStreamingCall>()]() {
-        return Loop([self]() {
-          return Seq(self->receiver_.Next(), [self](auto state_or_failure) {
-            bool ok = state_or_failure.ok();
-            std::shared_ptr<WriteState> state;
-            bool has_call = false;
-            bool is_half_close = false;
-            if (ok) {
-              auto queued = std::move(*state_or_failure);
-              state = *queued;
-              is_half_close = state->is_half_close;
-              {
-                MutexLock lock(&self->mu_);
-                self->active_write_ = state;
-                if (self->underlying_call_ != nullptr) {
-                  if (is_half_close) {
-                    self->underlying_call_->SendHalfClose();
-                  } else {
-                    self->underlying_call_->SendMessage(state->payload);
-                    has_call = true;
-                  }
-                }
-              }
-            }
-            return Seq(
-                [self, ok, has_call, is_half_close]() -> Poll<bool> {
-                  if (!ok) return false;
-                  if (is_half_close) return true;
-                  if (!has_call) return false;
-                  MutexLock lock(&self->mu_);
-                  if (self->write_completed_) {
-                    self->write_completed_ = false;
-                    return self->write_ok_;
-                  }
-                  self->write_waker_ =
-                      GetContext<Activity>()->MakeNonOwningWaker();
-                  if (self->write_completed_) {
-                    self->write_completed_ = false;
-                    return self->write_ok_;
-                  }
-                  return Pending{};
-                },
-                [self, ok, state, has_call,
-                 is_half_close](bool write_ok) -> LoopCtl<absl::Status> {
-                  if (!ok) {
-                    return absl::CancelledError("Receiver closed");
-                  }
-                  Waker waker_to_wakeup;
-                  if (is_half_close) {
-                    {
-                      MutexLock lock(&state->mu);
-                      if (!state->done) {
-                        state->status = absl::OkStatus();
-                        state->done = true;
-                        waker_to_wakeup = std::move(state->waker);
-                      }
-                    }
-                    if (!waker_to_wakeup.is_unwakeable()) {
-                      waker_to_wakeup.Wakeup();
-                    }
-                    {
-                      MutexLock lock(&self->mu_);
-                      self->active_write_ = nullptr;
-                    }
-                    return absl::OkStatus();
-                  }
-                  if (!write_ok || !has_call) {
-                    {
-                      MutexLock lock(&state->mu);
-                      if (!state->done) {
-                        state->status = absl::InternalError(
-                            has_call ? "Write failed" : "Stream closed");
-                        state->done = true;
-                        waker_to_wakeup = std::move(state->waker);
-                      }
-                    }
-                    if (!waker_to_wakeup.is_unwakeable()) {
-                      waker_to_wakeup.Wakeup();
-                    }
-                    self->DrainQueueAndFail(absl::InternalError(
-                        has_call ? "Write failed" : "Stream closed"));
-                    {
-                      MutexLock lock(&self->mu_);
-                      self->active_write_ = nullptr;
-                    }
-                    return absl::InternalError(has_call ? "Write failed"
-                                                        : "Stream closed");
-                  }
-                  {
-                    MutexLock lock(&state->mu);
-                    if (!state->done) {
-                      state->status = absl::OkStatus();
-                      state->done = true;
-                      waker_to_wakeup = std::move(state->waker);
-                    }
-                  }
-                  if (!waker_to_wakeup.is_unwakeable()) {
-                    waker_to_wakeup.Wakeup();
-                  }
-                  {
-                    MutexLock lock(&self->mu_);
-                    self->active_write_ = nullptr;
-                  }
-                  self->CleanupExpiredNodes();
-                  return Continue{};
-                });
-          });
-        });
-      },
-      [self = RefAsSubclass<SerializedStreamingCall>()](absl::Status status) {
-        if (!status.ok()) {
-          self->DrainQueueAndFail(status);
-        } else {
-          self->DrainQueueAndFail(absl::CancelledError("Stream closed"));
-        }
-      });
 }
 
-SerializedStreamingCall::~SerializedStreamingCall() {
-  // Free any remaining nodes in the cleanup list to avoid memory leaks
-  CleanupNode* head =
-      cleanup_list_.exchange(nullptr, std::memory_order_acquire);
-  while (head != nullptr) {
-    CleanupNode* next = head->next;
-    delete head;
-    head = next;
-  }
-}
-
-void SerializedStreamingCall::SendMessage(std::string payload) {
-  auto state = std::make_shared<WriteState>();
-  state->payload = std::move(payload);
-  mpsc_sender_.UnbufferedImmediateSend(std::move(state), 1);
-}
-
-void SerializedStreamingCall::StartRecvMessage() {
-  MutexLock lock(&mu_);
-  if (underlying_call_ != nullptr) {
-    underlying_call_->StartRecvMessage();
-  }
-}
-
-void SerializedStreamingCall::SendHalfClose() {
-  auto state = std::make_shared<WriteState>();
-  state->is_half_close = true;
-  mpsc_sender_.UnbufferedImmediateSend(std::move(state), 1);
-}
-
-void SerializedStreamingCall::DrainQueueAndFail(absl::Status status) {
-  // Atomically pop the entire cleanup list
-  CleanupNode* head =
-      cleanup_list_.exchange(nullptr, std::memory_order_acquire);
-  // Iterate and fail all pending
-  CleanupNode* curr = head;
-  while (curr != nullptr) {
-    CleanupNode* next = curr->next;
-    if (auto state = curr->state.lock()) {
-      Waker waker_to_wakeup;
-      {
-        MutexLock lock(&state->mu);
-        if (!state->done) {
-          state->status = status;
-          state->done = true;
-          waker_to_wakeup = std::move(state->waker);
-        }
+absl::AnyInvocable<Poll<absl::Status>()> StreamingCallPromiseWrapper::Send(
+    std::string msg) {
+  return [self = WeakRefAsSubclass<StreamingCallPromiseWrapper>(),
+          msg = std::make_optional(
+              std::move(msg))]() mutable -> Poll<absl::Status> {
+    if (self == nullptr) {
+      return absl::CancelledError("Stream closed");
+    }
+    if (self->send_failed_.load()) {
+      return absl::InternalError("Send failed");
+    }
+    // If we've not yet started the send op, try to do so.
+    if (msg.has_value()) {
+      bool send_message_in_flight = false;
+      if (!self->send_message_in_flight_.compare_exchange_strong(
+              send_message_in_flight, true)) {
+        self->send_message_wakers_.push_back(
+            GetContext<Activity>()->MakeNonOwningWaker());
+        return Pending{};
       }
-      if (!waker_to_wakeup.is_unwakeable()) {
-        waker_to_wakeup.Wakeup();
-      }
+      self->call_->SendMessage(std::move(*msg));
+      msg.reset();
     }
-    delete curr;  // Free the node
-    curr = next;
+    // Already started. Check to see if it's still in flight.
+    if (self->send_message_in_flight_.load()) {
+      self->send_message_wakers_.push_back(
+          GetContext<Activity>()->MakeNonOwningWaker());
+      return Pending{};
+    }
+    if (self->send_failed_.load()) {
+      return absl::InternalError("Send failed");
+    }
+    return absl::OkStatus();
+  };
+}
+
+void StreamingCallPromiseWrapper::StartRecvMessage() {
+  call_->StartRecvMessage();
+}
+
+void StreamingCallPromiseWrapper::SendHalfClose() {
+  if (send_message_in_flight_.load()) {
+    half_close_pending_.store(true);
+  } else {
+    call_->SendHalfClose();
   }
 }
 
-void SerializedStreamingCall::CleanupExpiredNodes() {
-  // 1. Atomically swap the list to get exclusive ownership
-  CleanupNode* head =
-      cleanup_list_.exchange(nullptr, std::memory_order_acquire);
-  if (head == nullptr) return;
-  // 2. Traverse and keep only alive nodes
-  CleanupNode* alive_head = nullptr;
-  CleanupNode* curr = head;
-  while (curr != nullptr) {
-    CleanupNode* next = curr->next;
-    if (curr->state.expired()) {
-      delete curr;  // Expired! Free the node
-    } else {
-      // Still alive! Prepend to local alive list
-      curr->next = alive_head;
-      alive_head = curr;
-    }
-    curr = next;
+void StreamingCallPromiseWrapper::Orphaned() {
+  send_failed_.store(true);
+  send_message_in_flight_.store(false);
+  auto wakeups = std::move(send_message_wakers_);
+  for (auto& waker : wakeups) {
+    waker.Wakeup();
   }
-  // 3. Prepend the alive list back to the global cleanup list
-  if (alive_head != nullptr) {
-    // Find the tail of the alive list
-    CleanupNode* alive_tail = alive_head;
-    while (alive_tail->next != nullptr) {
-      alive_tail = alive_tail->next;
-    }
-    // Atomically prepend back
-    CleanupNode* old_head = cleanup_list_.load(std::memory_order_relaxed);
-    do {
-      alive_tail->next = old_head;
-    } while (!cleanup_list_.compare_exchange_weak(old_head, alive_head,
-                                                  std::memory_order_release,
-                                                  std::memory_order_relaxed));
-  }
-}
-
-void SerializedStreamingCall::Orphan() {
-  // Drain and fail all pending writes using the cleanup list
-  DrainQueueAndFail(absl::CancelledError("Stream orphaned"));
-  receiver_.MarkClosed();
-  // Fail the currently active in-flight write
-  std::shared_ptr<WriteState> active_write;
-  {
-    MutexLock lock(&mu_);
-    active_write = std::move(active_write_);
-  }
-  if (active_write != nullptr) {
-    Waker waker_to_wakeup;
-    {
-      MutexLock lock(&active_write->mu);
-      active_write->status = absl::CancelledError("Stream orphaned");
-      active_write->done = true;
-      waker_to_wakeup = std::move(active_write->waker);
-    }
-    if (!waker_to_wakeup.is_unwakeable()) {
-      waker_to_wakeup.Wakeup();
-    }
-  }
-  // Cancel the party and destroy the underlying call
-  party_.reset();
-  OrphanablePtr<XdsTransportFactory::XdsTransport::StreamingCall>
-      call_to_destroy;
-  {
-    MutexLock lock(&mu_);
-    call_to_destroy = std::move(underlying_call_);
-  }
-  call_to_destroy.reset();
-  Unref();
-}
-
-void SerializedStreamingCall::OnRequestSent(bool ok) {
-  Waker waker_to_wakeup;
-  {
-    MutexLock lock(&mu_);
-    write_completed_ = true;
-    write_ok_ = ok;
-    waker_to_wakeup = std::move(write_waker_);
-  }
-  if (!waker_to_wakeup.is_unwakeable()) {
-    waker_to_wakeup.Wakeup();
-  }
-  user_event_handler_->OnRequestSent(ok);
-}
-
-void SerializedStreamingCall::OnRecvMessage(absl::string_view payload) {
-  user_event_handler_->OnRecvMessage(payload);
-}
-
-void SerializedStreamingCall::OnStatusReceived(absl::Status status) {
-  DrainQueueAndFail(status);
-  Waker waker_to_wakeup;
-  {
-    MutexLock lock(&mu_);
-    if (!write_completed_) {
-      write_completed_ = true;
-      write_ok_ = false;
-      waker_to_wakeup = std::move(write_waker_);
-    }
-  }
-  if (!waker_to_wakeup.is_unwakeable()) {
-    waker_to_wakeup.Wakeup();
-  }
-  user_event_handler_->OnStatusReceived(std::move(status));
-  // Clean up underlying call to avoid dangling pointer if we are orphaned
-  // later.
-  OrphanablePtr<XdsTransportFactory::XdsTransport::StreamingCall>
-      call_to_destroy;
-  {
-    MutexLock lock(&mu_);
-    call_to_destroy = std::move(underlying_call_);
-  }
-  call_to_destroy.reset();
+  call_.reset();
 }
 
 }  // namespace grpc_core

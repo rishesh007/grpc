@@ -976,10 +976,7 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::UNAVAILABLE,
-                      MakeConnectionFailureRegex(
-                          "failed to connect to all addresses; last error: ",
-                          /*resolution_note=*/""));
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::INTERNAL, "Send failed");
 }
 
 TEST_P(XdsExtProcEnd2endTest,
@@ -1077,10 +1074,7 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
-  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::UNAVAILABLE,
-                      MakeConnectionFailureRegex(
-                          "failed to connect to all addresses; last error: ",
-                          /*resolution_note=*/""));
+  CheckRpcSendFailure(DEBUG_LOCATION, StatusCode::INTERNAL, "Send failed");
 }
 
 TEST_P(XdsExtProcEnd2endTest,

@@ -180,14 +180,15 @@ class SerializedStreamingCallTest : public ::testing::Test {
     transport_factory_->SetAutoCompleteMessagesFromClient(autocomplete);
   }
 
-  OrphanablePtr<SerializedStreamingCall> MakeSerializedCall() {
+  RefCountedPtr<StreamingCallPromiseWrapper> MakeSerializedCall() {
     absl::Status status;
-    transport_ = transport_factory_->GetTransport(server_target_, &status);
+    transport_ = static_cast<XdsTransportFactory*>(transport_factory_.get())
+                     ->GetTransport(server_target_, &status);
     EXPECT_TRUE(status.ok()) << status.ToString();
     auto handler = std::make_unique<FakeEventHandler>(event_engine_);
     event_handler_ = handler.get();
-    return MakeOrphanable<SerializedStreamingCall>(
-        transport_, FakeXdsTransportFactory::kAdsMethod, std::move(handler));
+    return MakeRefCounted<StreamingCallPromiseWrapper>(
+        *transport_, FakeXdsTransportFactory::kAdsMethod, std::move(handler));
   }
 
   RefCountedPtr<Party> MakeParty() {
