@@ -231,8 +231,12 @@ ExtProcFilter::ExtProcChannel::~ExtProcChannel() {
 class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
  public:
   ExtProcCall(RefCountedPtr<XdsTransportFactory::XdsTransport> transport,
-              RefCountedPtr<const Config> config)
-      : config_(std::move(config)), transport_(std::move(transport)) {
+              RefCountedPtr<const Config> config,
+              std::shared_ptr<grpc_event_engine::experimental::EventEngine>
+                  event_engine)
+      : config_(std::move(config)),
+        transport_(std::move(transport)),
+        event_engine_(std::move(event_engine)) {
     const char* method = "/envoy.service.ext_proc.v3.ExternalProcessor/Process";
     streaming_call_ = MakeOrphanable<SerializedStreamingCall>(
         transport_, method, std::make_unique<StreamEventHandler>(WeakRef()),
@@ -243,13 +247,14 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
   ~ExtProcCall() override {
     if (config_->deferred_close_timeout != Duration::Zero() &&
         config_->observability_mode) {
-      auto ee = grpc_event_engine::experimental::GetDefaultEventEngine();
-      ee->RunAfter(config_->deferred_close_timeout,
-                   [call = std::move(streaming_call_),
-                    transport = std::move(transport_)]() mutable {
-                     call.reset();
-                     transport.reset();
-                   });
+      if (event_engine_ != nullptr) {
+        event_engine_->RunAfter(config_->deferred_close_timeout,
+                                [call = std::move(streaming_call_),
+                                 transport = std::move(transport_)]() mutable {
+                                  call.reset();
+                                  transport.reset();
+                                });
+      }
     } else {
       streaming_call_.reset();
     }
@@ -999,6 +1004,7 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
   mutable Mutex mu_;
 
   RefCountedPtr<XdsTransportFactory::XdsTransport> transport_;
+  std::shared_ptr<grpc_event_engine::experimental::EventEngine> event_engine_;
   OrphanablePtr<SerializedStreamingCall> streaming_call_;
 };
 
@@ -2398,6 +2404,8 @@ ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
                              RefCountedPtr<const Config> config,
                              ChannelFilter::Args filter_args)
     : config_(std::move(config)),
+      event_engine_(
+          args.GetObjectRef<grpc_event_engine::experimental::EventEngine>()),
       default_authority_(Slice::FromCopiedString(
           args.GetString(GRPC_ARG_DEFAULT_AUTHORITY)
               .value_or(
@@ -2803,7 +2811,8 @@ void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {
           });
         }
         auto ext_proc_call = MakeRefCounted<ExtProcCall>(
-            std::move(transport), ext_proc_filter->config_);
+            std::move(transport), ext_proc_filter->config_,
+            ext_proc_filter->event_engine_);
         return ArenaPromise<absl::Status>(If(
             !ext_proc_filter->config_->processing_mode
                  .value_or(ProcessingMode())

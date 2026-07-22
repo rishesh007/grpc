@@ -17,17 +17,15 @@
 #ifndef GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
 #define GRPC_SRC_CORE_FILTER_EXT_PROC_EXT_PROC_FILTER_H
 
+#include <grpc/event_engine/event_engine.h>
+
 #include <memory>
 #include <optional>
-#include <queue>
 #include <string>
 #include <variant>
 #include <vector>
 
-#include "src/core/call/call_destination.h"
 #include "src/core/call/call_spine.h"
-#include "src/core/call/message.h"
-#include "src/core/call/metadata_batch.h"
 #include "src/core/filter/ext_proc/ext_proc_messages.h"
 #include "src/core/filter/filter_args.h"
 #include "src/core/lib/channel/channel_args.h"
@@ -169,6 +167,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   void InterceptCall(UnstartedCallHandler unstarted_call_handler) override;
 
   RefCountedPtr<const Config> config_;
+  std::shared_ptr<grpc_event_engine::experimental::EventEngine> event_engine_;
   Slice default_authority_;
   std::string target_;
   std::string backend_service_;
