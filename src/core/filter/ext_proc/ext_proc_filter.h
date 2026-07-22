@@ -44,7 +44,26 @@
 namespace grpc_core {
 class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
  public:
-  class ExtProcChannel;
+  class ExtProcChannel final : public Blackboard::Entry {
+   public:
+    static UniqueTypeName Type() {
+      return GRPC_UNIQUE_TYPE_NAME_HERE("ext_proc_channel");
+    }
+    ExtProcChannel(std::shared_ptr<const XdsBootstrap::XdsServerTarget> server,
+                   RefCountedPtr<XdsTransportFactory> transport_factory);
+    ~ExtProcChannel() override;
+    std::shared_ptr<const XdsBootstrap::XdsServerTarget> server() const {
+      return server_;
+    }
+
+    absl::StatusOr<RefCountedPtr<XdsTransportFactory::XdsTransport>>
+    GetTransport();
+
+   private:
+    std::shared_ptr<const XdsBootstrap::XdsServerTarget> server_;
+    RefCountedPtr<XdsTransportFactory> transport_factory_;
+  };
+
   class ExtProcCall;
 
   using ProcessingMode = ExtProcProcessingMode;
@@ -125,33 +144,12 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   ExtProcFilter(const ChannelArgs& args, RefCountedPtr<const Config> config,
                 ChannelFilter::Args filter_args);
 
-  RefCountedPtr<const Config> config() const { return config_; }
   RefCountedPtr<ExtProcChannel> channel() const { return config_->channel(); }
 
   void RecordClientHeadersDuration(double duration_seconds) const;
   void RecordClientHalfCloseDuration(double duration_seconds) const;
   void RecordServerHeadersDuration(double duration_seconds) const;
   void RecordServerTrailersDuration(double duration_seconds) const;
-
-  class ExtProcChannel final : public Blackboard::Entry {
-   public:
-    static UniqueTypeName Type() {
-      return GRPC_UNIQUE_TYPE_NAME_HERE("ext_proc_channel");
-    }
-    ExtProcChannel(std::shared_ptr<const XdsBootstrap::XdsServerTarget> server,
-                   RefCountedPtr<XdsTransportFactory> transport_factory);
-    ~ExtProcChannel() override;
-    std::shared_ptr<const XdsBootstrap::XdsServerTarget> server() const {
-      return server_;
-    }
-
-    absl::StatusOr<RefCountedPtr<XdsTransportFactory::XdsTransport>>
-    GetTransport();
-
-   private:
-    std::shared_ptr<const XdsBootstrap::XdsServerTarget> server_;
-    RefCountedPtr<XdsTransportFactory> transport_factory_;
-  };
 
  private:
   void Orphaned() override {}

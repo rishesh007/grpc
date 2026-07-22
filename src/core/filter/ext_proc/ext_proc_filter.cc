@@ -2482,7 +2482,7 @@ ExtProcFilter::ClientToServerObservabilityMode(
                 shared_metadata,
                 ext_proc_filter->default_authority_.as_string_view()),
             [failure_mode_allow =
-                 ext_proc_filter->config()->failure_mode_allow.value_or(false),
+                 ext_proc_filter->config_->failure_mode_allow.value_or(false),
              ext_proc_call](absl::Status status) -> absl::Status {
               if (!status.ok()) {
                 if (failure_mode_allow) {
@@ -2582,8 +2582,8 @@ ExtProcFilter::ClientToServerCallNormalMode(
                           &response.response);
                   headers != nullptr) {
                 const auto* rules =
-                    ext_proc_filter->config()->mutation_rules.has_value()
-                        ? &ext_proc_filter->config()->mutation_rules.value()
+                    ext_proc_filter->config_->mutation_rules.has_value()
+                        ? &ext_proc_filter->config_->mutation_rules.value()
                         : nullptr;
                 auto status =
                     ApplyHeaderMutations(headers->mutation, rules, *metadata);
@@ -2631,14 +2631,14 @@ ExtProcFilter::ClientToServerCallNonProcessingMode(
             << "ExtProc: Client initial metadata received (non-processing):\n"
             << metadata->DebugString();
         const auto processing_mode =
-            ext_proc_filter->config()->processing_mode.value_or(
+            ext_proc_filter->config_->processing_mode.value_or(
                 ProcessingMode());
         ::google_protobuf_Struct* attributes = nullptr;
         if (processing_mode.send_request_body &&
-            !ext_proc_filter->config()->request_attributes.empty()) {
+            !ext_proc_filter->config_->request_attributes.empty()) {
           auto* arena = handler.arena()->New<upb::Arena>();
           attributes = CreateExtProcAttributesProtoStruct(
-              arena->ptr(), ext_proc_filter->config()->request_attributes,
+              arena->ptr(), ext_proc_filter->config_->request_attributes,
               *metadata, ext_proc_filter->default_authority_.as_string_view());
         }
         CallInitiator initiator = ext_proc_filter->MakeChildCall(
@@ -2818,10 +2818,10 @@ void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {
               });
         }
         auto ext_proc_call = MakeRefCounted<ExtProcCall>(
-            std::move(*transport), ext_proc_filter->config());
+            std::move(*transport), ext_proc_filter->config_);
         return ArenaPromise<absl::Status>(If(
-            !ext_proc_filter->config()
-                 ->processing_mode.value_or(ProcessingMode())
+            !ext_proc_filter->config_->processing_mode
+                 .value_or(ProcessingMode())
                  .send_request_headers,
             [handler, ext_proc_filter, ext_proc_call]() mutable {
               return ext_proc_filter->ClientToServerCallNonProcessingMode(
@@ -2829,7 +2829,7 @@ void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {
             },
             [handler, ext_proc_filter, ext_proc_call]() mutable {
               return If(
-                  ext_proc_filter->config()->observability_mode,
+                  ext_proc_filter->config_->observability_mode,
                   [ext_proc_filter, handler, ext_proc_call]() mutable {
                     return ext_proc_filter->ClientToServerObservabilityMode(
                         handler, std::move(ext_proc_call));
