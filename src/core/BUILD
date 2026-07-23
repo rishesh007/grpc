@@ -5754,6 +5754,7 @@ grpc_cc_library(
     external_deps = [
         "absl/cleanup",
         "absl/functional:any_invocable",
+        "absl/functional:function_ref",
         "absl/log:log",
         "absl/status",
         "absl/status:statusor",

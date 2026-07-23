@@ -139,7 +139,13 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
   RefCountedPtr<ExtProcChannel> channel() const { return config_->channel(); }
 
- private:
+  friend class ExtProcCall;
+  friend class ClientInitialMetadataProcessor;
+  friend class ClientToServerMessageProcessor;
+  friend class ServerInitialMetadataProcessor;
+  friend class ServerToClientMessageProcessor;
+  friend class ServerTrailingMetadataProcessor;
+
   class ExtProcCall;
 
   void RecordClientHeadersDuration(double duration_seconds) const;
