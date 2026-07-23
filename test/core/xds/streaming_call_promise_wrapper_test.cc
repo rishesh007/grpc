@@ -252,7 +252,7 @@ TEST_F(StreamingCallPromiseWrapperTest, SequentialWrites) {
   }
 }
 
-TEST_F(StreamingCallPromiseWrapperTest, SerializationAndFifo) {
+TEST_F(StreamingCallPromiseWrapperTest, WriteFailure) {
   InitTransport(false);
   auto wrapper = MakeSerializedCall();
   auto fake_stream = transport_factory_->WaitForStream(
@@ -261,111 +261,11 @@ TEST_F(StreamingCallPromiseWrapperTest, SerializationAndFifo) {
   auto party = MakeParty();
   bool resolved1 = false;
   absl::Status status1;
-  bool resolved2 = false;
-  absl::Status status2;
-  bool resolved3 = false;
-  absl::Status status3;
   party->Spawn(
       "Send1", [wrapper = wrapper.get()]() { return wrapper->Send("msg1"); },
       [&resolved1, &status1](absl::Status s) {
         resolved1 = true;
         status1 = std::move(s);
-      });
-  party->Spawn(
-      "Send2", [wrapper = wrapper.get()]() { return wrapper->Send("msg2"); },
-      [&resolved2, &status2](absl::Status s) {
-        resolved2 = true;
-        status2 = std::move(s);
-      });
-  party->Spawn(
-      "Send3", [wrapper = wrapper.get()]() { return wrapper->Send("msg3"); },
-      [&resolved3, &status3](absl::Status s) {
-        resolved3 = true;
-        status3 = std::move(s);
-      });
-  // Verify only msg1 is forwarded
-  auto msg1 = fake_stream->WaitForMessageFromClient();
-  ASSERT_TRUE(msg1.has_value());
-  EXPECT_EQ(*msg1, "msg1");
-  EXPECT_FALSE(fake_stream->HaveMessageFromClient());
-  EXPECT_FALSE(resolved1);
-  EXPECT_FALSE(resolved2);
-  EXPECT_FALSE(resolved3);
-  // Complete msg1
-  fake_stream->CompleteSendMessageFromClient(true);
-  event_engine_->TickUntilIdle();
-  // Verify msg1 is resolved, msg2 is now forwarded
-  EXPECT_TRUE(resolved1);
-  EXPECT_TRUE(status1.ok());
-  EXPECT_FALSE(resolved2);
-  EXPECT_FALSE(resolved3);
-  auto msg2 = fake_stream->WaitForMessageFromClient();
-  ASSERT_TRUE(msg2.has_value());
-  EXPECT_EQ(*msg2, "msg2");
-  EXPECT_FALSE(fake_stream->HaveMessageFromClient());
-  // Complete msg2
-  fake_stream->CompleteSendMessageFromClient(true);
-  event_engine_->TickUntilIdle();
-  // Verify msg2 is resolved, msg3 is now forwarded
-  EXPECT_TRUE(resolved2);
-  EXPECT_TRUE(status2.ok());
-  EXPECT_FALSE(resolved3);
-  auto msg3 = fake_stream->WaitForMessageFromClient();
-  ASSERT_TRUE(msg3.has_value());
-  EXPECT_EQ(*msg3, "msg3");
-  EXPECT_FALSE(fake_stream->HaveMessageFromClient());
-  // Complete msg3
-  fake_stream->CompleteSendMessageFromClient(true);
-  event_engine_->TickUntilIdle();
-  // Verify msg3 is resolved
-  EXPECT_TRUE(resolved3);
-  EXPECT_TRUE(status3.ok());
-}
-
-TEST_F(StreamingCallPromiseWrapperTest, SendNonBlocking) {
-  InitTransport(false);
-  auto wrapper = MakeSerializedCall();
-  auto fake_stream = transport_factory_->WaitForStream(
-      server_target_, FakeXdsTransportFactory::kAdsMethod);
-  ASSERT_NE(fake_stream, nullptr);
-  auto party = MakeParty();
-  bool resolved = false;
-  absl::Status status;
-  party->Spawn(
-      "SendPromise",
-      [wrapper = wrapper.get()]() { return wrapper->Send("non_blocking"); },
-      [&resolved, &status](absl::Status s) {
-        resolved = true;
-        status = std::move(s);
-      });
-  EXPECT_FALSE(resolved);
-  auto msg = fake_stream->WaitForMessageFromClient();
-  ASSERT_TRUE(msg.has_value());
-  EXPECT_EQ(*msg, "non_blocking");
-}
-
-TEST_F(StreamingCallPromiseWrapperTest, WriteFailureQueueClearing) {
-  InitTransport(false);
-  auto wrapper = MakeSerializedCall();
-  auto fake_stream = transport_factory_->WaitForStream(
-      server_target_, FakeXdsTransportFactory::kAdsMethod);
-  ASSERT_NE(fake_stream, nullptr);
-  auto party = MakeParty();
-  bool resolved1 = false;
-  absl::Status status1;
-  bool resolved2 = false;
-  absl::Status status2;
-  party->Spawn(
-      "Send1", [wrapper = wrapper.get()]() { return wrapper->Send("msg1"); },
-      [&resolved1, &status1](absl::Status s) {
-        resolved1 = true;
-        status1 = std::move(s);
-      });
-  party->Spawn(
-      "Send2", [wrapper = wrapper.get()]() { return wrapper->Send("msg2"); },
-      [&resolved2, &status2](absl::Status s) {
-        resolved2 = true;
-        status2 = std::move(s);
       });
   // Get msg1 from fake stream
   auto msg1 = fake_stream->WaitForMessageFromClient();
@@ -374,13 +274,9 @@ TEST_F(StreamingCallPromiseWrapperTest, WriteFailureQueueClearing) {
   // Complete msg1 with ok = false
   fake_stream->CompleteSendMessageFromClient(false);
   event_engine_->TickUntilIdle();
-  // Verify msg1 and msg2 promises both resolve to failure
+  // Verify msg1 resolves to failure
   EXPECT_TRUE(resolved1);
   EXPECT_FALSE(status1.ok());
-  EXPECT_TRUE(resolved2);
-  EXPECT_FALSE(status2.ok());
-  // Verify msg2 is cleared and not sent
-  EXPECT_FALSE(fake_stream->HaveMessageFromClient());
 }
 
 TEST_F(StreamingCallPromiseWrapperTest, StreamOrphaning) {
@@ -392,19 +288,11 @@ TEST_F(StreamingCallPromiseWrapperTest, StreamOrphaning) {
   auto party = MakeParty();
   bool resolved1 = false;
   absl::Status status1;
-  bool resolved2 = false;
-  absl::Status status2;
   party->Spawn(
       "Send1", [wrapper = wrapper.get()]() { return wrapper->Send("msg1"); },
       [&resolved1, &status1](absl::Status s) {
         resolved1 = true;
         status1 = std::move(s);
-      });
-  party->Spawn(
-      "Send2", [wrapper = wrapper.get()]() { return wrapper->Send("msg2"); },
-      [&resolved2, &status2](absl::Status s) {
-        resolved2 = true;
-        status2 = std::move(s);
       });
   auto msg1 = fake_stream->WaitForMessageFromClient();
   ASSERT_TRUE(msg1.has_value());
@@ -415,11 +303,9 @@ TEST_F(StreamingCallPromiseWrapperTest, StreamOrphaning) {
   EXPECT_TRUE(fake_stream->IsOrphaned());
   // Tick the event engine to let cleanup run and resolve pending promises
   event_engine_->TickUntilIdle();
-  // Verify all pending promises resolved to failure status
+  // Verify pending promise resolved to failure status
   EXPECT_TRUE(resolved1);
   EXPECT_FALSE(status1.ok());
-  EXPECT_TRUE(resolved2);
-  EXPECT_FALSE(status2.ok());
 }
 
 TEST_F(StreamingCallPromiseWrapperTest, RapidSequentialCalls) {
@@ -428,39 +314,27 @@ TEST_F(StreamingCallPromiseWrapperTest, RapidSequentialCalls) {
   auto fake_stream = transport_factory_->WaitForStream(
       server_target_, FakeXdsTransportFactory::kAdsMethod);
   ASSERT_NE(fake_stream, nullptr);
-  struct Tracker {
+  auto party = MakeParty();
+  for (int i = 0; i < 100; ++i) {
     bool resolved = false;
     absl::Status status;
-  };
-  std::vector<Tracker> trackers(100);
-  // Use a separate party for each concurrent send to avoid party-full deadlock
-  std::vector<RefCountedPtr<Party>> parties;
-  parties.reserve(100);
-  // Send 100 messages rapidly
-  for (int i = 0; i < 100; ++i) {
-    auto party = MakeParty();
-    parties.push_back(party);
     party->Spawn(
         absl::StrCat("Send_", i),
         [wrapper = wrapper.get(), i]() {
           return wrapper->Send(absl::StrCat("msg_", i));
         },
-        [&tracker = trackers[i]](absl::Status s) {
-          tracker.resolved = true;
-          tracker.status = std::move(s);
+        [&resolved, &status](absl::Status s) {
+          resolved = true;
+          status = std::move(s);
         });
-  }
-  // Complete them one by one and verify
-  for (int i = 0; i < 100; ++i) {
     auto msg = fake_stream->WaitForMessageFromClient();
     ASSERT_TRUE(msg.has_value());
     EXPECT_EQ(*msg, absl::StrCat("msg_", i));
-    EXPECT_FALSE(fake_stream->HaveMessageFromClient());
-    EXPECT_FALSE(trackers[i].resolved);
+    EXPECT_FALSE(resolved);
     fake_stream->CompleteSendMessageFromClient(true);
     event_engine_->TickUntilIdle();
-    EXPECT_TRUE(trackers[i].resolved);
-    EXPECT_TRUE(trackers[i].status.ok());
+    EXPECT_TRUE(resolved);
+    EXPECT_TRUE(status.ok());
   }
 }
 
@@ -473,22 +347,12 @@ TEST_F(StreamingCallPromiseWrapperTest, InterleavedReadsAndWrites) {
   auto party = MakeParty();
   bool resolved1 = false;
   absl::Status status1;
-  bool resolved2 = false;
-  absl::Status status2;
-  // Queue some writes
   party->Spawn(
       "Send1", [wrapper = wrapper.get()]() { return wrapper->Send("write_1"); },
       [&resolved1, &status1](absl::Status s) {
         resolved1 = true;
         status1 = std::move(s);
       });
-  party->Spawn(
-      "Send2", [wrapper = wrapper.get()]() { return wrapper->Send("write_2"); },
-      [&resolved2, &status2](absl::Status s) {
-        resolved2 = true;
-        status2 = std::move(s);
-      });
-  // Verify only write_1 is forwarded
   auto w1 = fake_stream->WaitForMessageFromClient();
   ASSERT_TRUE(w1.has_value());
   EXPECT_EQ(*w1, "write_1");
@@ -501,24 +365,26 @@ TEST_F(StreamingCallPromiseWrapperTest, InterleavedReadsAndWrites) {
   ASSERT_TRUE(r_event.has_value());
   EXPECT_EQ(r_event->type, CallbackEvent::Type::kRecvMessage);
   EXPECT_EQ(r_event->payload, "server_response_1");
-  // Verify write serialization is unaffected (write_2 is still queued)
-  EXPECT_FALSE(fake_stream->HaveMessageFromClient());
-  EXPECT_FALSE(resolved1);
-  EXPECT_FALSE(resolved2);
   // Complete write_1
   fake_stream->CompleteSendMessageFromClient(true);
   event_engine_->TickUntilIdle();
-  // Verify write_1 resolves to OK, write_2 is now forwarded
   EXPECT_TRUE(resolved1);
   EXPECT_TRUE(status1.ok());
-  EXPECT_FALSE(resolved2);
+
+  // Subsequent write
+  bool resolved2 = false;
+  absl::Status status2;
+  party->Spawn(
+      "Send2", [wrapper = wrapper.get()]() { return wrapper->Send("write_2"); },
+      [&resolved2, &status2](absl::Status s) {
+        resolved2 = true;
+        status2 = std::move(s);
+      });
   auto w2 = fake_stream->WaitForMessageFromClient();
   ASSERT_TRUE(w2.has_value());
   EXPECT_EQ(*w2, "write_2");
-  // Complete write_2
   fake_stream->CompleteSendMessageFromClient(true);
   event_engine_->TickUntilIdle();
-  // Verify write_2 resolves to OK
   EXPECT_TRUE(resolved2);
   EXPECT_TRUE(status2.ok());
 }
@@ -535,47 +401,20 @@ TEST_F(StreamingCallPromiseWrapperTest, StreamDestructionCleanup) {
   auto party = MakeParty();
   bool resolved1 = false;
   absl::Status status1;
-  bool resolved2 = false;
-  absl::Status status2;
-  bool resolved3 = false;
-  absl::Status status3;
-  // Send several messages to queue them up
   party->Spawn(
       "Send1", [wrapper = wrapper.get()]() { return wrapper->Send("msg1"); },
       [&resolved1, &status1](absl::Status s) {
         resolved1 = true;
         status1 = std::move(s);
       });
-  party->Spawn(
-      "Send2", [wrapper = wrapper.get()]() { return wrapper->Send("msg2"); },
-      [&resolved2, &status2](absl::Status s) {
-        resolved2 = true;
-        status2 = std::move(s);
-      });
-  party->Spawn(
-      "Send3", [wrapper = wrapper.get()]() { return wrapper->Send("msg3"); },
-      [&resolved3, &status3](absl::Status s) {
-        resolved3 = true;
-        status3 = std::move(s);
-      });
-  // Verify only msg1 is forwarded
   auto msg1 = fake_stream->WaitForMessageFromClient();
   ASSERT_TRUE(msg1.has_value());
   EXPECT_EQ(*msg1, "msg1");
-  // Destroy the wrapper while msg2 and msg3 are still queued in the wrapper,
-  // and msg1 is in-flight.
   wrapper.reset();
-  // Verify the underlying stream is orphaned
   EXPECT_TRUE(fake_stream->IsOrphaned());
-  // Tick the event engine to let cleanup run and resolve pending promises
   event_engine_->TickUntilIdle();
-  // Verify all pending promises resolved to failure status
   EXPECT_TRUE(resolved1);
   EXPECT_FALSE(status1.ok());
-  EXPECT_TRUE(resolved2);
-  EXPECT_FALSE(status2.ok());
-  EXPECT_TRUE(resolved3);
-  EXPECT_FALSE(status3.ok());
 }
 
 TEST_F(StreamingCallPromiseWrapperTest, HalfCloseSerialization) {

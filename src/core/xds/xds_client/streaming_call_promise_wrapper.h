@@ -63,7 +63,7 @@ class StreamingCallPromiseWrapper final
   std::atomic<bool> send_message_in_flight_{false};
   std::atomic<bool> half_close_pending_{false};
   std::atomic<bool> send_failed_{false};
-  std::vector<Waker> send_message_wakers_;
+  Waker send_message_waker_;
 };
 
 }  // namespace grpc_core

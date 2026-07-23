@@ -257,33 +257,32 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
  public:
   ExtProcCall(RefCountedPtr<ExtProcFilter> ext_proc_filter,
               RefCountedPtr<XdsTransportFactory::XdsTransport> transport,
-              CallHandler handler)
-      : ext_proc_filter_(std::move(ext_proc_filter)),
-        transport_(std::move(transport)),
-        handler_(handler) {
-    const char* method = "/envoy.service.ext_proc.v3.ExternalProcessor/Process";
-    streaming_call_ = MakeRefCounted<StreamingCallPromiseWrapper>(
-        *transport_, method, std::make_unique<StreamEventHandler>(WeakRef()),
-        /*wait_for_ready=*/false);
-    streaming_call_->StartRecvMessage();
-  }
+              CallHandler handler);
 
-  ~ExtProcCall() override {
-    if (ext_proc_filter_->config_->deferred_close_timeout != Duration::Zero() &&
-        ext_proc_filter_->config_->observability_mode) {
-      if (ext_proc_filter_->event_engine_ != nullptr) {
-        ext_proc_filter_->event_engine_->RunAfter(
-            ext_proc_filter_->config_->deferred_close_timeout,
-            [call = std::move(streaming_call_),
-             transport = std::move(transport_)]() mutable {
-              call.reset();
-              transport.reset();
-            });
-      }
-    } else {
-      streaming_call_.reset();
+  ~ExtProcCall() override;
+
+  absl::AnyInvocable<Poll<absl::Status>()> Call();
+
+ private:
+  class StreamEventHandler final
+      : public XdsTransportFactory::XdsTransport::StreamingCall::EventHandler {
+   public:
+    explicit StreamEventHandler(WeakRefCountedPtr<ExtProcCall> call)
+        : call_(std::move(call)) {}
+
+    void OnRequestSent(bool ok) override { call_->OnRequestSent(ok); }
+
+    void OnRecvMessage(absl::string_view payload) override {
+      call_->OnRecvMessage(payload);
     }
-  }
+
+    void OnStatusReceived(absl::Status status) override {
+      call_->OnStatusReceived(std::move(status));
+    }
+
+   private:
+    WeakRefCountedPtr<ExtProcCall> call_;
+  };
 
   InterActivityLatch<absl::StatusOr<ExtProcResponse>>& request_headers_latch() {
     return request_headers_latch_;
@@ -454,23 +453,6 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
     first_body_message_sent_.store(true, std::memory_order_release);
   }
 
-  absl::AnyInvocable<Poll<absl::Status>()> SendMessage(
-      absl::AnyInvocable<absl::StatusOr<std::string>()> payload_generator) {
-    MutexLock lock(&mu_);
-    if (stream_status_value_.has_value() || streaming_call_ == nullptr) {
-      return []() -> Poll<absl::Status> {
-        return absl::CancelledError("Stream closed");
-      };
-    }
-    auto payload = payload_generator();
-    if (!payload.ok()) {
-      return [status = payload.status()]() -> Poll<absl::Status> {
-        return status;
-      };
-    }
-    return streaming_call_->Send(std::move(*payload));
-  }
-
   void SetStreamError(absl::Status status) {
     SetStreamStatus(status);
     CompleteAllLatchesAndPipes(status);
@@ -487,6 +469,8 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
       }
       streaming_call = std::move(streaming_call_);
     }
+    ext_proc_send_in_flight_.store(false);
+    ext_proc_send_waker_.Wakeup();
     streaming_call.reset();
     if (!request_body_pipe_.sender.IsClosed()) {
       request_body_pipe_.sender.MarkClosed();
@@ -496,9 +480,29 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
     }
   }
 
-  absl::AnyInvocable<Poll<absl::Status>()> Call();
+  void Orphaned() override { CloseStream(); }
 
- private:
+  // Member functions
+  void OnRequestSent(bool /*ok*/) {}
+  void OnRecvMessage(absl::string_view payload);
+  void OnStatusReceived(absl::Status status);
+  void CompleteAllLatchesAndPipes(absl::StatusOr<ExtProcResponse> response);
+
+  void SetStreamStatus(absl::Status status) {
+    MutexLock lock(&mu_);
+    if (!stream_status_value_.has_value()) {
+      stream_status_value_ = status;
+      stream_status_.Set();
+    }
+  }
+
+  // Sends a message to the external processor side-stream.
+  // Coordinates client-side and server-side message sources so that only one
+  // send is in-flight on streaming_call_ at a time, using a single Waker
+  // without any queue or vector allocations.
+  absl::AnyInvocable<Poll<absl::Status>()> SendMessage(
+      absl::AnyInvocable<absl::StatusOr<std::string>()> payload_generator);
+
   absl::AnyInvocable<Poll<absl::Status>()>
   SendAndProcessServerHeadersNormalMode(
       std::shared_ptr<ServerMetadataHandle> metadata, bool end_of_stream,
@@ -632,122 +636,162 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
                                 bool end_of_stream_without_message,
                                 ::google_protobuf_Struct* attributes);
 
-  // Event handler callback for the ext_proc stream. Wraps a weak reference
-  // to ExtProcCall to safely dispatch asynchronous stream lifecycle events
-  // (message sent, message received, stream closed/status received) back to
-  // the owning ExtProcCall instance without preventing destruction or
-  // causing cyclic reference memory leaks.
-  class StreamEventHandler final
-      : public XdsTransportFactory::XdsTransport::StreamingCall::EventHandler {
-   public:
-    explicit StreamEventHandler(WeakRefCountedPtr<ExtProcCall> call)
-        : call_(std::move(call)) {}
+  // Data members
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>> request_headers_latch_;
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>> response_headers_latch_;
+  InterActivityLatch<absl::StatusOr<ExtProcResponse>> response_trailers_latch_;
+  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16> request_body_pipe_;
+  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16> response_body_pipe_;
+  RefCountedPtr<ExtProcFilter> ext_proc_filter_;
+  // Indicates whether a stream drain operation has been requested by the
+  // filter.
+  std::atomic<bool> drain_requested_{false};
+  // True if no messages have been sent on the external processor stream yet.
+  // Used to include overall processing_mode in the initial stream header
+  // request.
+  std::atomic<bool> is_first_message_on_ext_proc_stream_{true};
+  // Tracks whether the first body message has been sent on the stream,
+  // used for fail-open determination.
+  std::atomic<bool> first_body_message_sent_{false};
+  // TODO(rishesh): Need to remove this once PH2 work is done.
+  // Number of messages sent to ext_proc that are awaiting response processing
+  // in S2C and C2S directions respectively.
+  size_t outstanding_s2c_messages_ ABSL_GUARDED_BY(&mu_) = 0;
+  size_t outstanding_c2s_messages_ ABSL_GUARDED_BY(&mu_) = 0;
+  // Stream state flags tracking directional write completion, half-close,
+  // trailers-only RPC mode, and server trailers transmission.
+  std::atomic<bool> c2s_writes_done_{false};
+  std::atomic<bool> s2c_writes_done_{false};
+  std::atomic<bool> c2s_half_close_initiated_{false};
+  std::atomic<bool> is_trailers_only_{false};
+  std::atomic<bool> server_trailers_sent_{false};
+  // Set by external processor server when it requests end of stream (EOS).
+  std::atomic<bool> ext_proc_set_eos_{false};
+  // Indicates that the external processor stream has been half closed.
+  std::atomic<bool> ext_proc_stream_half_closed_{false};
+  InterActivityLatch<void> stream_status_;
+  std::optional<absl::Status> stream_status_value_ ABSL_GUARDED_BY(mu_);
+  std::atomic<bool> ext_proc_send_in_flight_{false};
+  Waker ext_proc_send_waker_;
 
-    void OnRequestSent(bool ok) override { call_->OnRequestSent(ok); }
+  mutable Mutex mu_;
 
-    void OnRecvMessage(absl::string_view payload) override {
-      call_->OnRecvMessage(payload);
-    }
+  RefCountedPtr<XdsTransportFactory::XdsTransport> transport_;
+  CallHandler handler_;
+  CallInitiator initiator_;
+  RefCountedPtr<StreamingCallPromiseWrapper> streaming_call_;
+};
 
-    void OnStatusReceived(absl::Status status) override {
-      call_->OnStatusReceived(std::move(status));
-    }
+ExtProcFilter::ExtProcCall::ExtProcCall(
+    RefCountedPtr<ExtProcFilter> ext_proc_filter,
+    RefCountedPtr<XdsTransportFactory::XdsTransport> transport,
+    CallHandler handler)
+    : ext_proc_filter_(std::move(ext_proc_filter)),
+      transport_(std::move(transport)),
+      handler_(handler) {
+  const char* method = "/envoy.service.ext_proc.v3.ExternalProcessor/Process";
+  streaming_call_ = MakeRefCounted<StreamingCallPromiseWrapper>(
+      *transport_, method, std::make_unique<StreamEventHandler>(WeakRef()),
+      /*wait_for_ready=*/false);
+  streaming_call_->StartRecvMessage();
+}
 
-   private:
-    WeakRefCountedPtr<ExtProcCall> call_;
-  };
-
-  void CompleteAllLatchesAndPipes(absl::StatusOr<ExtProcResponse> response) {
-    const auto& processing_mode = *ext_proc_filter_->config_->processing_mode;
-    if (processing_mode.send_request_headers &&
-        !request_headers_latch_.IsSet()) {
-      request_headers_latch_.Set(response);
+ExtProcFilter::ExtProcCall::~ExtProcCall() {
+  if (ext_proc_filter_->config_->deferred_close_timeout != Duration::Zero() &&
+      ext_proc_filter_->config_->observability_mode) {
+    if (ext_proc_filter_->event_engine_ != nullptr) {
+      ext_proc_filter_->event_engine_->RunAfter(
+          ext_proc_filter_->config_->deferred_close_timeout,
+          [call = std::move(streaming_call_),
+           transport = std::move(transport_)]() mutable {
+            call.reset();
+            transport.reset();
+          });
     }
-    if (processing_mode.send_response_headers &&
-        !response_headers_latch_.IsSet()) {
-      response_headers_latch_.Set(response);
-    }
-    if (processing_mode.send_response_trailers &&
-        !response_trailers_latch_.IsSet()) {
-      response_trailers_latch_.Set(response);
-    }
-    if (processing_mode.send_request_body &&
-        !request_body_pipe_.sender.IsClosed()) {
-      if (!response.ok()) {
-        request_body_pipe_.sender.Push(response.status())();
-      }
-      request_body_pipe_.sender.MarkClosed();
-    }
-    if (processing_mode.send_response_body &&
-        !response_body_pipe_.sender.IsClosed()) {
-      if (!response.ok()) {
-        response_body_pipe_.sender.Push(response.status())();
-      }
-      response_body_pipe_.sender.MarkClosed();
-    }
+  } else {
+    streaming_call_.reset();
   }
+}
 
-  void SetStreamStatus(absl::Status status) {
-    MutexLock lock(&mu_);
-    if (!stream_status_value_.has_value()) {
-      stream_status_value_ = status;
-      stream_status_.Set();
-    }
+void ExtProcFilter::ExtProcCall::CompleteAllLatchesAndPipes(
+    absl::StatusOr<ExtProcResponse> response) {
+  const auto& processing_mode = *ext_proc_filter_->config_->processing_mode;
+  if (processing_mode.send_request_headers && !request_headers_latch_.IsSet()) {
+    request_headers_latch_.Set(response);
   }
-
-  void OnRequestSent(bool ok) {}
-
-  void OnRecvMessage(absl::string_view payload) {
-    // In observability mode, we only log the message and ignore it.
-    // We must continue reading the stream to keep it alive.
-    if (ext_proc_filter_->config_->observability_mode) {
-      GRPC_TRACE_LOG(ext_proc_filter, INFO)
-          << "ExtProcCall " << this
-          << " message received in observability mode (ignored), size="
-          << payload.size();
-      MutexLock lock(&mu_);
-      if (streaming_call_ != nullptr) {
-        streaming_call_->StartRecvMessage();
-      }
-      return;
+  if (processing_mode.send_response_headers &&
+      !response_headers_latch_.IsSet()) {
+    response_headers_latch_.Set(response);
+  }
+  if (processing_mode.send_response_trailers &&
+      !response_trailers_latch_.IsSet()) {
+    response_trailers_latch_.Set(response);
+  }
+  if (processing_mode.send_request_body &&
+      !request_body_pipe_.sender.IsClosed()) {
+    if (!response.ok()) {
+      request_body_pipe_.sender.Push(response.status())();
     }
+    request_body_pipe_.sender.MarkClosed();
+  }
+  if (processing_mode.send_response_body &&
+      !response_body_pipe_.sender.IsClosed()) {
+    if (!response.ok()) {
+      response_body_pipe_.sender.Push(response.status())();
+    }
+    response_body_pipe_.sender.MarkClosed();
+  }
+}
+
+void ExtProcFilter::ExtProcCall::OnRecvMessage(absl::string_view payload) {
+  // In observability mode, we only log the message and ignore it.
+  // We must continue reading the stream to keep it alive.
+  if (ext_proc_filter_->config_->observability_mode) {
     GRPC_TRACE_LOG(ext_proc_filter, INFO)
         << "ExtProcCall " << this
-        << " message received, size=" << payload.size();
-    // Parse the response from the external processor.
-    auto parsed_response = ExtProcResponse::Parse(payload);
-    if (!parsed_response.ok()) {
-      // If parsing fails, we either fail the stream or close it cleanly
-      // (fail-open) depending on configuration.
-      if (!IsFailOpenAllowed()) {
-        SetStreamError(parsed_response.status());
-      } else {
-        CompleteAllLatchesAndPipes(ExtProcResponse{});
-        CloseStream();
-      }
-      return;
+        << " message received in observability mode (ignored), size="
+        << payload.size();
+    MutexLock lock(&mu_);
+    if (streaming_call_ != nullptr) {
+      streaming_call_->StartRecvMessage();
     }
-    // If the server requests a drain, we half-close the stream to signal
-    // we are done sending requests.
-    if ((*parsed_response).request_drain) {
-      GRPC_TRACE_LOG(ext_proc_filter, INFO)
-          << "ExtProcCall " << this << " received request_drain=true";
-      SetDrainRequested();
-      ext_proc_stream_half_closed_.store(true, std::memory_order_release);
-      {
-        MutexLock lock(&mu_);
-        if (streaming_call_ != nullptr) {
-          GRPC_TRACE_LOG(ext_proc_filter, INFO)
-              << "ExtProcCall " << this << " sending half-close";
-          streaming_call_->SendHalfClose();
-        }
+    return;
+  }
+  GRPC_TRACE_LOG(ext_proc_filter, INFO)
+      << "ExtProcCall " << this << " message received, size=" << payload.size();
+  // Parse the response from the external processor.
+  auto parsed_response = ExtProcResponse::Parse(payload);
+  if (!parsed_response.ok()) {
+    // If parsing fails, we either fail the stream or close it cleanly
+    // (fail-open) depending on configuration.
+    if (!IsFailOpenAllowed()) {
+      SetStreamError(parsed_response.status());
+    } else {
+      CompleteAllLatchesAndPipes(ExtProcResponse{});
+      CloseStream();
+    }
+    return;
+  }
+  // If the server requests a drain, we half-close the stream to signal
+  // we are done sending requests.
+  if ((*parsed_response).request_drain) {
+    GRPC_TRACE_LOG(ext_proc_filter, INFO)
+        << "ExtProcCall " << this << " received request_drain=true";
+    SetDrainRequested();
+    ext_proc_stream_half_closed_.store(true, std::memory_order_release);
+    {
+      MutexLock lock(&mu_);
+      if (streaming_call_ != nullptr) {
+        GRPC_TRACE_LOG(ext_proc_filter, INFO)
+            << "ExtProcCall " << this << " sending half-close";
+        streaming_call_->SendHalfClose();
       }
     }
-    // Dispatch the parsed response to the appropriate latch based on the
-    // response type.
-    const auto& processing_mode = *ext_proc_filter_->config_->processing_mode;
-    Match(
-        (*parsed_response).response,
+  }
+  // Dispatch the parsed response to the appropriate latch based on the
+  // response type.
+  const auto& processing_mode = *ext_proc_filter_->config_->processing_mode;
+  Match((*parsed_response).response,
         [&](const ExtProcResponse::ImmediateResponse&) {
           if (ext_proc_filter_->config_->disable_immediate_response ||
               !server_trailers_sent()) {
@@ -918,101 +962,112 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
           }
         },
         [](std::monostate) {});
+  MutexLock lock(&mu_);
+  if (streaming_call_ != nullptr) {
+    streaming_call_->StartRecvMessage();
+  }
+}
+
+void ExtProcFilter::ExtProcCall::OnStatusReceived(absl::Status status) {
+  GRPC_TRACE_LOG(ext_proc_filter, INFO)
+      << "ExtProcCall " << this << " status received: " << status;
+  bool has_outstanding_messages = false;
+  {
     MutexLock lock(&mu_);
-    if (streaming_call_ != nullptr) {
-      streaming_call_->StartRecvMessage();
+    has_outstanding_messages =
+        outstanding_c2s_messages_ > 0 || outstanding_s2c_messages_ > 0;
+  }
+  const bool must_drain =
+      !ext_proc_filter_->config_->observability_mode &&
+      (ext_proc_filter_->config_->processing_mode->send_request_body ||
+       ext_proc_filter_->config_->processing_mode->send_response_body);
+  const bool drain_requested = drain_requested_.load(std::memory_order_relaxed);
+  if (status.ok()) {
+    if (must_drain && !drain_requested) {
+      status = absl::InternalError("Stream closed cleanly without drain");
+    } else if (has_outstanding_messages &&
+               !ext_proc_filter_->config_->observability_mode) {
+      status = absl::InternalError(
+          "Stream closed cleanly with outstanding messages");
     }
   }
-
-  void OnStatusReceived(absl::Status status) {
-    GRPC_TRACE_LOG(ext_proc_filter, INFO)
-        << "ExtProcCall " << this << " status received: " << status;
-    bool has_outstanding_messages = false;
-    {
-      MutexLock lock(&mu_);
-      has_outstanding_messages =
-          outstanding_c2s_messages_ > 0 || outstanding_s2c_messages_ > 0;
-    }
-    const bool must_drain =
-        !ext_proc_filter_->config_->observability_mode &&
-        (ext_proc_filter_->config_->processing_mode->send_request_body ||
-         ext_proc_filter_->config_->processing_mode->send_response_body);
-    const bool drain_requested =
-        drain_requested_.load(std::memory_order_relaxed);
-    if (status.ok()) {
-      if (must_drain && !drain_requested) {
-        status = absl::InternalError("Stream closed cleanly without drain");
-      } else if (has_outstanding_messages &&
-                 !ext_proc_filter_->config_->observability_mode) {
-        status = absl::InternalError(
-            "Stream closed cleanly with outstanding messages");
-      }
-    }
-    const bool should_propagate_error = !status.ok() && !IsFailOpenAllowed();
-    bool already_closed = false;
-    {
-      MutexLock lock(&mu_);
-      already_closed = stream_status_value_.has_value();
-      if (!already_closed) {
-        stream_status_value_ = status;
-        stream_status_.Set();
-      }
-    }
-    // Always complete latches on status received to avoid hangs.
-    if (should_propagate_error) {
-      CompleteAllLatchesAndPipes(status);
-    } else {
-      CompleteAllLatchesAndPipes(ExtProcResponse{});
-    }
+  const bool should_propagate_error = !status.ok() && !IsFailOpenAllowed();
+  bool already_closed = false;
+  {
+    MutexLock lock(&mu_);
+    already_closed = stream_status_value_.has_value();
     if (!already_closed) {
-      CloseStream();
+      stream_status_value_ = status;
+      stream_status_.Set();
     }
   }
+  // Always complete latches on status received to avoid hangs.
+  if (should_propagate_error) {
+    CompleteAllLatchesAndPipes(status);
+  } else {
+    CompleteAllLatchesAndPipes(ExtProcResponse{});
+  }
+  if (!already_closed) {
+    CloseStream();
+  }
+}
 
-  void Orphaned() override { CloseStream(); }
-
-  InterActivityLatch<absl::StatusOr<ExtProcResponse>> request_headers_latch_;
-  InterActivityLatch<absl::StatusOr<ExtProcResponse>> response_headers_latch_;
-  InterActivityLatch<absl::StatusOr<ExtProcResponse>> response_trailers_latch_;
-  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16> request_body_pipe_;
-  InterActivityPipe<absl::StatusOr<ExtProcResponse>, 16> response_body_pipe_;
-  RefCountedPtr<ExtProcFilter> ext_proc_filter_;
-  // Indicates whether a stream drain operation has been requested by the
-  // filter.
-  std::atomic<bool> drain_requested_{false};
-  // True if no messages have been sent on the external processor stream yet.
-  // Used to include overall processing_mode in the initial stream header
-  // request.
-  std::atomic<bool> is_first_message_on_ext_proc_stream_{true};
-  // Tracks whether the first body message has been sent on the stream,
-  // used for fail-open determination.
-  std::atomic<bool> first_body_message_sent_{false};
-  // TODO(rishesh): Need to remove this once PH2 work is done.
-  // Number of messages sent to ext_proc that are awaiting response processing
-  // in S2C and C2S directions respectively.
-  size_t outstanding_s2c_messages_ ABSL_GUARDED_BY(&mu_) = 0;
-  size_t outstanding_c2s_messages_ ABSL_GUARDED_BY(&mu_) = 0;
-  // Stream state flags tracking directional write completion, half-close,
-  // trailers-only RPC mode, and server trailers transmission.
-  std::atomic<bool> c2s_writes_done_{false};
-  std::atomic<bool> s2c_writes_done_{false};
-  std::atomic<bool> c2s_half_close_initiated_{false};
-  std::atomic<bool> is_trailers_only_{false};
-  std::atomic<bool> server_trailers_sent_{false};
-  // Set by external processor server when it requests end of stream (EOS).
-  std::atomic<bool> ext_proc_set_eos_{false};
-  // Indicates that the external processor stream has been half closed.
-  std::atomic<bool> ext_proc_stream_half_closed_{false};
-  InterActivityLatch<void> stream_status_;
-  std::optional<absl::Status> stream_status_value_ ABSL_GUARDED_BY(mu_);
-
-  mutable Mutex mu_;
-
-  RefCountedPtr<XdsTransportFactory::XdsTransport> transport_;
-  CallHandler handler_;
-  CallInitiator initiator_;
-  RefCountedPtr<StreamingCallPromiseWrapper> streaming_call_;
-};
+absl::AnyInvocable<Poll<absl::Status>()>
+ExtProcFilter::ExtProcCall::SendMessage(
+    absl::AnyInvocable<absl::StatusOr<std::string>()> payload_generator) {
+  return [this, ext_proc_call = Ref(),
+          payload_generator = std::move(payload_generator),
+          send_promise = absl::AnyInvocable<Poll<absl::Status>()>()]() mutable
+             -> Poll<absl::Status> {
+    {
+      MutexLock lock(&mu_);
+      if (stream_status_value_.has_value() || streaming_call_ == nullptr) {
+        return absl::CancelledError("Stream closed");
+      }
+    }
+    // send_promise is nullptr on the initial poll. On subsequent polls while
+    // an inner send is in-flight, send_promise is already initialized.
+    if (send_promise == nullptr) {
+      // Attempt to claim the in-flight send slot. Because ext_proc has at most
+      // two message sources (client pipeline and server pipeline), at most one
+      // sender can be in-flight and at most one can be waiting.
+      bool send_in_flight = false;
+      if (!ext_proc_send_in_flight_.compare_exchange_strong(send_in_flight,
+                                                            true)) {
+        // Another send is currently in-flight. Save this caller's waker.
+        ext_proc_send_waker_ = GetContext<Activity>()->MakeNonOwningWaker();
+        return Pending{};
+      }
+      auto payload = payload_generator();
+      if (!payload.ok()) {
+        ext_proc_send_in_flight_.store(false);
+        ext_proc_send_waker_.Wakeup();
+        return payload.status();
+      }
+      RefCountedPtr<StreamingCallPromiseWrapper> streaming_call;
+      {
+        MutexLock lock(&mu_);
+        streaming_call = streaming_call_;
+      }
+      if (streaming_call == nullptr) {
+        ext_proc_send_in_flight_.store(false);
+        ext_proc_send_waker_.Wakeup();
+        return absl::CancelledError("Stream closed");
+      }
+      // Start the send on the underlying transport wrapper.
+      send_promise = streaming_call->Send(std::move(*payload));
+    }
+    // Poll the in-flight send promise.
+    auto poll = send_promise();
+    if (poll.pending()) {
+      return Pending{};
+    }
+    // Send completed. Release the in-flight slot and wake any waiting sender.
+    ext_proc_send_in_flight_.store(false);
+    ext_proc_send_waker_.Wakeup();
+    return poll;
+  };
+}
 
 auto ExtProcFilter::ExtProcCall::SendClientInitialMetadataRequest(
     std::shared_ptr<ClientMetadataHandle> metadata,

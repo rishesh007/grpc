@@ -48,10 +48,7 @@ class StreamingCallPromiseWrapper::EventHandler final
         promise_wrapper_->send_failed_.store(true);
       }
       promise_wrapper_->send_message_in_flight_.store(false);
-      auto wakeups = std::move(promise_wrapper_->send_message_wakers_);
-      for (auto& waker : wakeups) {
-        waker.Wakeup();
-      }
+      promise_wrapper_->send_message_waker_.Wakeup();
       if (promise_wrapper_->half_close_pending_.exchange(false) &&
           promise_wrapper_->call_ != nullptr) {
         promise_wrapper_->call_->SendHalfClose();
@@ -74,10 +71,7 @@ class StreamingCallPromiseWrapper::EventHandler final
         promise_wrapper_->send_failed_.store(true);
       }
       promise_wrapper_->send_message_in_flight_.store(false);
-      auto wakeups = std::move(promise_wrapper_->send_message_wakers_);
-      for (auto& waker : wakeups) {
-        waker.Wakeup();
-      }
+      promise_wrapper_->send_message_waker_.Wakeup();
     }
     if (user_event_handler_ != nullptr) {
       user_event_handler_->OnStatusReceived(std::move(status));
@@ -120,8 +114,8 @@ absl::AnyInvocable<Poll<absl::Status>()> StreamingCallPromiseWrapper::Send(
       bool send_message_in_flight = false;
       if (!self->send_message_in_flight_.compare_exchange_strong(
               send_message_in_flight, true)) {
-        self->send_message_wakers_.push_back(
-            GetContext<Activity>()->MakeNonOwningWaker());
+        self->send_message_waker_ =
+            GetContext<Activity>()->MakeNonOwningWaker();
         return Pending{};
       }
       self->call_->SendMessage(std::move(*msg));
@@ -129,8 +123,7 @@ absl::AnyInvocable<Poll<absl::Status>()> StreamingCallPromiseWrapper::Send(
     }
     // Already started. Check to see if it's still in flight.
     if (self->send_message_in_flight_.load()) {
-      self->send_message_wakers_.push_back(
-          GetContext<Activity>()->MakeNonOwningWaker());
+      self->send_message_waker_ = GetContext<Activity>()->MakeNonOwningWaker();
       return Pending{};
     }
     if (self->send_failed_.load()) {
@@ -155,10 +148,7 @@ void StreamingCallPromiseWrapper::SendHalfClose() {
 void StreamingCallPromiseWrapper::Orphaned() {
   send_failed_.store(true);
   send_message_in_flight_.store(false);
-  auto wakeups = std::move(send_message_wakers_);
-  for (auto& waker : wakeups) {
-    waker.Wakeup();
-  }
+  send_message_waker_.Wakeup();
   call_.reset();
 }
 
