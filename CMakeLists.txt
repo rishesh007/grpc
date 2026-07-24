@@ -439,6 +439,17 @@ if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/googleapis AND gRPC_DOWNL
     googleapis-2193a2bfcecb92b92aad7a4d81baa428cafd7dfd
   )
 endif()
+# Setup external proto library at third_party/grpc-proto if it doesn't exist
+if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/grpc-proto AND gRPC_DOWNLOAD_ARCHIVES)
+  # Download the archive via HTTP, validate the checksum, and extract to third_party/grpc-proto.
+  download_archive(
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/grpc-proto
+    https://storage.googleapis.com/grpc-bazel-mirror/github.com/grpc/grpc-proto/archive/ec30f589e2519d595688b9a42f88a91bdd6b733f.tar.gz
+    https://github.com/grpc/grpc-proto/archive/ec30f589e2519d595688b9a42f88a91bdd6b733f.tar.gz
+    5e9b520b22afbd53a662cc29017064be253c1dfa6df8958738594e7fec6ade33
+    grpc-proto-ec30f589e2519d595688b9a42f88a91bdd6b733f
+  )
+endif()
 # Setup external proto library at third_party/protoc-gen-validate if it doesn't exist
 if (NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/protoc-gen-validate AND gRPC_DOWNLOAD_ARCHIVES)
   # Download the archive via HTTP, validate the checksum, and extract to third_party/protoc-gen-validate.
@@ -3090,6 +3101,7 @@ add_library(grpc
   src/core/tsi/ssl_telemetry_utils.cc
   src/core/tsi/ssl_transport_security.cc
   src/core/tsi/ssl_transport_security_utils.cc
+  src/core/tsi/tls_telemetry.cc
   src/core/tsi/transport_security.cc
   src/core/tsi/transport_security_grpc.cc
   src/core/util/backoff.cc
@@ -55131,6 +55143,7 @@ if(_gRPC_PLATFORM_LINUX OR _gRPC_PLATFORM_MAC OR _gRPC_PLATFORM_POSIX)
     ${_gRPC_PROTO_GENS_DIR}/xds/type/v3/typed_struct.pb.h
     ${_gRPC_PROTO_GENS_DIR}/xds/type/v3/typed_struct.grpc.pb.h
     test/core/test_util/audit_logging_utils.cc
+    test/core/test_util/fake_stats_plugin.cc
     test/cpp/end2end/test_service_impl.cc
     test/cpp/end2end/xds/xds_end2end_test_lib.cc
     test/cpp/end2end/xds/xds_security_end2end_test.cc

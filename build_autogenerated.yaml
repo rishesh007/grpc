@@ -1277,6 +1277,7 @@ libs:
   - src/core/tsi/ssl_transport_security.h
   - src/core/tsi/ssl_transport_security_utils.h
   - src/core/tsi/ssl_types.h
+  - src/core/tsi/tls_telemetry.h
   - src/core/tsi/transport_security.h
   - src/core/tsi/transport_security_grpc.h
   - src/core/tsi/transport_security_interface.h
@@ -2238,6 +2239,7 @@ libs:
   - src/core/tsi/ssl_telemetry_utils.cc
   - src/core/tsi/ssl_transport_security.cc
   - src/core/tsi/ssl_transport_security_utils.cc
+  - src/core/tsi/tls_telemetry.cc
   - src/core/tsi/transport_security.cc
   - src/core/tsi/transport_security_grpc.cc
   - src/core/util/backoff.cc
@@ -32856,6 +32858,7 @@ targets:
   language: c++
   headers:
   - test/core/test_util/audit_logging_utils.h
+  - test/core/test_util/fake_stats_plugin.h
   - test/core/test_util/scoped_env_var.h
   - test/cpp/end2end/counted_service.h
   - test/cpp/end2end/test_service_impl.h
@@ -32996,6 +32999,7 @@ targets:
   - third_party/xds/xds/type/v3/range.proto
   - third_party/xds/xds/type/v3/typed_struct.proto
   - test/core/test_util/audit_logging_utils.cc
+  - test/core/test_util/fake_stats_plugin.cc
   - test/cpp/end2end/test_service_impl.cc
   - test/cpp/end2end/xds/xds_end2end_test_lib.cc
   - test/cpp/end2end/xds/xds_security_end2end_test.cc
@@ -33533,6 +33537,13 @@ external_proto_libraries:
   strip_prefix: googleapis-2193a2bfcecb92b92aad7a4d81baa428cafd7dfd
   urls:
   - https://github.com/googleapis/googleapis/archive/2193a2bfcecb92b92aad7a4d81baa428cafd7dfd.zip
+- destination: third_party/grpc-proto
+  hash: 5e9b520b22afbd53a662cc29017064be253c1dfa6df8958738594e7fec6ade33
+  proto_prefix: third_party/grpc-proto/
+  strip_path_prefix: ''
+  strip_prefix: grpc-proto-ec30f589e2519d595688b9a42f88a91bdd6b733f
+  urls:
+  - https://github.com/grpc/grpc-proto/archive/ec30f589e2519d595688b9a42f88a91bdd6b733f.tar.gz
 - destination: third_party/protoc-gen-validate
   hash: e4718352754df1393b8792b631338aa8562f390e8160783e365454bc11d96328
   proto_prefix: third_party/protoc-gen-validate/
