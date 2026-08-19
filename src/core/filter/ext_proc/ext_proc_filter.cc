@@ -17,6 +17,8 @@
 #include "src/core/filter/ext_proc/ext_proc_filter.h"
 
 #include <grpc/event_engine/event_engine.h>
+#include <grpc/grpc_security.h>
+#include <grpc/grpc_security_constants.h>
 #include <grpc/impl/channel_arg_names.h>
 
 #include <cstdint>
@@ -26,8 +28,10 @@
 
 #include "src/core/call/call_spine.h"
 #include "src/core/call/metadata.h"
+#include "src/core/call/security_context.h"
 #include "src/core/client_channel/client_channel_args.h"
 #include "src/core/filter/ext_proc/ext_proc_messages.h"
+#include "src/core/handshaker/endpoint_info/endpoint_info_handshaker.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/promise_based_filter.h"
 #include "src/core/lib/debug/trace_impl.h"
@@ -48,26 +52,29 @@
 #include "src/core/telemetry/metrics.h"
 #include "src/core/util/down_cast.h"
 #include "src/core/util/dual_ref_counted.h"
+#include "src/core/util/host_port.h"
 #include "src/core/util/ref_counted_ptr.h"
 #include "src/core/util/string.h"
 #include "src/core/util/time.h"
+#include "src/core/util/uri.h"
 #include "src/core/xds/grpc/streaming_call_promise_wrapper.h"
 #include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/xds_client/xds_transport.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 
 namespace grpc_core {
 
 //
-// ExtProcFilter::TelemetryDomain
+// ExtProcFilter::ClientTelemetryDomain
 //
 
-ExtProcFilter::TelemetryDomain::HistogramHandle<ExponentialHistogramShape>
-    ExtProcFilter::TelemetryDomain::kClientHeadersDuration =
-        ExtProcFilter::TelemetryDomain::RegisterHistogram<
+ExtProcFilter::ClientTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+    ExtProcFilter::ClientTelemetryDomain::kClientHeadersDuration =
+        ExtProcFilter::ClientTelemetryDomain::RegisterHistogram<
             ExponentialHistogramShape>(
             "grpc.client_ext_proc.client_headers_duration",
             "Time between when the ext_proc filter sees the client's headers "
@@ -75,9 +82,9 @@ ExtProcFilter::TelemetryDomain::HistogramHandle<ExponentialHistogramShape>
             "filter.",
             "s", 60, 20);
 
-ExtProcFilter::TelemetryDomain::HistogramHandle<ExponentialHistogramShape>
-    ExtProcFilter::TelemetryDomain::kClientHalfCloseDuration =
-        ExtProcFilter::TelemetryDomain::RegisterHistogram<
+ExtProcFilter::ClientTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+    ExtProcFilter::ClientTelemetryDomain::kClientHalfCloseDuration =
+        ExtProcFilter::ClientTelemetryDomain::RegisterHistogram<
             ExponentialHistogramShape>(
             "grpc.client_ext_proc.client_half_close_duration",
             "Time between when the ext_proc filter sees the client's "
@@ -85,9 +92,9 @@ ExtProcFilter::TelemetryDomain::HistogramHandle<ExponentialHistogramShape>
             "the next filter.",
             "s", 60, 20);
 
-ExtProcFilter::TelemetryDomain::HistogramHandle<ExponentialHistogramShape>
-    ExtProcFilter::TelemetryDomain::kServerHeadersDuration =
-        ExtProcFilter::TelemetryDomain::RegisterHistogram<
+ExtProcFilter::ClientTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+    ExtProcFilter::ClientTelemetryDomain::kServerHeadersDuration =
+        ExtProcFilter::ClientTelemetryDomain::RegisterHistogram<
             ExponentialHistogramShape>(
             "grpc.client_ext_proc.server_headers_duration",
             "Time between when the ext_proc filter sees the server's headers "
@@ -95,11 +102,55 @@ ExtProcFilter::TelemetryDomain::HistogramHandle<ExponentialHistogramShape>
             "filter.",
             "s", 60, 20);
 
-ExtProcFilter::TelemetryDomain::HistogramHandle<ExponentialHistogramShape>
-    ExtProcFilter::TelemetryDomain::kServerTrailersDuration =
-        ExtProcFilter::TelemetryDomain::RegisterHistogram<
+ExtProcFilter::ClientTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+    ExtProcFilter::ClientTelemetryDomain::kServerTrailersDuration =
+        ExtProcFilter::ClientTelemetryDomain::RegisterHistogram<
             ExponentialHistogramShape>(
             "grpc.client_ext_proc.server_trailers_duration",
+            "Time between when the ext_proc filter sees the server's "
+            "trailers and when it allows those trailers to continue on to "
+            "the next filter.",
+            "s", 60, 20);
+
+//
+// ExtProcFilter::ServerTelemetryDomain
+//
+
+ExtProcFilter::ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+    ExtProcFilter::ServerTelemetryDomain::kClientHeadersDuration =
+        ExtProcFilter::ServerTelemetryDomain::RegisterHistogram<
+            ExponentialHistogramShape>(
+            "grpc.server_ext_proc.client_headers_duration",
+            "Time between when the ext_proc filter sees the client's headers "
+            "and when it allows those headers to continue on to the next "
+            "filter.",
+            "s", 60, 20);
+
+ExtProcFilter::ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+    ExtProcFilter::ServerTelemetryDomain::kClientHalfCloseDuration =
+        ExtProcFilter::ServerTelemetryDomain::RegisterHistogram<
+            ExponentialHistogramShape>(
+            "grpc.server_ext_proc.client_half_close_duration",
+            "Time between when the ext_proc filter sees the client's "
+            "half-close and when it allows that half-close to continue on to "
+            "the next filter.",
+            "s", 60, 20);
+
+ExtProcFilter::ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+    ExtProcFilter::ServerTelemetryDomain::kServerHeadersDuration =
+        ExtProcFilter::ServerTelemetryDomain::RegisterHistogram<
+            ExponentialHistogramShape>(
+            "grpc.server_ext_proc.server_headers_duration",
+            "Time between when the ext_proc filter sees the server's headers "
+            "and when it allows those headers to continue on to the next "
+            "filter.",
+            "s", 60, 20);
+
+ExtProcFilter::ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+    ExtProcFilter::ServerTelemetryDomain::kServerTrailersDuration =
+        ExtProcFilter::ServerTelemetryDomain::RegisterHistogram<
+            ExponentialHistogramShape>(
+            "grpc.server_ext_proc.server_trailers_duration",
             "Time between when the ext_proc filter sees the server's "
             "trailers and when it allows those trailers to continue on to "
             "the next filter.",
@@ -567,6 +618,35 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
       ext_proc_send_waiters_.TakeWakeupSet().Wakeup();
       streaming_call.reset();
     }
+  }
+
+  // Extracts connection attributes (such as source address/port and TLS
+  // security properties) for server-side CEL attributes in A103.
+  std::optional<ExtProcConnectionAttributes> GetConnectionAttributes() const {
+    if (!ext_proc_filter_->is_server()) return std::nullopt;
+    ExtProcConnectionAttributes attributes;
+    attributes.source_address = std::string(ext_proc_filter_->source_address());
+    attributes.source_port = ext_proc_filter_->source_port();
+    auto* sec_ctx = MaybeGetContext<grpc_server_security_context>();
+    if (sec_ctx != nullptr && sec_ctx->auth_context != nullptr) {
+      auto get_auth_prop = [&](const char* prop_name) -> std::string {
+        grpc_auth_property_iterator it =
+            grpc_auth_context_find_properties_by_name(
+                sec_ctx->auth_context.get(), prop_name);
+        const grpc_auth_property* prop = grpc_auth_property_iterator_next(&it);
+        if (prop != nullptr) {
+          return std::string(prop->value, prop->value_length);
+        }
+        return "";
+      };
+      attributes.requested_server_name =
+          get_auth_prop(GRPC_SSL_SERVER_NAME_PROPERTY_NAME);
+      attributes.tls_version =
+          get_auth_prop(GRPC_SSL_TLS_VERSION_PROPERTY_NAME);
+      attributes.sha256_peer_certificate_digest =
+          get_auth_prop(GRPC_SSL_PEER_SHA256_PROPERTY_NAME);
+    }
+    return attributes;
   }
 
   void Orphaned() override { CloseSideStream(); }
@@ -1210,7 +1290,8 @@ auto ExtProcFilter::ExtProcCall::HandleInitialMetadataFromClient(
           self->request_attributes_ = CreateExtProcAttributesProtoStruct(
               self->request_attributes_arena_.ptr(),
               self->config().request_attributes, **md,
-              self->ext_proc_filter_->default_authority_.as_string_view());
+              self->ext_proc_filter_->default_authority_.as_string_view(),
+              self->GetConnectionAttributes());
         }
         // Directly start downstream child call with unmodified client metadata.
         self->StartChildCall(std::move(*md));
@@ -1227,7 +1308,8 @@ auto ExtProcFilter::ExtProcCall::HandleInitialMetadataFromClient(
         upb::Arena arena;
         auto* header_attributes = CreateExtProcAttributesProtoStruct(
             arena.ptr(), self->config().request_attributes, **md,
-            self->ext_proc_filter_->default_authority_.as_string_view());
+            self->ext_proc_filter_->default_authority_.as_string_view(),
+            self->GetConnectionAttributes());
         auto payload = CreateExtProcClientHeadersRequest(
             arena.ptr(), (*md).get(), self->config().forwarding_allowed_headers,
             self->config().forwarding_disallowed_headers, header_attributes,
@@ -1592,10 +1674,16 @@ auto ExtProcFilter::ExtProcCall::HandleTrailingMetadataFromServer(
                                     << self->DebugTag()
                                     << "Sending server trailing metadata "
                                        "(observability mode)";
-                                self->handler_.SpawnPushServerTrailingMetadata(
-                                    std::move(*md));
-                                return self->SendMessageToSideStream(
-                                    std::move(*payload_ptr));
+                                return Seq(
+                                    self->SendMessageToSideStream(
+                                        std::move(*payload_ptr)),
+                                    [self,
+                                     md](StatusFlag) mutable -> StatusFlag {
+                                      self->handler_
+                                          .SpawnPushServerTrailingMetadata(
+                                              std::move(*md));
+                                      return Success{};
+                                    });
                               },
                               [self, payload_ptr, md]() mutable {
                                 return If(
@@ -1919,59 +2007,99 @@ absl::StatusOr<RefCountedPtr<ExtProcFilter>> ExtProcFilter::Create(
 ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
                              RefCountedPtr<const Config> config)
     : V3InterceptorToV2Bridge<ExtProcFilter>(args),
+      is_server_(args.GetBool(GRPC_ARG_IS_SERVER_FILTER_STACK).value_or(false)),
       config_(std::move(config)),
       event_engine_(
           args.GetObjectRef<grpc_event_engine::experimental::EventEngine>()),
       default_authority_(Slice::FromCopiedString(
-          args.GetString(GRPC_ARG_DEFAULT_AUTHORITY)
-              .value_or(
-                  CoreConfiguration::Get()
-                      .resolver_registry()
-                      .GetDefaultAuthority(
-                          args.GetString(GRPC_ARG_SERVER_URI).value_or(""))))),
-      telemetry_storage_([&]() -> InstrumentStorageRefPtr<TelemetryDomain> {
+          args.GetString(is_server_ ? GRPC_ARG_SERVER_URI
+                                    : GRPC_ARG_DEFAULT_AUTHORITY)
+              .value_or(""))),
+      telemetry_storage_([&]() -> TelemetryStorage {
         auto stats_plugin_group =
             args.GetObjectRef<GlobalStatsPluginRegistry::StatsPluginGroup>();
-        if (stats_plugin_group == nullptr) return nullptr;
+        if (stats_plugin_group == nullptr) return std::monostate{};
         auto scope = stats_plugin_group->GetCollectionScope();
-        if (scope == nullptr) return nullptr;
-        return TelemetryDomain::GetStorage(
+        if (scope == nullptr) return std::monostate{};
+        if (is_server_) {
+          return ServerTelemetryDomain::GetStorage(std::move(scope));
+        }
+        return ClientTelemetryDomain::GetStorage(
             std::move(scope), args.GetString(GRPC_ARG_SERVER_URI).value_or(""));
-      }()) {}
+      }()) {
+  if (is_server_) {
+    std::optional<absl::string_view> peer_uri =
+        args.GetString(GRPC_ARG_ENDPOINT_PEER_ADDRESS);
+    if (peer_uri.has_value()) {
+      auto uri = URI::Parse(*peer_uri);
+      if (uri.ok()) {
+        absl::string_view host_view;
+        absl::string_view port_view;
+        if (SplitHostPort(uri->path(), &host_view, &port_view)) {
+          source_address_ = std::string(host_view);
+          int port = 0;
+          if (absl::SimpleAtoi(port_view, &port)) {
+            source_port_ = port;
+          }
+        } else {
+          source_address_ = uri->path();
+        }
+      }
+    }
+  }
+}
 
 ExtProcFilter::~ExtProcFilter() {
   GRPC_TRACE_LOG(ext_proc_filter, INFO)
       << "ExtProcFilter " << this << " destroyed";
 }
 
+void ExtProcFilter::RecordDuration(
+    ClientTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+        client_metric,
+    ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+        server_metric,
+    double duration_seconds) const {
+  Match(
+      telemetry_storage_, [](const std::monostate&) {},
+      [duration_seconds,
+       client_metric](const InstrumentStorageRefPtr<ClientTelemetryDomain>& s) {
+        if (s != nullptr) {
+          s->Increment(client_metric, static_cast<int64_t>(duration_seconds));
+        }
+      },
+      [duration_seconds,
+       server_metric](const InstrumentStorageRefPtr<ServerTelemetryDomain>& s) {
+        if (s != nullptr) {
+          s->Increment(server_metric, static_cast<int64_t>(duration_seconds));
+        }
+      });
+}
+
 void ExtProcFilter::RecordClientHeadersDuration(double duration_seconds) const {
-  if (telemetry_storage_ != nullptr) {
-    telemetry_storage_->Increment(TelemetryDomain::kClientHeadersDuration,
-                                  static_cast<int64_t>(duration_seconds));
-  }
+  RecordDuration(ClientTelemetryDomain::kClientHeadersDuration,
+                 ServerTelemetryDomain::kClientHeadersDuration,
+                 duration_seconds);
 }
 
 void ExtProcFilter::RecordClientHalfCloseDuration(
     double duration_seconds) const {
-  if (telemetry_storage_ != nullptr) {
-    telemetry_storage_->Increment(TelemetryDomain::kClientHalfCloseDuration,
-                                  static_cast<int64_t>(duration_seconds));
-  }
+  RecordDuration(ClientTelemetryDomain::kClientHalfCloseDuration,
+                 ServerTelemetryDomain::kClientHalfCloseDuration,
+                 duration_seconds);
 }
 
 void ExtProcFilter::RecordServerHeadersDuration(double duration_seconds) const {
-  if (telemetry_storage_ != nullptr) {
-    telemetry_storage_->Increment(TelemetryDomain::kServerHeadersDuration,
-                                  static_cast<int64_t>(duration_seconds));
-  }
+  RecordDuration(ClientTelemetryDomain::kServerHeadersDuration,
+                 ServerTelemetryDomain::kServerHeadersDuration,
+                 duration_seconds);
 }
 
 void ExtProcFilter::RecordServerTrailersDuration(
     double duration_seconds) const {
-  if (telemetry_storage_ != nullptr) {
-    telemetry_storage_->Increment(TelemetryDomain::kServerTrailersDuration,
-                                  static_cast<int64_t>(duration_seconds));
-  }
+  RecordDuration(ClientTelemetryDomain::kServerTrailersDuration,
+                 ServerTelemetryDomain::kServerTrailersDuration,
+                 duration_seconds);
 }
 
 void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {

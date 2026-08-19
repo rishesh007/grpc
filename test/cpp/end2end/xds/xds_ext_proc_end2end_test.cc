@@ -36,6 +36,7 @@
 #include "envoy/service/ext_proc/v3/external_processor.grpc.pb.h"
 #include "src/core/config/config_vars.h"
 #include "src/core/lib/experiments/config.h"
+#include "src/core/lib/experiments/experiments.h"
 #include "src/core/util/sync.h"
 #include "test/core/test_util/fake_stats_plugin.h"
 #include "test/core/test_util/scoped_env_var.h"
@@ -772,6 +773,26 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
       return initial_metadata_state_ == MetadataState::kSuccess;
     }
 
+    std::multimap<std::string, std::string> GetServerInitialMetadata() {
+      std::multimap<std::string, std::string> output;
+      for (const auto& [key, value] : context_.GetServerInitialMetadata()) {
+        std::string header(key.data(), key.size());
+        absl::AsciiStrToLower(&header);
+        output.emplace(header, std::string(value.data(), value.size()));
+      }
+      return output;
+    }
+
+    std::multimap<std::string, std::string> GetServerTrailingMetadata() {
+      std::multimap<std::string, std::string> output;
+      for (const auto& [key, value] : context_.GetServerTrailingMetadata()) {
+        std::string header(key.data(), key.size());
+        absl::AsciiStrToLower(&header);
+        output.emplace(header, std::string(value.data(), value.size()));
+      }
+      return output;
+    }
+
     void OnReadInitialMetadataDone(bool ok) override {
       grpc_core::MutexLock lock(&mu_);
       initial_metadata_state_ =
@@ -842,9 +863,11 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
   class CustomBackendServerThread : public ServerThread {
    public:
     CustomBackendServerThread(
-        XdsEnd2endTest* test_obj,
+        XdsExtProcEnd2endTest* test_obj,
         std::shared_ptr<CustomBidiStreamServiceImpl> service)
-        : ServerThread(test_obj, /*use_xds_enabled_server=*/false,
+        : ServerThread(test_obj,
+                       /*use_xds_enabled_server=*/
+                       test_obj->GetParam().filter_on_server(),
                        /*credentials=*/nullptr),
           service_(std::move(service)) {}
 
@@ -872,6 +895,14 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
   }
 
   void SetUp() override {
+    if (GetParam().filter_on_server() &&
+        !grpc_core::IsXdsServerFilterChainPerRouteEnabled()) {
+      GTEST_SKIP()
+          << "test requires xds_server_filter_chain_per_route experiment";
+    }
+    env_var_.emplace(GetParam().filter_on_server()
+                         ? "GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_SERVER"
+                         : "GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_CLIENT");
     InitClient(MakeBootstrapBuilder().SetTrustedXdsServer(),
                /*lb_expected_authority=*/"",
                /*xds_resource_does_not_exist_timeout_ms=*/0,
@@ -887,28 +918,84 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     XdsEnd2endTest::TearDown();
   }
 
-  Listener BuildListenerWithExtProcFilter(const ExternalProcessor& ext_proc) {
-    Listener listener = default_listener_;
-    HttpConnectionManager hcm = ClientHcmAccessor().Unpack(listener);
+  void CreateAndStartBackends(
+      size_t num_backends = 1,
+      std::shared_ptr<ServerCredentials> credentials = nullptr) {
+    XdsEnd2endTest::CreateAndStartBackends(
+        num_backends, /*xds_enabled=*/GetParam().filter_on_server(),
+        std::move(credentials));
+    if (GetParam().filter_on_server()) {
+      for (size_t i = 0; i < num_backends; ++i) {
+        EXPECT_THAT(backends_[i]->GetNextStatus(),
+                    ::testing::Optional(absl::OkStatus()));
+      }
+    }
+  }
+
+  Listener BuildListenerWithExtProcFilter(
+      const ExternalProcessor& ext_proc) const {
+    Listener listener;
+    std::unique_ptr<HcmAccessor> hcm_accessor;
+    if (GetParam().filter_on_server()) {
+      listener = default_server_listener_;
+      hcm_accessor = std::make_unique<ServerHcmAccessor>();
+    } else {
+      listener = default_listener_;
+      hcm_accessor = std::make_unique<ClientHcmAccessor>();
+    }
+    HttpConnectionManager hcm = hcm_accessor->Unpack(listener);
     HttpFilter* filter0 = hcm.mutable_http_filters(0);
     *hcm.add_http_filters() = *filter0;
     filter0->set_name(kFilterInstanceName);
     filter0->mutable_typed_config()->PackFrom(ext_proc);
-    ClientHcmAccessor().Pack(hcm, &listener);
+    hcm_accessor->Pack(hcm, &listener);
     return listener;
   }
 
-  grpc_core::testing::ScopedExperimentalEnvVar env_var_{
-      "GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_CLIENT"};
+  void SetListenerAndRouteConfiguration(
+      BalancerServerThread* balancer, const Listener& listener,
+      RouteConfiguration route_config = RouteConfiguration(),
+      int backend_port = 0) {
+    if (GetParam().filter_on_server()) {
+      RouteConfiguration server_route_config = default_server_route_config_;
+      if (!route_config.virtual_hosts().empty() &&
+          !route_config.virtual_hosts(0).routes().empty()) {
+        const auto& per_filter_config =
+            route_config.virtual_hosts(0).routes(0).typed_per_filter_config();
+        *server_route_config.mutable_virtual_hosts(0)
+             ->mutable_routes(0)
+             ->mutable_typed_per_filter_config() = per_filter_config;
+      }
+      if (backend_port == 0 && !backends_.empty()) {
+        backend_port = backends_[0]->port();
+      }
+      if (backend_port != 0) {
+        SetServerListenerNameAndRouteConfiguration(
+            balancer, listener, backend_port, server_route_config);
+      }
+    } else {
+      if (route_config.virtual_hosts().empty()) {
+        route_config = default_route_config_;
+      }
+      XdsEnd2endTest::SetListenerAndRouteConfiguration(balancer, listener,
+                                                       route_config);
+    }
+  }
+
+  std::optional<grpc_core::testing::ScopedExperimentalEnvVar> env_var_;
   std::shared_ptr<FakeExtProcService> ext_proc_service_;
   std::unique_ptr<ExtProcServerThread> ext_proc_server_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
     XdsTest, XdsExtProcEnd2endTest,
-    ::testing::Values(XdsTestType(),
-                      XdsTestType().set_filter_config_setup(
-                          XdsTestType::kHttpFilterConfigInRoute)),
+    ::testing::Values(
+        XdsTestType(),
+        XdsTestType().set_filter_config_setup(
+            XdsTestType::kHttpFilterConfigInRoute),
+        XdsTestType().set_filter_on_server(),
+        XdsTestType().set_filter_on_server().set_filter_config_setup(
+            XdsTestType::kHttpFilterConfigInRoute)),
     &XdsTestType::Name);
 
 //
@@ -1055,6 +1142,7 @@ TEST_P(XdsExtProcEnd2endTest, ProcessingModeAllEnabledSuccess) {
 TEST_P(XdsExtProcEnd2endTest,
        ProcessingModeAllEnabledWithObservabilityModeSuccess) {
   CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
   auto ext_proc_config =
       ExtProcFilterConfigBuilder()
           .SetTargetUri(ext_proc_server_->target())
@@ -1074,11 +1162,17 @@ TEST_P(XdsExtProcEnd2endTest,
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
+  AsyncBidiStream stream;
   RpcOptions rpc_options;
   rpc_options.set_echo_metadata_initially(true);
   rpc_options.set_echo_metadata(true);
-  AsyncRpc rpc;
-  rpc.StartRpc(stub_.get(), rpc_options);
+  stream.Start(stub_.get(), rpc_options);
+  EchoRequest request;
+  request.set_message(kRequestMessage);
+  stream.StartWrite(request);
+  EXPECT_TRUE(stream.WaitForWriteDone());
+  stream.StartWritesDone();
+  stream.StartReadMessage();
   auto ext_proc_stream = ext_proc_service_->GetStream();
   ASSERT_NE(ext_proc_stream, nullptr);
   bool saw_request_headers = false;
@@ -1138,10 +1232,12 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(saw_response_headers);
   EXPECT_TRUE(saw_response_body);
   EXPECT_TRUE(saw_response_trailers);
-  Status status = rpc.GetStatus();
+  EchoResponse response;
+  EXPECT_TRUE(stream.WaitForReadDone(&response));
+  Status status = stream.Finish();
   EXPECT_TRUE(status.ok()) << "RPC failed: " << status.error_message();
-  auto server_initial_metadata = rpc.GetServerInitialMetadata();
-  auto server_trailing_metadata = rpc.GetServerTrailingMetadata();
+  auto server_initial_metadata = stream.GetServerInitialMetadata();
+  auto server_trailing_metadata = stream.GetServerTrailingMetadata();
   // In observability mode, mutations should NOT be applied.
   auto it = server_initial_metadata.find(kRequestHeadersMutatedHeaderKey);
   EXPECT_EQ(it, server_initial_metadata.end());
@@ -1149,12 +1245,13 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_EQ(it, server_initial_metadata.end());
   it = server_trailing_metadata.find(kResponseTrailersMutatedHeaderKey);
   EXPECT_EQ(it, server_trailing_metadata.end());
-  EXPECT_EQ(rpc.response().message(), kRequestMessage);
+  EXPECT_EQ(response.message(), kRequestMessage);
   EXPECT_EQ(ext_proc_service_->stream_count(), 1);
 }
 
 TEST_P(XdsExtProcEnd2endTest, TrailersOnlyProcessingModeAllEnabled) {
   CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
   auto ext_proc_config = ExtProcFilterConfigBuilder()
                              .SetTargetUri(ext_proc_server_->target())
                              .SetInsecureChannelCredentials()
@@ -1211,6 +1308,7 @@ TEST_P(XdsExtProcEnd2endTest, TrailersOnlyProcessingModeAllEnabled) {
 TEST_P(XdsExtProcEnd2endTest,
        TrailersOnlyProcessingModeAllEnabledWithObservabilityMode) {
   CreateAndStartBackends(1);
+  ResetStubWithUniqueArg();
   auto ext_proc_config = ExtProcFilterConfigBuilder()
                              .SetTargetUri(ext_proc_server_->target())
                              .SetInsecureChannelCredentials()
@@ -1766,6 +1864,8 @@ TEST_P(XdsExtProcEnd2endTest,
   EXPECT_TRUE(next_req->has_request_body());
   ext_proc_stream->SendStatus(absl::ResourceExhaustedError(
       "Call closed by ext_proc server on request body"));
+  EchoResponse response;
+  stream.ReadMessage(&response);
   Status status = stream.Finish();
   EXPECT_THAT(
       status,
@@ -3060,10 +3160,15 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseBody) {
               GrpcStatusIs(StatusCode::PERMISSION_DENIED,
                            ::testing::HasSubstr(
                                "Access Denied by ExtProc (Response Body)")));
-  auto server_trailing_metadata = rpc.GetServerTrailingMetadata();
-  auto it = server_trailing_metadata.find(kImmediateResponseHeaderKey);
-  EXPECT_NE(it, server_trailing_metadata.end());
-  EXPECT_EQ(it->second, kHeaderMutatedValue);
+  // On the gRPC client side, an ImmediateResponse will set the status and
+  // trailing metadata. On the gRPC server side, it will cause the server to
+  // immediately send trailers with the specified status.
+  if (!GetParam().filter_on_server()) {
+    auto server_trailing_metadata = rpc.GetServerTrailingMetadata();
+    auto it = server_trailing_metadata.find(kImmediateResponseHeaderKey);
+    EXPECT_NE(it, server_trailing_metadata.end());
+    EXPECT_EQ(it->second, kHeaderMutatedValue);
+  }
   EXPECT_EQ(ext_proc_service_->stream_count(), 1);
 }
 
@@ -3115,10 +3220,15 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseHeaders) {
               GrpcStatusIs(StatusCode::PERMISSION_DENIED,
                            ::testing::HasSubstr(
                                "Access Denied by ExtProc (Response Headers)")));
-  auto server_trailing_metadata = rpc.GetServerTrailingMetadata();
-  auto it = server_trailing_metadata.find(kImmediateResponseHeaderKey);
-  EXPECT_NE(it, server_trailing_metadata.end());
-  EXPECT_EQ(it->second, kHeaderMutatedValue);
+  // On the gRPC client side, an ImmediateResponse will set the status and
+  // trailing metadata. On the gRPC server side, it will cause the server to
+  // immediately send trailers with the specified status.
+  if (!GetParam().filter_on_server()) {
+    auto server_trailing_metadata = rpc.GetServerTrailingMetadata();
+    auto it = server_trailing_metadata.find(kImmediateResponseHeaderKey);
+    EXPECT_NE(it, server_trailing_metadata.end());
+    EXPECT_EQ(it->second, kHeaderMutatedValue);
+  }
   EXPECT_EQ(ext_proc_service_->stream_count(), 1);
 }
 
@@ -3175,10 +3285,15 @@ TEST_P(XdsExtProcEnd2endTest, ImmediateResponseForResponseTrailers) {
                           StatusCode::PERMISSION_DENIED,
                           ::testing::HasSubstr(
                               "Access Denied by ExtProc (Response Trailers)")));
-  auto server_trailing_metadata = rpc.GetServerTrailingMetadata();
-  auto it = server_trailing_metadata.find(kImmediateResponseHeaderKey);
-  EXPECT_NE(it, server_trailing_metadata.end());
-  EXPECT_EQ(it->second, kHeaderMutatedValue);
+  // On the gRPC client side, an ImmediateResponse will set the status and
+  // trailing metadata. On the gRPC server side, it will cause the server to
+  // immediately send trailers with the specified status.
+  if (!GetParam().filter_on_server()) {
+    auto server_trailing_metadata = rpc.GetServerTrailingMetadata();
+    auto it = server_trailing_metadata.find(kImmediateResponseHeaderKey);
+    EXPECT_NE(it, server_trailing_metadata.end());
+    EXPECT_EQ(it->second, kHeaderMutatedValue);
+  }
   EXPECT_EQ(ext_proc_service_->stream_count(), 1);
 }
 
@@ -3982,7 +4097,7 @@ TEST_P(XdsExtProcEnd2endTest,
   ext_proc_stream->SendResponseAndStatus(
       MakeRequestBodyMutationResponse(req2->request_body().body()),
       absl::OkStatus());
-  stream.StartWritesDone();
+  (void)stream.WaitForWriteDone();
   Status status = stream.Finish();
   EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
                                    ::testing::HasSubstr(
@@ -4025,7 +4140,7 @@ TEST_P(XdsExtProcEnd2endTest,
   ASSERT_TRUE(req2.has_value());
   EXPECT_TRUE(req2->has_request_body());
   ext_proc_stream->SendStatus(absl::OkStatus());
-  stream.StartWritesDone();
+  (void)stream.WaitForWriteDone();
   Status status = stream.Finish();
   EXPECT_THAT(status, GrpcStatusIs(StatusCode::INTERNAL,
                                    ::testing::HasSubstr(
@@ -4150,6 +4265,7 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeFalse) {
   EXPECT_TRUE(req2->has_response_headers());
   ext_proc_stream->SendResponseAndStatus(
       MakeResponseHeadersMutationResponse({}), absl::OkStatus());
+  (void)stream.WaitForWriteDone();
   EchoResponse response;
   EXPECT_FALSE(stream.ReadMessage(&response));
   Status status = stream.Finish();
@@ -4163,7 +4279,6 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeTrue) {
   auto custom_backend_service = std::make_shared<CustomBidiStreamServiceImpl>();
   auto custom_backend_server =
       std::make_unique<CustomBackendServerThread>(this, custom_backend_service);
-  custom_backend_server->Start();
   ResetStubWithUniqueArg();
   auto ext_proc_config = ExtProcFilterConfigBuilder()
                              .SetTargetUri(ext_proc_server_->target())
@@ -4176,7 +4291,13 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseBodyFailureModeTrue) {
                              .Build();
   Listener listener = BuildListenerWithExtProcFilter(ext_proc_config);
   RouteConfiguration route_config = default_route_config_;
-  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config);
+  SetListenerAndRouteConfiguration(balancer_.get(), listener, route_config,
+                                   custom_backend_server->port());
+  custom_backend_server->Start();
+  if (GetParam().filter_on_server()) {
+    EXPECT_THAT(custom_backend_server->GetNextStatus(),
+                ::testing::Optional(absl::OkStatus()));
+  }
   balancer_->ads_service()->SetCdsResource(default_cluster_);
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", {EdsResourceArgs::Endpoint(custom_backend_server->port())}},
@@ -4257,6 +4378,7 @@ TEST_P(XdsExtProcEnd2endTest,
   stream.StartReadMessage();
   request.set_message(kMessage2);
   stream.StartWrite(request);
+  (void)stream.WaitForWriteDone();
   auto req3 = ext_proc_stream->GetNextRequest();
   ASSERT_TRUE(req3.has_value());
   EXPECT_TRUE(req3->has_response_body());
@@ -4313,6 +4435,7 @@ TEST_P(XdsExtProcEnd2endTest,
   stream.StartReadMessage();
   request.set_message(kMessage2);
   stream.StartWrite(request);
+  (void)stream.WaitForWriteDone();
   auto req3 = ext_proc_stream->GetNextRequest();
   ASSERT_TRUE(req3.has_value());
   EXPECT_TRUE(req3->has_response_body());
@@ -4775,9 +4898,17 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseTrailersObservability) {
   balancer_->ads_service()->SetEdsResource(BuildEdsResource(EdsResourceArgs({
       {"locality0", CreateEndpointsForBackends(0, 1)},
   })));
+  AsyncBidiStream stream;
   RpcOptions rpc_options;
-  AsyncRpc rpc;
-  rpc.StartRpc(stub_.get(), rpc_options);
+  stream.Start(stub_.get(), rpc_options);
+  EchoRequest request;
+  request.set_message(kMessage1);
+  stream.StartWrite(request);
+  EXPECT_TRUE(stream.WaitForWriteDone());
+  EchoResponse response;
+  EXPECT_TRUE(stream.ReadMessage(&response));
+  EXPECT_EQ(response.message(), kMessage1);
+  stream.StartWritesDone();
   auto ext_proc_stream = ext_proc_service_->GetStream();
   ASSERT_NE(ext_proc_stream, nullptr);
   auto req = ext_proc_stream->GetNextRequest();
@@ -4785,9 +4916,8 @@ TEST_P(XdsExtProcEnd2endTest, StreamCleanCloseResponseTrailersObservability) {
   EXPECT_TRUE(req->has_response_trailers());
   ext_proc_stream->SendResponseAndStatus(
       MakeResponseTrailersMutationResponse({}), absl::OkStatus());
-  Status status = rpc.GetStatus();
+  Status status = stream.Finish();
   EXPECT_TRUE(status.ok()) << status.error_message();
-  EXPECT_EQ(rpc.response().message(), kRequestMessage);
   EXPECT_EQ(ext_proc_service_->stream_count(), 1);
 }
 
@@ -4827,20 +4957,25 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcClientHeadersDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_TRUE(status.ok()) << status.error_message();
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  auto get_histogram = [&](absl::string_view metric_name) {
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.client_headers_duration"
+          : "grpc.client_ext_proc.client_headers_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  auto get_histogram = [&](absl::string_view name) {
     auto deadline =
         absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
     while (absl::Now() < deadline) {
-      auto val =
-          stats_plugin->GetHistogramValueByName(metric_name, {expected_target});
+      auto val = stats_plugin->GetHistogramValueByName(name, labels);
       if (val.has_value()) return val;
       absl::SleepFor(absl::Milliseconds(20));
     }
-    return stats_plugin->GetHistogramValueByName(metric_name,
-                                                 {expected_target});
+    return stats_plugin->GetHistogramValueByName(name, labels);
   };
-  EXPECT_TRUE(get_histogram("grpc.client_ext_proc.client_headers_duration")
-                  .has_value());
+  EXPECT_TRUE(get_histogram(metric_name).has_value());
   EXPECT_EQ(ext_proc_service_->stream_count(), 1);
 }
 
@@ -4897,20 +5032,25 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcClientHalfCloseDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_TRUE(status.ok()) << status.error_message();
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  auto get_histogram = [&](absl::string_view metric_name) {
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.client_half_close_duration"
+          : "grpc.client_ext_proc.client_half_close_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  auto get_histogram = [&](absl::string_view name) {
     auto deadline =
         absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
     while (absl::Now() < deadline) {
-      auto val =
-          stats_plugin->GetHistogramValueByName(metric_name, {expected_target});
+      auto val = stats_plugin->GetHistogramValueByName(name, labels);
       if (val.has_value()) return val;
       absl::SleepFor(absl::Milliseconds(20));
     }
-    return stats_plugin->GetHistogramValueByName(metric_name,
-                                                 {expected_target});
+    return stats_plugin->GetHistogramValueByName(name, labels);
   };
-  EXPECT_TRUE(get_histogram("grpc.client_ext_proc.client_half_close_duration")
-                  .has_value());
+  EXPECT_TRUE(get_histogram(metric_name).has_value());
   EXPECT_EQ(ext_proc_service_->stream_count(), 1);
 }
 
@@ -4946,20 +5086,25 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcServerHeadersDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_TRUE(status.ok()) << status.error_message();
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  auto get_histogram = [&](absl::string_view metric_name) {
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.server_headers_duration"
+          : "grpc.client_ext_proc.server_headers_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  auto get_histogram = [&](absl::string_view name) {
     auto deadline =
         absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
     while (absl::Now() < deadline) {
-      auto val =
-          stats_plugin->GetHistogramValueByName(metric_name, {expected_target});
+      auto val = stats_plugin->GetHistogramValueByName(name, labels);
       if (val.has_value()) return val;
       absl::SleepFor(absl::Milliseconds(20));
     }
-    return stats_plugin->GetHistogramValueByName(metric_name,
-                                                 {expected_target});
+    return stats_plugin->GetHistogramValueByName(name, labels);
   };
-  EXPECT_TRUE(get_histogram("grpc.client_ext_proc.server_headers_duration")
-                  .has_value());
+  EXPECT_TRUE(get_histogram(metric_name).has_value());
   EXPECT_EQ(ext_proc_service_->stream_count(), 1);
 }
 
@@ -4995,20 +5140,25 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcServerTrailersDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_TRUE(status.ok()) << status.error_message();
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  auto get_histogram = [&](absl::string_view metric_name) {
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.server_trailers_duration"
+          : "grpc.client_ext_proc.server_trailers_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  auto get_histogram = [&](absl::string_view name) {
     auto deadline =
         absl::Now() + absl::Seconds(10) * grpc_test_slowdown_factor();
     while (absl::Now() < deadline) {
-      auto val =
-          stats_plugin->GetHistogramValueByName(metric_name, {expected_target});
+      auto val = stats_plugin->GetHistogramValueByName(name, labels);
       if (val.has_value()) return val;
       absl::SleepFor(absl::Milliseconds(20));
     }
-    return stats_plugin->GetHistogramValueByName(metric_name,
-                                                 {expected_target});
+    return stats_plugin->GetHistogramValueByName(name, labels);
   };
-  EXPECT_TRUE(get_histogram("grpc.client_ext_proc.server_trailers_duration")
-                  .has_value());
+  EXPECT_TRUE(get_histogram(metric_name).has_value());
   EXPECT_EQ(ext_proc_service_->stream_count(), 1);
 }
 
@@ -5026,6 +5176,7 @@ int main(int argc, char** argv) {
   grpc_core::ConfigVars::SetOverrides(overrides);
   grpc_core::ForceEnableExperiment("v2_non_owning_waker_implementation", true);
   grpc_core::ForceEnableExperiment("recv_message_filter_bypass_fix", true);
+  grpc_core::ForceEnableExperiment("xds_server_filter_chain_per_route", true);
   grpc_init();
   const auto result = RUN_ALL_TESTS();
   grpc_shutdown();
