@@ -17830,83 +17830,6 @@ add_executable(ext_proc_message_test
   ${_gRPC_PROTO_GENS_DIR}/xds/core/v3/resource_name.grpc.pb.cc
   ${_gRPC_PROTO_GENS_DIR}/xds/core/v3/resource_name.pb.h
   ${_gRPC_PROTO_GENS_DIR}/xds/core/v3/resource_name.grpc.pb.h
-  src/core/ext/upb-gen/envoy/annotations/deprecation.upb_minitable.c
-  src/core/ext/upb-gen/envoy/annotations/resource.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/common/mutation_rules/v3/mutation_rules.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/address.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/backoff.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/base.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/cel.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/config_source.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/event_service_config.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/extension.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/grpc_method_list.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/grpc_service.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/health_check.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/http_service.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/http_uri.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/protocol.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/proxy_protocol.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/resolver.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/socket_cmsg_headers.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/socket_option.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/substitution_format_string.upb_minitable.c
-  src/core/ext/upb-gen/envoy/config/core/v3/udp_socket_config.upb_minitable.c
-  src/core/ext/upb-gen/envoy/extensions/filters/http/ext_proc/v3/ext_proc.upb_minitable.c
-  src/core/ext/upb-gen/envoy/extensions/filters/http/ext_proc/v3/processing_mode.upb_minitable.c
-  src/core/ext/upb-gen/envoy/service/ext_proc/v3/external_processor.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/address.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/filter_state.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/http_inputs.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/metadata.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/node.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/number.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/path.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/regex.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/status_code_input.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/string.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/struct.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/matcher/v3/value.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/v3/hash_policy.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/v3/http.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/v3/http_status.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/v3/percent.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/v3/range.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/v3/scope.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb_minitable.c
-  src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb_minitable.c
-  src/core/ext/upb-gen/google/api/annotations.upb_minitable.c
-  src/core/ext/upb-gen/google/api/http.upb_minitable.c
-  src/core/ext/upb-gen/google/api/httpbody.upb_minitable.c
-  src/core/ext/upb-gen/google/protobuf/any.upb_minitable.c
-  src/core/ext/upb-gen/google/protobuf/descriptor.upb_minitable.c
-  src/core/ext/upb-gen/google/protobuf/duration.upb_minitable.c
-  src/core/ext/upb-gen/google/protobuf/empty.upb_minitable.c
-  src/core/ext/upb-gen/google/protobuf/struct.upb_minitable.c
-  src/core/ext/upb-gen/google/protobuf/timestamp.upb_minitable.c
-  src/core/ext/upb-gen/google/protobuf/wrappers.upb_minitable.c
-  src/core/ext/upb-gen/google/rpc/status.upb_minitable.c
-  src/core/ext/upb-gen/udpa/annotations/migrate.upb_minitable.c
-  src/core/ext/upb-gen/udpa/annotations/security.upb_minitable.c
-  src/core/ext/upb-gen/udpa/annotations/sensitive.upb_minitable.c
-  src/core/ext/upb-gen/udpa/annotations/status.upb_minitable.c
-  src/core/ext/upb-gen/udpa/annotations/versioning.upb_minitable.c
-  src/core/ext/upb-gen/validate/validate.upb_minitable.c
-  src/core/ext/upb-gen/xds/annotations/v3/migrate.upb_minitable.c
-  src/core/ext/upb-gen/xds/annotations/v3/security.upb_minitable.c
-  src/core/ext/upb-gen/xds/annotations/v3/sensitive.upb_minitable.c
-  src/core/ext/upb-gen/xds/annotations/v3/status.upb_minitable.c
-  src/core/ext/upb-gen/xds/annotations/v3/versioning.upb_minitable.c
-  src/core/ext/upb-gen/xds/core/v3/authority.upb_minitable.c
-  src/core/ext/upb-gen/xds/core/v3/cidr.upb_minitable.c
-  src/core/ext/upb-gen/xds/core/v3/collection_entry.upb_minitable.c
-  src/core/ext/upb-gen/xds/core/v3/context_params.upb_minitable.c
-  src/core/ext/upb-gen/xds/core/v3/extension.upb_minitable.c
-  src/core/ext/upb-gen/xds/core/v3/resource.upb_minitable.c
-  src/core/ext/upb-gen/xds/core/v3/resource_locator.upb_minitable.c
-  src/core/ext/upb-gen/xds/core/v3/resource_name.upb_minitable.c
   test/core/filters/ext_proc_message_test.cc
 )
 if(WIN32 AND MSVC)
@@ -45852,6 +45775,14 @@ if(_gRPC_PLATFORM_LINUX OR _gRPC_PLATFORM_MAC OR _gRPC_PLATFORM_POSIX)
     ${_gRPC_PROTO_GENS_DIR}/envoy/config/listener/v3/udp_listener_config.grpc.pb.cc
     ${_gRPC_PROTO_GENS_DIR}/envoy/config/listener/v3/udp_listener_config.pb.h
     ${_gRPC_PROTO_GENS_DIR}/envoy/config/listener/v3/udp_listener_config.grpc.pb.h
+    ${_gRPC_PROTO_GENS_DIR}/envoy/config/metrics/v3/metrics_service.pb.cc
+    ${_gRPC_PROTO_GENS_DIR}/envoy/config/metrics/v3/metrics_service.grpc.pb.cc
+    ${_gRPC_PROTO_GENS_DIR}/envoy/config/metrics/v3/metrics_service.pb.h
+    ${_gRPC_PROTO_GENS_DIR}/envoy/config/metrics/v3/metrics_service.grpc.pb.h
+    ${_gRPC_PROTO_GENS_DIR}/envoy/config/metrics/v3/stats.pb.cc
+    ${_gRPC_PROTO_GENS_DIR}/envoy/config/metrics/v3/stats.grpc.pb.cc
+    ${_gRPC_PROTO_GENS_DIR}/envoy/config/metrics/v3/stats.pb.h
+    ${_gRPC_PROTO_GENS_DIR}/envoy/config/metrics/v3/stats.grpc.pb.h
     ${_gRPC_PROTO_GENS_DIR}/envoy/config/rbac/v3/rbac.pb.cc
     ${_gRPC_PROTO_GENS_DIR}/envoy/config/rbac/v3/rbac.grpc.pb.cc
     ${_gRPC_PROTO_GENS_DIR}/envoy/config/rbac/v3/rbac.pb.h
@@ -46052,6 +45983,10 @@ if(_gRPC_PLATFORM_LINUX OR _gRPC_PLATFORM_MAC OR _gRPC_PLATFORM_POSIX)
     ${_gRPC_PROTO_GENS_DIR}/envoy/type/v3/ratelimit_unit.grpc.pb.cc
     ${_gRPC_PROTO_GENS_DIR}/envoy/type/v3/ratelimit_unit.pb.h
     ${_gRPC_PROTO_GENS_DIR}/envoy/type/v3/ratelimit_unit.grpc.pb.h
+    ${_gRPC_PROTO_GENS_DIR}/envoy/type/v3/scope.pb.cc
+    ${_gRPC_PROTO_GENS_DIR}/envoy/type/v3/scope.grpc.pb.cc
+    ${_gRPC_PROTO_GENS_DIR}/envoy/type/v3/scope.pb.h
+    ${_gRPC_PROTO_GENS_DIR}/envoy/type/v3/scope.grpc.pb.h
     ${_gRPC_PROTO_GENS_DIR}/envoy/type/v3/semantic_version.pb.cc
     ${_gRPC_PROTO_GENS_DIR}/envoy/type/v3/semantic_version.grpc.pb.cc
     ${_gRPC_PROTO_GENS_DIR}/envoy/type/v3/semantic_version.pb.h
