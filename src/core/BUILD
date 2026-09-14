@@ -6553,7 +6553,6 @@ grpc_cc_library(
     ],
 )
 
-
 grpc_cc_library(
     name = "xds_http_filter",
     srcs = [
