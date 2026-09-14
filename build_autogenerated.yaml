@@ -630,6 +630,8 @@ libs:
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb_minitable.h
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb.h
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb_minitable.h
   - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb.h
   - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb_minitable.h
   - src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb.h
@@ -865,6 +867,7 @@ libs:
   - src/core/ext/upbdefs-gen/envoy/type/v3/range.upbdefs.h
   - src/core/ext/upbdefs-gen/envoy/type/v3/ratelimit_strategy.upbdefs.h
   - src/core/ext/upbdefs-gen/envoy/type/v3/ratelimit_unit.upbdefs.h
+  - src/core/ext/upbdefs-gen/envoy/type/v3/scope.upbdefs.h
   - src/core/ext/upbdefs-gen/envoy/type/v3/semantic_version.upbdefs.h
   - src/core/ext/upbdefs-gen/envoy/type/v3/token_bucket.upbdefs.h
   - src/core/ext/upbdefs-gen/google/api/annotations.upbdefs.h
@@ -1695,6 +1698,7 @@ libs:
   - src/core/ext/upb-gen/envoy/type/v3/range.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb_minitable.c
   - src/core/ext/upb-gen/google/api/annotations.upb_minitable.c
@@ -1871,6 +1875,7 @@ libs:
   - src/core/ext/upbdefs-gen/envoy/type/v3/range.upbdefs.c
   - src/core/ext/upbdefs-gen/envoy/type/v3/ratelimit_strategy.upbdefs.c
   - src/core/ext/upbdefs-gen/envoy/type/v3/ratelimit_unit.upbdefs.c
+  - src/core/ext/upbdefs-gen/envoy/type/v3/scope.upbdefs.c
   - src/core/ext/upbdefs-gen/envoy/type/v3/semantic_version.upbdefs.c
   - src/core/ext/upbdefs-gen/envoy/type/v3/token_bucket.upbdefs.c
   - src/core/ext/upbdefs-gen/google/api/annotations.upbdefs.c
@@ -5929,6 +5934,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -8417,6 +8423,8 @@ targets:
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb_minitable.h
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb.h
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb_minitable.h
   - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb.h
   - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb_minitable.h
   - src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb.h
@@ -8564,6 +8572,7 @@ targets:
   - src/core/ext/upb-gen/envoy/type/v3/range.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb_minitable.c
   - src/core/ext/upb-gen/google/api/annotations.upb_minitable.c
@@ -8791,6 +8800,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -13016,6 +13026,160 @@ targets:
   build: test
   language: c++
   headers:
+  - src/core/ext/upb-gen/envoy/annotations/deprecation.upb.h
+  - src/core/ext/upb-gen/envoy/annotations/deprecation.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/annotations/resource.upb.h
+  - src/core/ext/upb-gen/envoy/annotations/resource.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/common/mutation_rules/v3/mutation_rules.upb.h
+  - src/core/ext/upb-gen/envoy/config/common/mutation_rules/v3/mutation_rules.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/address.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/address.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/backoff.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/backoff.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/base.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/base.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/cel.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/cel.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/config_source.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/config_source.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/event_service_config.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/event_service_config.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/extension.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/extension.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/grpc_method_list.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/grpc_method_list.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/grpc_service.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/grpc_service.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/health_check.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/health_check.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/http_service.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/http_service.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/http_uri.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/http_uri.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/protocol.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/protocol.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/proxy_protocol.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/proxy_protocol.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/resolver.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/resolver.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/socket_cmsg_headers.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/socket_cmsg_headers.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/socket_option.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/socket_option.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/substitution_format_string.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/substitution_format_string.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/udp_socket_config.upb.h
+  - src/core/ext/upb-gen/envoy/config/core/v3/udp_socket_config.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/extensions/filters/http/ext_proc/v3/ext_proc.upb.h
+  - src/core/ext/upb-gen/envoy/extensions/filters/http/ext_proc/v3/ext_proc.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/extensions/filters/http/ext_proc/v3/processing_mode.upb.h
+  - src/core/ext/upb-gen/envoy/extensions/filters/http/ext_proc/v3/processing_mode.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/service/ext_proc/v3/external_processor.upb.h
+  - src/core/ext/upb-gen/envoy/service/ext_proc/v3/external_processor.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/address.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/address.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/filter_state.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/filter_state.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/http_inputs.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/http_inputs.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/metadata.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/metadata.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/node.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/node.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/number.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/number.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/path.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/path.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/regex.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/regex.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/status_code_input.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/status_code_input.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/string.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/string.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/struct.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/struct.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/value.upb.h
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/value.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/hash_policy.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/hash_policy.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/http.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/http.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/http_status.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/http_status.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/percent.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/percent.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/range.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/range.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb_minitable.h
+  - src/core/ext/upb-gen/google/api/annotations.upb.h
+  - src/core/ext/upb-gen/google/api/annotations.upb_minitable.h
+  - src/core/ext/upb-gen/google/api/http.upb.h
+  - src/core/ext/upb-gen/google/api/http.upb_minitable.h
+  - src/core/ext/upb-gen/google/api/httpbody.upb.h
+  - src/core/ext/upb-gen/google/api/httpbody.upb_minitable.h
+  - src/core/ext/upb-gen/google/protobuf/any.upb.h
+  - src/core/ext/upb-gen/google/protobuf/any.upb_minitable.h
+  - src/core/ext/upb-gen/google/protobuf/descriptor.upb.h
+  - src/core/ext/upb-gen/google/protobuf/descriptor.upb_minitable.h
+  - src/core/ext/upb-gen/google/protobuf/duration.upb.h
+  - src/core/ext/upb-gen/google/protobuf/duration.upb_minitable.h
+  - src/core/ext/upb-gen/google/protobuf/empty.upb.h
+  - src/core/ext/upb-gen/google/protobuf/empty.upb_minitable.h
+  - src/core/ext/upb-gen/google/protobuf/struct.upb.h
+  - src/core/ext/upb-gen/google/protobuf/struct.upb_minitable.h
+  - src/core/ext/upb-gen/google/protobuf/timestamp.upb.h
+  - src/core/ext/upb-gen/google/protobuf/timestamp.upb_minitable.h
+  - src/core/ext/upb-gen/google/protobuf/wrappers.upb.h
+  - src/core/ext/upb-gen/google/protobuf/wrappers.upb_minitable.h
+  - src/core/ext/upb-gen/google/rpc/status.upb.h
+  - src/core/ext/upb-gen/google/rpc/status.upb_minitable.h
+  - src/core/ext/upb-gen/udpa/annotations/migrate.upb.h
+  - src/core/ext/upb-gen/udpa/annotations/migrate.upb_minitable.h
+  - src/core/ext/upb-gen/udpa/annotations/security.upb.h
+  - src/core/ext/upb-gen/udpa/annotations/security.upb_minitable.h
+  - src/core/ext/upb-gen/udpa/annotations/sensitive.upb.h
+  - src/core/ext/upb-gen/udpa/annotations/sensitive.upb_minitable.h
+  - src/core/ext/upb-gen/udpa/annotations/status.upb.h
+  - src/core/ext/upb-gen/udpa/annotations/status.upb_minitable.h
+  - src/core/ext/upb-gen/udpa/annotations/versioning.upb.h
+  - src/core/ext/upb-gen/udpa/annotations/versioning.upb_minitable.h
+  - src/core/ext/upb-gen/validate/validate.upb.h
+  - src/core/ext/upb-gen/validate/validate.upb_minitable.h
+  - src/core/ext/upb-gen/xds/annotations/v3/migrate.upb.h
+  - src/core/ext/upb-gen/xds/annotations/v3/migrate.upb_minitable.h
+  - src/core/ext/upb-gen/xds/annotations/v3/security.upb.h
+  - src/core/ext/upb-gen/xds/annotations/v3/security.upb_minitable.h
+  - src/core/ext/upb-gen/xds/annotations/v3/sensitive.upb.h
+  - src/core/ext/upb-gen/xds/annotations/v3/sensitive.upb_minitable.h
+  - src/core/ext/upb-gen/xds/annotations/v3/status.upb.h
+  - src/core/ext/upb-gen/xds/annotations/v3/status.upb_minitable.h
+  - src/core/ext/upb-gen/xds/annotations/v3/versioning.upb.h
+  - src/core/ext/upb-gen/xds/annotations/v3/versioning.upb_minitable.h
+  - src/core/ext/upb-gen/xds/core/v3/authority.upb.h
+  - src/core/ext/upb-gen/xds/core/v3/authority.upb_minitable.h
+  - src/core/ext/upb-gen/xds/core/v3/cidr.upb.h
+  - src/core/ext/upb-gen/xds/core/v3/cidr.upb_minitable.h
+  - src/core/ext/upb-gen/xds/core/v3/collection_entry.upb.h
+  - src/core/ext/upb-gen/xds/core/v3/collection_entry.upb_minitable.h
+  - src/core/ext/upb-gen/xds/core/v3/context_params.upb.h
+  - src/core/ext/upb-gen/xds/core/v3/context_params.upb_minitable.h
+  - src/core/ext/upb-gen/xds/core/v3/extension.upb.h
+  - src/core/ext/upb-gen/xds/core/v3/extension.upb_minitable.h
+  - src/core/ext/upb-gen/xds/core/v3/resource.upb.h
+  - src/core/ext/upb-gen/xds/core/v3/resource.upb_minitable.h
+  - src/core/ext/upb-gen/xds/core/v3/resource_locator.upb.h
+  - src/core/ext/upb-gen/xds/core/v3/resource_locator.upb_minitable.h
+  - src/core/ext/upb-gen/xds/core/v3/resource_name.upb.h
+  - src/core/ext/upb-gen/xds/core/v3/resource_name.upb_minitable.h
   - third_party/protoc-gen-validate/validate/validate.h
   src:
   - third_party/envoy-api/envoy/annotations/deprecation.proto
@@ -13062,6 +13226,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -13087,6 +13252,83 @@ targets:
   - third_party/xds/xds/core/v3/resource.proto
   - third_party/xds/xds/core/v3/resource_locator.proto
   - third_party/xds/xds/core/v3/resource_name.proto
+  - src/core/ext/upb-gen/envoy/annotations/deprecation.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/annotations/resource.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/common/mutation_rules/v3/mutation_rules.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/address.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/backoff.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/base.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/cel.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/config_source.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/event_service_config.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/extension.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/grpc_method_list.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/grpc_service.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/health_check.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/http_service.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/http_uri.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/protocol.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/proxy_protocol.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/resolver.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/socket_cmsg_headers.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/socket_option.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/substitution_format_string.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/config/core/v3/udp_socket_config.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/extensions/filters/http/ext_proc/v3/ext_proc.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/extensions/filters/http/ext_proc/v3/processing_mode.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/service/ext_proc/v3/external_processor.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/address.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/filter_state.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/http_inputs.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/metadata.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/node.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/number.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/path.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/regex.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/status_code_input.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/string.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/struct.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/matcher/v3/value.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/hash_policy.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/http.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/http_status.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/percent.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/range.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb_minitable.c
+  - src/core/ext/upb-gen/google/api/annotations.upb_minitable.c
+  - src/core/ext/upb-gen/google/api/http.upb_minitable.c
+  - src/core/ext/upb-gen/google/api/httpbody.upb_minitable.c
+  - src/core/ext/upb-gen/google/protobuf/any.upb_minitable.c
+  - src/core/ext/upb-gen/google/protobuf/descriptor.upb_minitable.c
+  - src/core/ext/upb-gen/google/protobuf/duration.upb_minitable.c
+  - src/core/ext/upb-gen/google/protobuf/empty.upb_minitable.c
+  - src/core/ext/upb-gen/google/protobuf/struct.upb_minitable.c
+  - src/core/ext/upb-gen/google/protobuf/timestamp.upb_minitable.c
+  - src/core/ext/upb-gen/google/protobuf/wrappers.upb_minitable.c
+  - src/core/ext/upb-gen/google/rpc/status.upb_minitable.c
+  - src/core/ext/upb-gen/udpa/annotations/migrate.upb_minitable.c
+  - src/core/ext/upb-gen/udpa/annotations/security.upb_minitable.c
+  - src/core/ext/upb-gen/udpa/annotations/sensitive.upb_minitable.c
+  - src/core/ext/upb-gen/udpa/annotations/status.upb_minitable.c
+  - src/core/ext/upb-gen/udpa/annotations/versioning.upb_minitable.c
+  - src/core/ext/upb-gen/validate/validate.upb_minitable.c
+  - src/core/ext/upb-gen/xds/annotations/v3/migrate.upb_minitable.c
+  - src/core/ext/upb-gen/xds/annotations/v3/security.upb_minitable.c
+  - src/core/ext/upb-gen/xds/annotations/v3/sensitive.upb_minitable.c
+  - src/core/ext/upb-gen/xds/annotations/v3/status.upb_minitable.c
+  - src/core/ext/upb-gen/xds/annotations/v3/versioning.upb_minitable.c
+  - src/core/ext/upb-gen/xds/core/v3/authority.upb_minitable.c
+  - src/core/ext/upb-gen/xds/core/v3/cidr.upb_minitable.c
+  - src/core/ext/upb-gen/xds/core/v3/collection_entry.upb_minitable.c
+  - src/core/ext/upb-gen/xds/core/v3/context_params.upb_minitable.c
+  - src/core/ext/upb-gen/xds/core/v3/extension.upb_minitable.c
+  - src/core/ext/upb-gen/xds/core/v3/resource.upb_minitable.c
+  - src/core/ext/upb-gen/xds/core/v3/resource_locator.upb_minitable.c
+  - src/core/ext/upb-gen/xds/core/v3/resource_name.upb_minitable.c
   - test/core/filters/ext_proc_message_test.cc
   deps:
   - gtest
@@ -20736,6 +20978,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -28409,6 +28652,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -28603,6 +28847,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -28715,6 +28960,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -28759,6 +29006,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -28854,6 +29102,8 @@ targets:
   - third_party/envoy-api/envoy/config/endpoint/v3/endpoint.proto
   - third_party/envoy-api/envoy/config/endpoint/v3/endpoint_components.proto
   - third_party/envoy-api/envoy/config/endpoint/v3/load_report.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
   - third_party/envoy-api/envoy/config/route/v3/scoped_route.proto
@@ -28904,6 +29154,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -29012,6 +29263,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -29057,6 +29310,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -29205,6 +29459,8 @@ targets:
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb_minitable.h
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb.h
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb_minitable.h
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb.h
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb_minitable.h
   - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb.h
   - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb_minitable.h
   - src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb.h
@@ -29330,6 +29586,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -29407,6 +29664,7 @@ targets:
   - src/core/ext/upb-gen/envoy/type/v3/range.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb_minitable.c
+  - src/core/ext/upb-gen/envoy/type/v3/scope.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb_minitable.c
   - src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb_minitable.c
   - src/core/ext/upb-gen/google/api/annotations.upb_minitable.c
@@ -29509,6 +29767,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -29556,6 +29816,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -29665,6 +29926,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -29709,6 +29972,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -29913,6 +30177,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -30021,6 +30286,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -30065,6 +30332,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -30168,6 +30436,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -30421,6 +30690,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -30465,6 +30736,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -30571,6 +30843,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -30617,6 +30891,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -30722,6 +30997,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -30767,6 +31044,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -30875,6 +31153,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -30920,6 +31200,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -31069,6 +31350,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -31170,6 +31452,8 @@ targets:
   - third_party/envoy-api/envoy/config/endpoint/v3/endpoint.proto
   - third_party/envoy-api/envoy/config/endpoint/v3/endpoint_components.proto
   - third_party/envoy-api/envoy/config/endpoint/v3/load_report.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
   - third_party/envoy-api/envoy/config/route/v3/scoped_route.proto
@@ -31200,6 +31484,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -31296,6 +31581,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -31344,6 +31631,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -31528,6 +31816,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -31667,6 +31956,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -31751,6 +32041,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -31797,6 +32089,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -31904,6 +32197,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -31950,6 +32245,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -32085,6 +32381,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -32131,6 +32429,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -32240,6 +32539,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -32285,6 +32586,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -32394,6 +32696,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -32438,6 +32742,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -32560,6 +32865,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -32668,6 +32974,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -32714,6 +33022,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -32841,6 +33150,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -32891,6 +33202,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -33002,6 +33314,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -33052,6 +33366,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -33214,6 +33529,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -33329,6 +33645,8 @@ targets:
   - third_party/envoy-api/envoy/config/listener/v3/listener_components.proto
   - third_party/envoy-api/envoy/config/listener/v3/quic_config.proto
   - third_party/envoy-api/envoy/config/listener/v3/udp_listener_config.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/metrics_service.proto
+  - third_party/envoy-api/envoy/config/metrics/v3/stats.proto
   - third_party/envoy-api/envoy/config/rbac/v3/rbac.proto
   - third_party/envoy-api/envoy/config/route/v3/route.proto
   - third_party/envoy-api/envoy/config/route/v3/route_components.proto
@@ -33376,6 +33694,7 @@ targets:
   - third_party/envoy-api/envoy/type/v3/range.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_strategy.proto
   - third_party/envoy-api/envoy/type/v3/ratelimit_unit.proto
+  - third_party/envoy-api/envoy/type/v3/scope.proto
   - third_party/envoy-api/envoy/type/v3/semantic_version.proto
   - third_party/envoy-api/envoy/type/v3/token_bucket.proto
   - third_party/googleapis/google/api/annotations.proto
@@ -33449,19 +33768,19 @@ targets:
   - mac
 external_proto_libraries:
 - destination: third_party/cel-spec
-  hash: 13583c5a312861648449845b709722676a3c9b43396b6b8e9cbe4538feb74ad2
+  hash: 5cba6b0029e727d1f4d8fd134de4e747cecc0bc293d026017d7edc48058d09f7
   proto_prefix: third_party/cel-spec/
   strip_path_prefix: proto/
-  strip_prefix: cel-spec-0.25.1
+  strip_prefix: cel-spec-0.24.0
   urls:
-  - https://github.com/google/cel-spec/archive/refs/tags/v0.25.1.tar.gz
+  - https://github.com/google/cel-spec/archive/refs/tags/v0.24.0.tar.gz
 - destination: third_party/envoy-api
-  hash: ed5e6c319f8ebcdf24a9491f866a599bb9a3c193b859a94ad13bd31f85b46855
+  hash: 40ba505a3c8e0d56f10ad5b95c05d54138228ff521cff22393276bb67188dfc3
   proto_prefix: third_party/envoy-api/
   strip_path_prefix: ''
-  strip_prefix: data-plane-api-6ef568cf4a67362849911d1d2a546fd9f35db2ff
+  strip_prefix: data-plane-api-005c18a923f166a793a1c227171398dab883cc5d
   urls:
-  - https://github.com/envoyproxy/data-plane-api/archive/6ef568cf4a67362849911d1d2a546fd9f35db2ff.tar.gz
+  - https://github.com/envoyproxy/data-plane-api/archive/005c18a923f166a793a1c227171398dab883cc5d.tar.gz
 - destination: third_party/googleapis
   hash: 07a6f700cee5ca796f5230876ed8454bf1d8cc409b3b3e634505bc4f32a9f72b
   proto_prefix: third_party/googleapis/
