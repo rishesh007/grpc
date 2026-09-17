@@ -16,7 +16,13 @@
 
 #include "src/core/filter/ext_proc/ext_proc_messages.h"
 
+#include <grpc/grpc_security_constants.h>
 #include <grpc/status.h>
+#include <openssl/bio.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +37,7 @@
 #include "google/protobuf/struct.upb.h"
 #include "src/core/call/metadata_batch.h"
 #include "src/core/call/status_util.h"
+#include "src/core/credentials/transport/tls/tls_utils.h"
 #include "src/core/lib/slice/slice.h"
 #include "src/core/util/matchers.h"
 #include "src/core/util/string.h"
@@ -41,8 +48,10 @@
 #include "upb/mem/arena.h"
 #include "upb/mem/arena.hpp"
 #include "absl/functional/function_ref.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 
@@ -150,6 +159,7 @@ absl::StatusOr<ExtProcResponse::BodyMutation> ParseExtProcBodyMutation(
       envoy_service_ext_proc_v3_StreamedBodyResponse_end_of_stream(
           streamed_response);
   bool end_of_stream_without_message =
+      end_of_stream &&
       envoy_service_ext_proc_v3_StreamedBodyResponse_end_of_stream_without_message(
           streamed_response);
   return ExtProcResponse::BodyMutation{
@@ -320,12 +330,19 @@ class UpbHeaderMapEncoder {
         disallowed_headers_(disallowed_headers) {}
 
   void Encode(const Slice& key, const Slice& value) {
-    Append(key.as_string_view(), value.as_string_view());
+    // The slices are owned by the metadata batch, which outlives serialization
+    // of the request, so their contents do not need to be copied.
+    Append(key.as_string_view(), StdStringToUpbString(value.as_string_view()));
   }
 
   template <typename Which>
   void Encode(Which, const typename Which::ValueType& value) {
-    Append(Which::key(), Which::Encode(value).as_string_view());
+    // Which::Encode() returns a temporary Slice, and for inlined slices the
+    // bytes live inside that temporary, so they must be copied onto the arena:
+    // the upb message only retains a pointer to them, and the request is
+    // serialized long after this returns.
+    Append(Which::key(), CopyStdStringToUpbString(
+                             Which::Encode(value).as_string_view(), arena_));
   }
 
  private:
@@ -349,18 +366,17 @@ class UpbHeaderMapEncoder {
   }
 
   ABSL_ATTRIBUTE_NOINLINE void Append(absl::string_view key,
-                                      absl::string_view value) {
+                                      upb_StringView value) {
     if (!ShouldForwardHeader(key)) {
       return;
     }
     auto* value_msg =
         envoy_config_core_v3_HeaderMap_add_headers(header_map_, arena_);
-    envoy_config_core_v3_HeaderValue_set_key(
-        value_msg, CopyStdStringToUpbString(key, arena_));
+    envoy_config_core_v3_HeaderValue_set_key(value_msg,
+                                             StdStringToUpbString(key));
     // Per gRFC A102, when writing, we always set the raw_value field and never
     // the value field.
-    envoy_config_core_v3_HeaderValue_set_raw_value(
-        value_msg, CopyStdStringToUpbString(value, arena_));
+    envoy_config_core_v3_HeaderValue_set_raw_value(value_msg, value);
   }
 
   envoy_config_core_v3_HeaderMap* header_map_;
@@ -409,12 +425,12 @@ void SetExtProcRequestBody(
   envoy_service_ext_proc_v3_HttpBody* body =
       envoy_service_ext_proc_v3_HttpBody_new(arena);
   envoy_service_ext_proc_v3_HttpBody_set_body(body, buf);
-  if (end_of_stream || end_of_stream_without_message) {
+  if (end_of_stream) {
     envoy_service_ext_proc_v3_HttpBody_set_end_of_stream(body, true);
-  }
-  if (end_of_stream_without_message) {
-    envoy_service_ext_proc_v3_HttpBody_set_end_of_stream_without_message(body,
-                                                                         true);
+    if (end_of_stream_without_message) {
+      envoy_service_ext_proc_v3_HttpBody_set_end_of_stream_without_message(
+          body, true);
+    }
   }
   envoy_service_ext_proc_v3_ProcessingRequest_set_request_body(request, body);
 }
@@ -443,8 +459,7 @@ void SetExtProcAttributes(
   if (attributes == nullptr) return;
   constexpr absl::string_view kAttributeKey = "envoy.filters.http.ext_proc";
   envoy_service_ext_proc_v3_ProcessingRequest_attributes_set(
-      request, CopyStdStringToUpbString(kAttributeKey, arena), attributes,
-      arena);
+      request, StdStringToUpbString(kAttributeKey), attributes, arena);
 }
 
 void SetExtProcProtocolConfig(
@@ -529,13 +544,51 @@ class UpbStructHeadersEncoder {
 }  // namespace
 
 //
+// ComputeSha256PeerCertificateDigest()
+//
+
+std::string ComputeSha256PeerCertificateDigest(
+    grpc_auth_context* auth_context) {
+  if (auth_context == nullptr) return "";
+  absl::string_view pem_cert =
+      GetAuthPropertyValue(auth_context, GRPC_X509_PEM_CERT_PROPERTY_NAME);
+  if (pem_cert.empty()) return "";
+  BIO* bio =
+      BIO_new_mem_buf(pem_cert.data(), static_cast<int>(pem_cert.size()));
+  if (bio == nullptr) return "";
+  X509* cert = PEM_read_bio_X509(bio, /*x=*/nullptr, /*cb=*/nullptr,
+                                 /*u=*/nullptr);
+  BIO_free(bio);
+  if (cert == nullptr) {
+    // Avoid leaving the parse failure on the OpenSSL error queue, since that
+    // would affect unrelated operations on this thread.
+    ERR_clear_error();
+    LOG(ERROR) << "ext_proc: failed to parse peer certificate";
+    return "";
+  }
+  unsigned char digest[EVP_MAX_MD_SIZE];
+  unsigned int digest_length = 0;
+  const bool ok = X509_digest(cert, EVP_sha256(), digest, &digest_length) == 1;
+  X509_free(cert);
+  if (!ok) {
+    // Avoid leaving the failure on the OpenSSL error queue, since that would
+    // affect unrelated operations on this thread.
+    ERR_clear_error();
+    LOG(ERROR) << "ext_proc: failed to compute peer certificate digest";
+    return "";
+  }
+  return absl::BytesToHexString(
+      absl::string_view(reinterpret_cast<const char*>(digest), digest_length));
+}
+
+//
 // CreateExtProcAttributesProtoStruct()
 //
 
 ::google_protobuf_Struct* CreateExtProcAttributesProtoStruct(
     upb_Arena* arena, const std::vector<std::string>& attributes,
-    const grpc_metadata_batch& metadata, absl::string_view default_authority,
-    const std::optional<ExtProcConnectionAttributes>& connection_attributes) {
+    const EvaluateArgs& args, absl::string_view default_authority,
+    absl::string_view sha256_peer_certificate_digest) {
   if (attributes.empty()) return nullptr;
   ::google_protobuf_Struct* struct_msg = ::google_protobuf_Struct_new(arena);
   auto add_field = [&](absl::string_view name, absl::string_view value) {
@@ -553,28 +606,20 @@ class UpbStructHeadersEncoder {
   };
   for (const auto& attr : attributes) {
     if (attr == "request.path" || attr == "request.url_path") {
-      if (const Slice* path = metadata.get_pointer(HttpPathMetadata())) {
-        add_field(attr, path->as_string_view());
-      }
+      absl::string_view path = args.GetPath();
+      if (!path.empty()) add_field(attr, path);
     } else if (attr == "request.host") {
-      if (const Slice* auth = metadata.get_pointer(HttpAuthorityMetadata())) {
-        add_field(attr, auth->as_string_view());
-      } else if (const Slice* host = metadata.get_pointer(HostMetadata())) {
-        add_field(attr, host->as_string_view());
-      } else if (!default_authority.empty()) {
-        add_field(attr, default_authority);
-      }
+      absl::string_view host = args.GetAuthority();
+      if (host.empty()) host = default_authority;
+      if (!host.empty()) add_field(attr, host);
     } else if (attr == "request.method") {
-      if (auto* method = metadata.get_pointer(HttpMethodMetadata())) {
-        add_field(attr, HttpMethodMetadata::Encode(*method).as_string_view());
-      } else {
-        add_field(attr, "POST");
-      }
+      absl::string_view method = args.GetMethod();
+      add_field(attr, method.empty() ? "POST" : method);
     } else if (attr == "request.headers") {
       ::google_protobuf_Struct* headers_struct =
           ::google_protobuf_Struct_new(arena);
       UpbStructHeadersEncoder encoder(headers_struct, arena);
-      metadata.Encode(&encoder);
+      args.EncodeHeaders(&encoder);
       ::google_protobuf_Value* val_msg = ::google_protobuf_Value_new(arena);
       ::google_protobuf_Value_set_struct_value(val_msg, headers_struct);
       ::google_protobuf_Struct_fields_set(
@@ -591,28 +636,29 @@ class UpbStructHeadersEncoder {
       }
       std::string backing_str;
       std::optional<absl::string_view> val =
-          metadata.GetStringValue(key, &backing_str);
+          args.GetHeaderValue(key, &backing_str);
       if (val.has_value()) add_field(attr, *val);
     } else if (attr == "request.query") {
       add_field(attr, "");
-    } else if (connection_attributes.has_value()) {
-      if (attr == "source.port") {
-        if (connection_attributes->source_port > 0) {
-          add_number_field(attr, connection_attributes->source_port);
-        }
-      } else {
-        absl::string_view val;
-        if (attr == "source.address") {
-          val = connection_attributes->source_address;
-        } else if (attr == "connection.requested_server_name") {
-          val = connection_attributes->requested_server_name;
-        } else if (attr == "connection.tls_version") {
-          val = connection_attributes->tls_version;
-        } else if (attr == "connection.sha256_peer_certificate_digest") {
-          val = connection_attributes->sha256_peer_certificate_digest;
-        }
-        if (!val.empty()) add_field(attr, val);
+    } else if (attr == "source.port") {
+      if (args.GetPeerPort() > 0) {
+        ::google_protobuf_Value* val_msg = ::google_protobuf_Value_new(arena);
+        ::google_protobuf_Value_set_number_value(val_msg, args.GetPeerPort());
+        ::google_protobuf_Struct_fields_set(
+            struct_msg, CopyStdStringToUpbString(attr, arena), val_msg, arena);
       }
+    } else {
+      absl::string_view val;
+      if (attr == "source.address") {
+        val = args.GetPeerAddressString();
+      } else if (attr == "connection.requested_server_name") {
+        val = args.GetRequestedServerName();
+      } else if (attr == "connection.tls_version") {
+        val = args.GetTlsVersion();
+      } else if (attr == "connection.sha256_peer_certificate_digest") {
+        val = sha256_peer_certificate_digest;
+      }
+      if (!val.empty()) add_field(attr, val);
     }
   }
   return struct_msg;
@@ -682,9 +728,8 @@ absl::StatusOr<std::string> CreateExtProcClientBodyRequest(
   return CreateRequestAndSerialize(
       arena, attributes, observability_mode, processing_mode,
       [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
-        SetExtProcRequestBody(arena, CopyStdStringToUpbString(body, arena),
-                              end_of_stream, end_of_stream_without_message,
-                              request);
+        SetExtProcRequestBody(arena, StdStringToUpbString(body), end_of_stream,
+                              end_of_stream_without_message, request);
       });
 }
 
@@ -695,8 +740,7 @@ absl::StatusOr<std::string> CreateExtProcServerBodyRequest(
   return CreateRequestAndSerialize(
       arena, attributes, observability_mode, processing_mode,
       [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
-        SetExtProcResponseBody(arena, CopyStdStringToUpbString(body, arena),
-                               request);
+        SetExtProcResponseBody(arena, StdStringToUpbString(body), request);
       });
 }
 

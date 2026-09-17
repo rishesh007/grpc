@@ -735,6 +735,10 @@ class XdsEnd2endTest : public ::testing::TestWithParam<XdsTestType>,
       return *this;
     }
 
+    // Populates context.
+    void SetupContext(ClientContext* context) const;
+    // Populates request.
+    void SetupRequest(EchoRequest* request) const;
     // Populates context and request.
     void SetupRpc(ClientContext* context, EchoRequest* request) const;
   };
@@ -742,13 +746,10 @@ class XdsEnd2endTest : public ::testing::TestWithParam<XdsTestType>,
   // Sends an RPC with the specified options.
   // If response is non-null, it will be populated with the response.
   // Returns the status of the RPC.
-  Status SendRpc(
-      const RpcOptions& rpc_options = RpcOptions(),
-      EchoResponse* response = nullptr,
-      std::multimap<std::string, std::string>* server_initial_metadata =
-          nullptr,
-      std::multimap<std::string, std::string>* server_trailing_metadata =
-          nullptr);
+  Status SendRpc(const RpcOptions& rpc_options = RpcOptions(),
+                 EchoResponse* response = nullptr,
+                 std::multimap<std::string, std::string>*
+                     server_initial_metadata = nullptr);
 
   // Internal helper function for SendRpc().
   template <typename Stub>
