@@ -670,9 +670,18 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
   // Response construction helper functions
 
   static void PopulateHeaderMutation(
+      ::envoy::service::ext_proc::v3::ProcessingResponse* response,
       ::envoy::service::ext_proc::v3::HeaderMutation* mutation,
       const std::vector<std::pair<std::string, std::string>>& set_headers,
-      const std::vector<std::string>& remove_headers = {}) {
+      const std::vector<std::string>& remove_headers = {},
+      bool request_drain_requests = false,
+      bool request_drain_responses = false) {
+    if (request_drain_requests) {
+      response->set_request_drain_requests(true);
+    }
+    if (request_drain_responses) {
+      response->set_request_drain_responses(true);
+    }
     for (const auto& [key, value] : set_headers) {
       auto* header = mutation->add_set_headers();
       header->mutable_header()->set_key(key);
@@ -690,16 +699,12 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
       bool request_drain_requests = false,
       bool request_drain_responses = false) {
     ::envoy::service::ext_proc::v3::ProcessingResponse response;
-    if (request_drain_requests) {
-      response.set_request_drain_requests(true);
-    }
-    if (request_drain_responses) {
-      response.set_request_drain_responses(true);
-    }
-    PopulateHeaderMutation(response.mutable_request_headers()
+    PopulateHeaderMutation(&response,
+                           response.mutable_request_headers()
                                ->mutable_response()
                                ->mutable_header_mutation(),
-                           set_headers, remove_headers);
+                           set_headers, remove_headers, request_drain_requests,
+                           request_drain_responses);
     return response;
   }
 
@@ -710,22 +715,27 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
       bool request_drain_requests = false,
       bool request_drain_responses = false) {
     ::envoy::service::ext_proc::v3::ProcessingResponse response;
-    if (request_drain_requests) {
-      response.set_request_drain_requests(true);
-    }
-    if (request_drain_responses) {
-      response.set_request_drain_responses(true);
-    }
-    PopulateHeaderMutation(response.mutable_response_headers()
+    PopulateHeaderMutation(&response,
+                           response.mutable_response_headers()
                                ->mutable_response()
                                ->mutable_header_mutation(),
-                           set_headers, remove_headers);
+                           set_headers, remove_headers, request_drain_requests,
+                           request_drain_responses);
     return response;
   }
 
   static void PopulateBodyMutation(
+      ::envoy::service::ext_proc::v3::ProcessingResponse* response,
       ::envoy::service::ext_proc::v3::BodyMutation* body_mutation,
-      absl::string_view body, bool end_of_stream = false) {
+      absl::string_view body, bool end_of_stream = false,
+      bool request_drain_requests = false,
+      bool request_drain_responses = false) {
+    if (request_drain_requests) {
+      response->set_request_drain_requests(true);
+    }
+    if (request_drain_responses) {
+      response->set_request_drain_responses(true);
+    }
     body_mutation->mutable_streamed_response()->set_body(std::string(body));
     body_mutation->mutable_streamed_response()->set_end_of_stream(
         end_of_stream);
@@ -737,16 +747,12 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
                                   bool request_drain_requests = false,
                                   bool request_drain_responses = false) {
     ::envoy::service::ext_proc::v3::ProcessingResponse response;
-    if (request_drain_requests) {
-      response.set_request_drain_requests(true);
-    }
-    if (request_drain_responses) {
-      response.set_request_drain_responses(true);
-    }
-    PopulateBodyMutation(response.mutable_request_body()
+    PopulateBodyMutation(&response,
+                         response.mutable_request_body()
                              ->mutable_response()
                              ->mutable_body_mutation(),
-                         body, end_of_stream);
+                         body, end_of_stream, request_drain_requests,
+                         request_drain_responses);
     return response;
   }
 
@@ -756,16 +762,12 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
                                    bool request_drain_requests = false,
                                    bool request_drain_responses = false) {
     ::envoy::service::ext_proc::v3::ProcessingResponse response;
-    if (request_drain_requests) {
-      response.set_request_drain_requests(true);
-    }
-    if (request_drain_responses) {
-      response.set_request_drain_responses(true);
-    }
-    PopulateBodyMutation(response.mutable_response_body()
+    PopulateBodyMutation(&response,
+                         response.mutable_response_body()
                              ->mutable_response()
                              ->mutable_body_mutation(),
-                         body, end_of_stream);
+                         body, end_of_stream, request_drain_requests,
+                         request_drain_responses);
     return response;
   }
 
@@ -776,15 +778,11 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
       bool request_drain_requests = false,
       bool request_drain_responses = false) {
     ::envoy::service::ext_proc::v3::ProcessingResponse response;
-    if (request_drain_requests) {
-      response.set_request_drain_requests(true);
-    }
-    if (request_drain_responses) {
-      response.set_request_drain_responses(true);
-    }
     PopulateHeaderMutation(
+        &response,
         response.mutable_response_trailers()->mutable_header_mutation(),
-        set_headers, remove_headers);
+        set_headers, remove_headers, request_drain_requests,
+        request_drain_responses);
     return response;
   }
 
@@ -820,7 +818,8 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     if (!details.empty()) {
       immediate->set_details(std::string(details));
     }
-    PopulateHeaderMutation(immediate->mutable_headers(), set_headers);
+    PopulateHeaderMutation(&response, immediate->mutable_headers(),
+                           set_headers);
     return response;
   }
 

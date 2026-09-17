@@ -913,11 +913,9 @@ StatusFlag ExtProcFilter::ExtProcCall::HandleServerMessageFromSidestream(
     }
     response_body_drain_state_ = BodyDrainState::kDrained;
     response_body_drain_complete_latch_.Set();
-    if (processing_mode().send_response_trailers) {
-      response_event_state_ = SideStreamResponseEventState::kExpectTrailers;
-    } else {
-      response_event_state_ = SideStreamResponseEventState::kExpectNothing;
-    }
+    response_event_state_ = processing_mode().send_response_trailers
+                                ? SideStreamResponseEventState::kExpectTrailers
+                                : SideStreamResponseEventState::kExpectNothing;
     return Success{};
   }
   if (response_event_state_ !=
@@ -1391,43 +1389,40 @@ auto ExtProcFilter::ExtProcCall::HandleHalfCloseFromClient() {
       !payload.ok() && !HandleSideStreamStatus(payload.status());
   const bool send_to_sidestream =
       send_request_body && payload.ok() && !side_stream_closed_latch_.is_set();
-  return If(
-      call_cancelled, Immediate(StatusFlag(Failure{})),
-      TrySeq(
-          // Wait for request body drain to complete if in flight.
-          If(
-              request_body_drain_state_ == BodyDrainState::kDrainInFlight,
-              [self = WeakRef()]() {
-                return TrySeq(self->request_body_drain_complete_latch_.Wait(),
-                              [self]() -> StatusFlag {
-                                if (self->request_body_drain_state_ !=
-                                    BodyDrainState::kDrained) {
-                                  return Failure{};
-                                }
-                                return Success{};
-                              });
-              },
-              Immediate(StatusFlag(Success{}))),
-          // Forward half-close to backend if not waiting for side-stream
-          // or running in observability mode.
-          If(
-              !send_to_sidestream || config().observability_mode,
-              [self = WeakRef()]() {
-                self->initiator_.SpawnFinishSends();
-                self->ext_proc_filter_->RecordClientHalfCloseDuration(
-                    (Timestamp::Now() - self->client_half_close_start_time_)
-                        .seconds());
-                return Immediate(StatusFlag(Success{}));
-              },
-              Immediate(StatusFlag(Success{}))),
-          // Send client half-close payload to the side-stream.
-          If(
-              send_to_sidestream,
-              [self = WeakRef(), payload = std::move(payload)]() mutable {
-                self->first_body_message_sent_ = true;
-                return self->SendMessageToSideStream(std::move(*payload));
-              },
-              Immediate(StatusFlag(Success{})))));
+  return If(call_cancelled, Immediate(StatusFlag(Failure{})),
+            TrySeq(
+                // Wait for request body drain to complete if in flight.
+                If(
+                    request_body_drain_state_ == BodyDrainState::kDrainInFlight,
+                    [self = WeakRef()]() {
+                      return TrySeq(
+                          self->request_body_drain_complete_latch_.Wait(),
+                          [self]() -> StatusFlag {
+                            if (self->request_body_drain_state_ !=
+                                BodyDrainState::kDrained) {
+                              return Failure{};
+                            }
+                            return Success{};
+                          });
+                    },
+                    Immediate(StatusFlag(Success{}))),
+                // Forward half-close to backend if not waiting for side-stream
+                // or running in observability mode.
+                If(
+                    !send_to_sidestream || config().observability_mode,
+                    [self = WeakRef()]() {
+                      self->initiator_.SpawnFinishSends();
+                      return Immediate(StatusFlag(Success{}));
+                    },
+                    Immediate(StatusFlag(Success{}))),
+                // Send client half-close payload to the side-stream.
+                If(
+                    send_to_sidestream,
+                    [self = WeakRef(), payload = std::move(payload)]() mutable {
+                      self->first_body_message_sent_ = true;
+                      return self->SendMessageToSideStream(std::move(*payload));
+                    },
+                    Immediate(StatusFlag(Success{})))));
 }
 
 //
