@@ -5867,7 +5867,6 @@ grpc_cc_library(
         "//:orphanable",
         "//:promise",
         "//:ref_counted_ptr",
-        "//:uri",
         "//:xds_client",
         "//src/core:streaming_call_promise_wrapper",
     ],

@@ -598,12 +598,6 @@ std::string ComputeSha256PeerCertificateDigest(
     ::google_protobuf_Struct_fields_set(
         struct_msg, CopyStdStringToUpbString(name, arena), val_msg, arena);
   };
-  auto add_number_field = [&](absl::string_view name, double value) {
-    ::google_protobuf_Value* val_msg = ::google_protobuf_Value_new(arena);
-    ::google_protobuf_Value_set_number_value(val_msg, value);
-    ::google_protobuf_Struct_fields_set(
-        struct_msg, CopyStdStringToUpbString(name, arena), val_msg, arena);
-  };
   for (const auto& attr : attributes) {
     if (attr == "request.path" || attr == "request.url_path") {
       absl::string_view path = args.GetPath();

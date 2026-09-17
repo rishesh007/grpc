@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "src/core/call/call_spine.h"
+#include "src/core/call/evaluate_args.h"
 #include "src/core/filter/ext_proc/ext_proc_messages.h"
 #include "src/core/filter/filter_args.h"
 #include "src/core/lib/channel/channel_args.h"
@@ -142,8 +143,14 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   ~ExtProcFilter() override;
 
   bool is_server() const { return is_server_; }
-  absl::string_view source_address() const { return source_address_; }
-  int source_port() const { return source_port_; }
+  const EvaluateArgs::PerChannelArgs* per_channel_evaluate_args() const {
+    return per_channel_evaluate_args_.has_value()
+               ? &*per_channel_evaluate_args_
+               : nullptr;
+  }
+  absl::string_view sha256_peer_certificate_digest() const {
+    return sha256_peer_certificate_digest_;
+  }
 
  private:
   class ExtProcCall;
@@ -172,10 +179,14 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
     static constexpr absl::string_view kName = "server_ext_proc";
     GRPC_EMPTY_INSTRUMENT_DOMAIN_LABELS();
 
-    static HistogramHandle<ExponentialHistogramShape> kClientHeadersDuration;
-    static HistogramHandle<ExponentialHistogramShape> kClientHalfCloseDuration;
-    static HistogramHandle<ExponentialHistogramShape> kServerHeadersDuration;
-    static HistogramHandle<ExponentialHistogramShape> kServerTrailersDuration;
+    static DoubleHistogramHandle<ExponentialDoubleHistogramShape>
+        kClientHeadersDuration;
+    static DoubleHistogramHandle<ExponentialDoubleHistogramShape>
+        kClientHalfCloseDuration;
+    static DoubleHistogramHandle<ExponentialDoubleHistogramShape>
+        kServerHeadersDuration;
+    static DoubleHistogramHandle<ExponentialDoubleHistogramShape>
+        kServerTrailersDuration;
   };
 
   using TelemetryStorage =
@@ -186,9 +197,11 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   RefCountedPtr<ExtProcChannel> channel() const { return config_->channel(); }
 
   void RecordDuration(
-      ClientTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+      ClientTelemetryDomain::DoubleHistogramHandle<
+          ExponentialDoubleHistogramShape>
           client_metric,
-      ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+      ServerTelemetryDomain::DoubleHistogramHandle<
+          ExponentialDoubleHistogramShape>
           server_metric,
       double duration_seconds) const;
 
@@ -198,21 +211,24 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   void RecordServerTrailersDuration(double duration_seconds) const;
 
   void Orphaned() override {
-    GRPC_TRACE_LOG(ext_proc_filter, INFO)
+    GRPC_TRACE_LOG(ext_proc_filter, INFO) 
         << "ExtProcFilter " << this << " Orphaned()";
     event_engine_.reset();
     config_.reset();
+    per_channel_evaluate_args_.reset();
+    auth_context_.reset();
     telemetry_storage_ = std::monostate{};
   }
 
   void InterceptCall(UnstartedCallHandler unstarted_call_handler) override;
 
   const bool is_server_;
-  std::string source_address_;
-  int source_port_ = 0;
   RefCountedPtr<const Config> config_;
   std::shared_ptr<grpc_event_engine::experimental::EventEngine> event_engine_;
   Slice default_authority_;
+  RefCountedPtr<grpc_auth_context> auth_context_;
+  std::optional<EvaluateArgs::PerChannelArgs> per_channel_evaluate_args_;
+  std::string sha256_peer_certificate_digest_;
   TelemetryStorage telemetry_storage_;
 };
 

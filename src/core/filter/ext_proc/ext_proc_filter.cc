@@ -17,10 +17,9 @@
 #include "src/core/filter/ext_proc/ext_proc_filter.h"
 
 #include <grpc/event_engine/event_engine.h>
-#include <grpc/grpc_security.h>
-#include <grpc/grpc_security_constants.h>
 #include <grpc/impl/channel_arg_names.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -29,10 +28,9 @@
 #include "src/core/call/call_spine.h"
 #include "src/core/call/evaluate_args.h"
 #include "src/core/call/metadata.h"
-#include "src/core/call/security_context.h"
 #include "src/core/client_channel/client_channel_args.h"
+#include "src/core/config/core_configuration.h"
 #include "src/core/filter/ext_proc/ext_proc_messages.h"
-#include "src/core/handshaker/endpoint_info/endpoint_info_handshaker.h"
 #include "src/core/lib/channel/channel_args.h"
 #include "src/core/lib/channel/promise_based_filter.h"
 #include "src/core/lib/debug/trace_impl.h"
@@ -51,17 +49,14 @@
 #include "src/core/telemetry/metrics.h"
 #include "src/core/util/down_cast.h"
 #include "src/core/util/dual_ref_counted.h"
-#include "src/core/util/host_port.h"
 #include "src/core/util/ref_counted_ptr.h"
 #include "src/core/util/string.h"
 #include "src/core/util/time.h"
-#include "src/core/util/uri.h"
 #include "src/core/xds/grpc/streaming_call_promise_wrapper.h"
 #include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/xds_client/xds_transport.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "absl/strings/numbers.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 
@@ -71,10 +66,10 @@ namespace grpc_core {
 // ExtProcFilter::ClientTelemetryDomain
 //
 
-ExtProcFilter::TelemetryDomain::DoubleHistogramHandle<
+ExtProcFilter::ClientTelemetryDomain::DoubleHistogramHandle<
     ExponentialDoubleHistogramShape>
-    ExtProcFilter::TelemetryDomain::kClientHeadersDuration =
-        ExtProcFilter::TelemetryDomain::RegisterDoubleHistogram<
+    ExtProcFilter::ClientTelemetryDomain::kClientHeadersDuration =
+        ExtProcFilter::ClientTelemetryDomain::RegisterDoubleHistogram<
             ExponentialDoubleHistogramShape>(
             "grpc.client_ext_proc.client_headers_duration",
             "Time between when the ext_proc filter sees the client's headers "
@@ -82,10 +77,10 @@ ExtProcFilter::TelemetryDomain::DoubleHistogramHandle<
             "filter.",
             "s", 60, 20);
 
-ExtProcFilter::TelemetryDomain::DoubleHistogramHandle<
+ExtProcFilter::ClientTelemetryDomain::DoubleHistogramHandle<
     ExponentialDoubleHistogramShape>
-    ExtProcFilter::TelemetryDomain::kClientHalfCloseDuration =
-        ExtProcFilter::TelemetryDomain::RegisterDoubleHistogram<
+    ExtProcFilter::ClientTelemetryDomain::kClientHalfCloseDuration =
+        ExtProcFilter::ClientTelemetryDomain::RegisterDoubleHistogram<
             ExponentialDoubleHistogramShape>(
             "grpc.client_ext_proc.client_half_close_duration",
             "Time between when the ext_proc filter sees the client's "
@@ -93,10 +88,10 @@ ExtProcFilter::TelemetryDomain::DoubleHistogramHandle<
             "the next filter.",
             "s", 60, 20);
 
-ExtProcFilter::TelemetryDomain::DoubleHistogramHandle<
+ExtProcFilter::ClientTelemetryDomain::DoubleHistogramHandle<
     ExponentialDoubleHistogramShape>
-    ExtProcFilter::TelemetryDomain::kServerHeadersDuration =
-        ExtProcFilter::TelemetryDomain::RegisterDoubleHistogram<
+    ExtProcFilter::ClientTelemetryDomain::kServerHeadersDuration =
+        ExtProcFilter::ClientTelemetryDomain::RegisterDoubleHistogram<
             ExponentialDoubleHistogramShape>(
             "grpc.client_ext_proc.server_headers_duration",
             "Time between when the ext_proc filter sees the server's headers "
@@ -104,10 +99,10 @@ ExtProcFilter::TelemetryDomain::DoubleHistogramHandle<
             "filter.",
             "s", 60, 20);
 
-ExtProcFilter::TelemetryDomain::DoubleHistogramHandle<
+ExtProcFilter::ClientTelemetryDomain::DoubleHistogramHandle<
     ExponentialDoubleHistogramShape>
-    ExtProcFilter::TelemetryDomain::kServerTrailersDuration =
-        ExtProcFilter::TelemetryDomain::RegisterDoubleHistogram<
+    ExtProcFilter::ClientTelemetryDomain::kServerTrailersDuration =
+        ExtProcFilter::ClientTelemetryDomain::RegisterDoubleHistogram<
             ExponentialDoubleHistogramShape>(
             "grpc.client_ext_proc.server_trailers_duration",
             "Time between when the ext_proc filter sees the server's "
@@ -119,40 +114,44 @@ ExtProcFilter::TelemetryDomain::DoubleHistogramHandle<
 // ExtProcFilter::ServerTelemetryDomain
 //
 
-ExtProcFilter::ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+ExtProcFilter::ServerTelemetryDomain::DoubleHistogramHandle<
+    ExponentialDoubleHistogramShape>
     ExtProcFilter::ServerTelemetryDomain::kClientHeadersDuration =
-        ExtProcFilter::ServerTelemetryDomain::RegisterHistogram<
-            ExponentialHistogramShape>(
+        ExtProcFilter::ServerTelemetryDomain::RegisterDoubleHistogram<
+            ExponentialDoubleHistogramShape>(
             "grpc.server_ext_proc.client_headers_duration",
             "Time between when the ext_proc filter sees the client's headers "
             "and when it allows those headers to continue on to the next "
             "filter.",
             "s", 60, 20);
 
-ExtProcFilter::ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+ExtProcFilter::ServerTelemetryDomain::DoubleHistogramHandle<
+    ExponentialDoubleHistogramShape>
     ExtProcFilter::ServerTelemetryDomain::kClientHalfCloseDuration =
-        ExtProcFilter::ServerTelemetryDomain::RegisterHistogram<
-            ExponentialHistogramShape>(
+        ExtProcFilter::ServerTelemetryDomain::RegisterDoubleHistogram<
+            ExponentialDoubleHistogramShape>(
             "grpc.server_ext_proc.client_half_close_duration",
             "Time between when the ext_proc filter sees the client's "
             "half-close and when it allows that half-close to continue on to "
             "the next filter.",
             "s", 60, 20);
 
-ExtProcFilter::ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+ExtProcFilter::ServerTelemetryDomain::DoubleHistogramHandle<
+    ExponentialDoubleHistogramShape>
     ExtProcFilter::ServerTelemetryDomain::kServerHeadersDuration =
-        ExtProcFilter::ServerTelemetryDomain::RegisterHistogram<
-            ExponentialHistogramShape>(
+        ExtProcFilter::ServerTelemetryDomain::RegisterDoubleHistogram<
+            ExponentialDoubleHistogramShape>(
             "grpc.server_ext_proc.server_headers_duration",
             "Time between when the ext_proc filter sees the server's headers "
             "and when it allows those headers to continue on to the next "
             "filter.",
             "s", 60, 20);
 
-ExtProcFilter::ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+ExtProcFilter::ServerTelemetryDomain::DoubleHistogramHandle<
+    ExponentialDoubleHistogramShape>
     ExtProcFilter::ServerTelemetryDomain::kServerTrailersDuration =
-        ExtProcFilter::ServerTelemetryDomain::RegisterHistogram<
-            ExponentialHistogramShape>(
+        ExtProcFilter::ServerTelemetryDomain::RegisterDoubleHistogram<
+            ExponentialDoubleHistogramShape>(
             "grpc.server_ext_proc.server_trailers_duration",
             "Time between when the ext_proc filter sees the server's "
             "trailers and when it allows those trailers to continue on to "
@@ -549,36 +548,6 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
     return SideStreamRequestEventState::kExpectNothing;
   }
 
-  // Extracts connection attributes (such as source address/port and TLS
-  // security properties) for server-side CEL attributes in A103.
-  std::optional<ExtProcConnectionAttributes> GetConnectionAttributes() const {
-    if (!ext_proc_filter_->is_server()) return std::nullopt;
-    ExtProcConnectionAttributes attributes;
-    attributes.source_address = std::string(ext_proc_filter_->source_address());
-    attributes.source_port = ext_proc_filter_->source_port();
-    auto* sec_ctx = MaybeGetContext<grpc_server_security_context>();
-    if (sec_ctx != nullptr && sec_ctx->auth_context != nullptr) {
-      auto get_auth_prop = [&](const char* prop_name) -> std::string {
-        grpc_auth_property_iterator it =
-            grpc_auth_context_find_properties_by_name(
-                sec_ctx->auth_context.get(), prop_name);
-        const grpc_auth_property* prop = grpc_auth_property_iterator_next(&it);
-        if (prop != nullptr) {
-          return std::string(prop->value, prop->value_length);
-        }
-        return "";
-      };
-      attributes.requested_server_name =
-          get_auth_prop(GRPC_SSL_SERVER_NAME_PROPERTY_NAME);
-      attributes.tls_version =
-          get_auth_prop(GRPC_SSL_TLS_VERSION_PROPERTY_NAME);
-      attributes.sha256_peer_certificate_digest =
-          get_auth_prop(GRPC_SSL_PEER_SHA256_PROPERTY_NAME);
-    }
-    return attributes;
-  }
-
-  void Orphaned() override { CloseSideStream(); }
   static SideStreamResponseEventState InitialResponseEventState(
       const Config& config) {
     if (config.observability_mode) {
@@ -1186,10 +1155,12 @@ auto ExtProcFilter::ExtProcCall::HandleInitialMetadataFromClient(
       processing_mode = config().processing_mode;
     }
     upb::Arena arena;
-    EvaluateArgs args(client_initial_metadata_.get(), /*channel_args=*/nullptr);
+    EvaluateArgs args(client_initial_metadata_.get(),
+                      ext_proc_filter_->per_channel_evaluate_args());
     auto* header_attributes = CreateExtProcAttributesProtoStruct(
         arena.ptr(), config().request_attributes, args,
-        ext_proc_filter_->default_authority_.as_string_view());
+        ext_proc_filter_->default_authority_.as_string_view(),
+        ext_proc_filter_->sha256_peer_certificate_digest());
     payload = CreateExtProcClientHeadersRequest(
         arena.ptr(), client_initial_metadata_.get(),
         config().forwarding_allowed_headers,
@@ -1200,10 +1171,12 @@ auto ExtProcFilter::ExtProcCall::HandleInitialMetadataFromClient(
   // configured, extract initial attributes from client metadata.
   else if (processing_mode().send_request_body &&
            !config().request_attributes.empty()) {
-    EvaluateArgs args(client_initial_metadata_.get(), /*channel_args=*/nullptr);
+    EvaluateArgs args(client_initial_metadata_.get(),
+                      ext_proc_filter_->per_channel_evaluate_args());
     request_attributes_ = CreateExtProcAttributesProtoStruct(
         request_attributes_arena_.ptr(), config().request_attributes, args,
-        ext_proc_filter_->default_authority_.as_string_view());
+        ext_proc_filter_->default_authority_.as_string_view(),
+        ext_proc_filter_->sha256_peer_certificate_digest());
   }
   const bool call_cancelled =
       !payload.ok() && !HandleSideStreamStatus(payload.status());
@@ -1784,9 +1757,14 @@ ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
       event_engine_(
           args.GetObjectRef<grpc_event_engine::experimental::EventEngine>()),
       default_authority_(Slice::FromCopiedString(
-          args.GetString(is_server_ ? GRPC_ARG_SERVER_URI
-                                    : GRPC_ARG_DEFAULT_AUTHORITY)
-              .value_or(""))),
+          is_server_
+              ? args.GetString(GRPC_ARG_DEFAULT_AUTHORITY).value_or("")
+              : args.GetString(GRPC_ARG_DEFAULT_AUTHORITY)
+                    .value_or(CoreConfiguration::Get()
+                                  .resolver_registry()
+                                  .GetDefaultAuthority(
+                                      args.GetString(GRPC_ARG_SERVER_URI)
+                                          .value_or(""))))),
       telemetry_storage_([&]() -> TelemetryStorage {
         auto stats_plugin_group =
             args.GetObjectRef<GlobalStatsPluginRegistry::StatsPluginGroup>();
@@ -1800,29 +1778,16 @@ ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
             std::move(scope), args.GetString(GRPC_ARG_SERVER_URI).value_or(""));
       }()) {
   if (is_server_) {
-    std::optional<absl::string_view> peer_uri =
-        args.GetString(GRPC_ARG_ENDPOINT_PEER_ADDRESS);
-    if (peer_uri.has_value()) {
-      auto uri = URI::Parse(*peer_uri);
-      if (uri.ok()) {
-        absl::string_view host_view;
-        absl::string_view port_view;
-        if (SplitHostPort(uri->path(), &host_view, &port_view)) {
-          source_address_ = std::string(host_view);
-          int port = 0;
-          if (absl::SimpleAtoi(port_view, &port)) {
-            source_port_ = port;
-          }
-        } else {
-          source_address_ = uri->path();
-        }
-      }
+    auth_context_ = args.GetObjectRef<grpc_auth_context>();
+    per_channel_evaluate_args_.emplace(auth_context_.get(), args);
+    if (std::find(config_->request_attributes.begin(),
+                  config_->request_attributes.end(),
+                  "connection.sha256_peer_certificate_digest") !=
+        config_->request_attributes.end()) {
+      sha256_peer_certificate_digest_ =
+          ComputeSha256PeerCertificateDigest(auth_context_.get());
     }
   }
-  // TODO(rishesh): If the config requests the
-  // connection.sha256_peer_certificate_digest attribute, compute it here (once
-  // per connection) via ComputeSha256PeerCertificateDigest() and pass it to
-  // CreateExtProcAttributesProtoStruct().
 }
 
 ExtProcFilter::~ExtProcFilter() {
@@ -1831,9 +1796,11 @@ ExtProcFilter::~ExtProcFilter() {
 }
 
 void ExtProcFilter::RecordDuration(
-    ClientTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+    ClientTelemetryDomain::DoubleHistogramHandle<
+        ExponentialDoubleHistogramShape>
         client_metric,
-    ServerTelemetryDomain::HistogramHandle<ExponentialHistogramShape>
+    ServerTelemetryDomain::DoubleHistogramHandle<
+        ExponentialDoubleHistogramShape>
         server_metric,
     double duration_seconds) const {
   Match(
@@ -1841,13 +1808,13 @@ void ExtProcFilter::RecordDuration(
       [duration_seconds,
        client_metric](const InstrumentStorageRefPtr<ClientTelemetryDomain>& s) {
         if (s != nullptr) {
-          s->Increment(client_metric, static_cast<int64_t>(duration_seconds));
+          s->Increment(client_metric, duration_seconds);
         }
       },
       [duration_seconds,
        server_metric](const InstrumentStorageRefPtr<ServerTelemetryDomain>& s) {
         if (s != nullptr) {
-          s->Increment(server_metric, static_cast<int64_t>(duration_seconds));
+          s->Increment(server_metric, duration_seconds);
         }
       });
 }
@@ -1856,10 +1823,6 @@ void ExtProcFilter::RecordClientHeadersDuration(double duration_seconds) const {
   RecordDuration(ClientTelemetryDomain::kClientHeadersDuration,
                  ServerTelemetryDomain::kClientHeadersDuration,
                  duration_seconds);
-  if (telemetry_storage_ != nullptr) {
-    telemetry_storage_->Increment(TelemetryDomain::kClientHeadersDuration,
-                                  duration_seconds);
-  }
 }
 
 void ExtProcFilter::RecordClientHalfCloseDuration(
@@ -1873,17 +1836,6 @@ void ExtProcFilter::RecordServerHeadersDuration(double duration_seconds) const {
   RecordDuration(ClientTelemetryDomain::kServerHeadersDuration,
                  ServerTelemetryDomain::kServerHeadersDuration,
                  duration_seconds);
-  if (telemetry_storage_ != nullptr) {
-    telemetry_storage_->Increment(TelemetryDomain::kClientHalfCloseDuration,
-                                  duration_seconds);
-  }
-}
-
-void ExtProcFilter::RecordServerHeadersDuration(double duration_seconds) const {
-  if (telemetry_storage_ != nullptr) {
-    telemetry_storage_->Increment(TelemetryDomain::kServerHeadersDuration,
-                                  duration_seconds);
-  }
 }
 
 void ExtProcFilter::RecordServerTrailersDuration(
@@ -1891,10 +1843,6 @@ void ExtProcFilter::RecordServerTrailersDuration(
   RecordDuration(ClientTelemetryDomain::kServerTrailersDuration,
                  ServerTelemetryDomain::kServerTrailersDuration,
                  duration_seconds);
-  if (telemetry_storage_ != nullptr) {
-    telemetry_storage_->Increment(TelemetryDomain::kServerTrailersDuration,
-                                  duration_seconds);
-  }
 }
 
 void ExtProcFilter::InterceptCall(UnstartedCallHandler unstarted_call_handler) {
