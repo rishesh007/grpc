@@ -107,10 +107,7 @@ ExtProcFilter::ProcessingMode ParseProcessingMode(
     const envoy_extensions_filters_http_ext_proc_v3_ProcessingMode* proto,
     ValidationErrors* errors) {
   ExtProcFilter::ProcessingMode processing_mode;
-  if (proto == nullptr) {
-    errors->AddError("field not set");
-    return processing_mode;
-  }
+  if (proto == nullptr) return processing_mode;
   {
     ValidationErrors::ScopedField field(errors, ".request_header_mode");
     processing_mode.send_request_headers = ParseHeaderProcessingMode(
