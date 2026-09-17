@@ -210,15 +210,7 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
   void RecordServerHeadersDuration(double duration_seconds) const;
   void RecordServerTrailersDuration(double duration_seconds) const;
 
-  void Orphaned() override {
-    GRPC_TRACE_LOG(ext_proc_filter, INFO) 
-        << "ExtProcFilter " << this << " Orphaned()";
-    event_engine_.reset();
-    config_.reset();
-    per_channel_evaluate_args_.reset();
-    auth_context_.reset();
-    telemetry_storage_ = std::monostate{};
-  }
+  void Orphaned() override;
 
   void InterceptCall(UnstartedCallHandler unstarted_call_handler) override;
 

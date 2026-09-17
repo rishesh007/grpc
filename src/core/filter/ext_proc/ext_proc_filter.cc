@@ -47,6 +47,7 @@
 #include "src/core/lib/promise/try_join.h"
 #include "src/core/lib/promise/try_seq.h"
 #include "src/core/telemetry/metrics.h"
+#include "src/core/transport/auth_context.h"
 #include "src/core/util/down_cast.h"
 #include "src/core/util/dual_ref_counted.h"
 #include "src/core/util/ref_counted_ptr.h"
@@ -1788,6 +1789,16 @@ ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
           ComputeSha256PeerCertificateDigest(auth_context_.get());
     }
   }
+}
+
+void ExtProcFilter::Orphaned() {
+  GRPC_TRACE_LOG(ext_proc_filter, INFO)
+      << "ExtProcFilter " << this << " Orphaned()";
+  event_engine_.reset();
+  config_.reset();
+  per_channel_evaluate_args_.reset();
+  auth_context_.reset();
+  telemetry_storage_ = std::monostate{};
 }
 
 ExtProcFilter::~ExtProcFilter() {

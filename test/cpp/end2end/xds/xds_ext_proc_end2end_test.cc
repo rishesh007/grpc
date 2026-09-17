@@ -825,6 +825,7 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
 
   void TearDown() override {
     ext_proc_server_->Shutdown();
+    env_var_.reset();
     XdsEnd2endTest::TearDown();
   }
 
@@ -878,12 +879,44 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     *overrides->mutable_response_attributes() = ext_proc.response_attributes();
     google::protobuf::Any filter_config;
     filter_config.PackFrom(per_route);
-    RouteConfiguration new_route_config = default_route_config_;
+    RouteConfiguration new_route_config = GetParam().filter_on_server()
+                                              ? default_server_route_config_
+                                              : default_route_config_;
     auto* config_map = new_route_config.mutable_virtual_hosts(0)
                            ->mutable_routes(0)
                            ->mutable_typed_per_filter_config();
     (*config_map)[std::string(kFilterInstanceName)] = std::move(filter_config);
     return new_route_config;
+  }
+
+  void SetListenerAndRouteConfiguration(
+      BalancerServerThread* balancer, const Listener& listener,
+      RouteConfiguration route_config = RouteConfiguration(),
+      int backend_port = 0) {
+    if (GetParam().filter_on_server()) {
+      RouteConfiguration server_route_config = default_server_route_config_;
+      if (!route_config.virtual_hosts().empty() &&
+          !route_config.virtual_hosts(0).routes().empty()) {
+        const auto& per_filter_config =
+            route_config.virtual_hosts(0).routes(0).typed_per_filter_config();
+        *server_route_config.mutable_virtual_hosts(0)
+             ->mutable_routes(0)
+             ->mutable_typed_per_filter_config() = per_filter_config;
+      }
+      if (backend_port == 0 && !backends_.empty()) {
+        backend_port = backends_[0]->port();
+      }
+      if (backend_port != 0) {
+        SetServerListenerNameAndRouteConfiguration(
+            balancer, listener, backend_port, server_route_config);
+      }
+    } else {
+      if (route_config.virtual_hosts().empty()) {
+        route_config = default_route_config_;
+      }
+      XdsEnd2endTest::SetListenerAndRouteConfiguration(balancer, listener,
+                                                       route_config);
+    }
   }
 
   void SetFilterConfig(const ExternalProcessor& ext_proc) {
@@ -920,8 +953,7 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     return *ext_proc_server_->ext_proc_service();
   }
 
-  grpc_core::testing::ScopedExperimentalEnvVar env_var_{
-      "GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_CLIENT"};
+  std::optional<grpc_core::testing::ScopedExperimentalEnvVar> env_var_;
   std::unique_ptr<ExtProcServerThread> ext_proc_server_;
 };
 
@@ -2610,11 +2642,15 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcClientHeadersDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_THAT(status, IsStatusOk());
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  EXPECT_TRUE(
-      stats_plugin
-          ->GetHistogramValueByName(
-              "grpc.client_ext_proc.client_headers_duration", {expected_target})
-          .has_value());
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.client_headers_duration"
+          : "grpc.client_ext_proc.client_headers_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 TEST_P(XdsExtProcEnd2endTest, ExtProcClientHalfCloseDurationMetric) {
@@ -2646,11 +2682,15 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcClientHalfCloseDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_THAT(status, IsStatusOk());
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  EXPECT_TRUE(stats_plugin
-                  ->GetHistogramValueByName(
-                      "grpc.client_ext_proc.client_half_close_duration",
-                      {expected_target})
-                  .has_value());
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.client_half_close_duration"
+          : "grpc.client_ext_proc.client_half_close_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 TEST_P(XdsExtProcEnd2endTest, ExtProcServerHeadersDurationMetric) {
@@ -2674,11 +2714,15 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcServerHeadersDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_THAT(status, IsStatusOk());
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  EXPECT_TRUE(
-      stats_plugin
-          ->GetHistogramValueByName(
-              "grpc.client_ext_proc.server_headers_duration", {expected_target})
-          .has_value());
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.server_headers_duration"
+          : "grpc.client_ext_proc.server_headers_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 TEST_P(XdsExtProcEnd2endTest, ExtProcServerTrailersDurationMetric) {
@@ -2703,11 +2747,15 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcServerTrailersDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_THAT(status, IsStatusOk());
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  EXPECT_TRUE(stats_plugin
-                  ->GetHistogramValueByName(
-                      "grpc.client_ext_proc.server_trailers_duration",
-                      {expected_target})
-                  .has_value());
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.server_trailers_duration"
+          : "grpc.client_ext_proc.server_trailers_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 }  // namespace
