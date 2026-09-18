@@ -51,14 +51,14 @@ namespace grpc {
 namespace testing {
 namespace {
 
-using grpc_core::kExtProcInitialWindowSize;
-using grpc_core::kExtProcWindowUpdateThreshold;
 using ::envoy::extensions::filters::http::ext_proc::v3::ExternalProcessor;
 using ::envoy::extensions::filters::http::ext_proc::v3::ExtProcPerRoute;
 using ::envoy::extensions::filters::network::http_connection_manager::v3::
     HttpFilter;
 using ::envoy::service::ext_proc::v3::ProcessingRequest;
 using ::envoy::service::ext_proc::v3::ProcessingResponse;
+using grpc_core::kExtProcInitialWindowSize;
+using grpc_core::kExtProcWindowUpdateThreshold;
 
 constexpr absl::string_view kFilterInstanceName = "ext_proc_instance";
 
@@ -731,8 +731,7 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
       ::envoy::service::ext_proc::v3::ProcessingResponse* response,
       ::envoy::service::ext_proc::v3::BodyMutation* body_mutation,
       absl::string_view body, bool end_of_stream = false,
-      bool request_drain_requests = false,
-      bool request_drain_responses = false,
+      bool request_drain_requests = false, bool request_drain_responses = false,
       bool end_of_stream_without_message = false) {
     if (request_drain_requests) {
       response->set_request_drain_requests(true);
@@ -2991,18 +2990,14 @@ TEST_P(XdsExtProcEnd2endTest,
   ASSERT_TRUE(req.has_value());
   ASSERT_TRUE(req->has_request_headers());
   ASSERT_TRUE(req->has_flow_control_init());
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_downstream_to_sidestream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_sidestream_to_upstream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_upstream_to_sidestream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_sidestream_to_downstream(),
-      kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_downstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_sidestream_to_upstream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_upstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_sidestream_to_downstream(),
+            kExtProcInitialWindowSize);
   auto resp = MakeRequestHeadersMutationResponse({});
   resp.mutable_server_window_update()
       ->set_window_increment_downstream_to_sidestream(32768);
@@ -3034,18 +3029,14 @@ TEST_P(XdsExtProcEnd2endTest,
   ASSERT_TRUE(req.has_value());
   ASSERT_TRUE(req->has_request_body());
   ASSERT_TRUE(req->has_flow_control_init());
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_downstream_to_sidestream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_sidestream_to_upstream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_upstream_to_sidestream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_sidestream_to_downstream(),
-      kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_downstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_sidestream_to_upstream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_upstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_sidestream_to_downstream(),
+            kExtProcInitialWindowSize);
   auto resp = MakeRequestBodyMutationResponse(
       req->request_body().body(), req->request_body().end_of_stream());
   resp.mutable_server_window_update()
@@ -3077,18 +3068,14 @@ TEST_P(XdsExtProcEnd2endTest,
   ASSERT_TRUE(req.has_value());
   ASSERT_TRUE(req->has_response_headers());
   ASSERT_TRUE(req->has_flow_control_init());
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_downstream_to_sidestream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_sidestream_to_upstream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_upstream_to_sidestream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_sidestream_to_downstream(),
-      kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_downstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_sidestream_to_upstream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_upstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_sidestream_to_downstream(),
+            kExtProcInitialWindowSize);
   auto resp = MakeResponseHeadersMutationResponse({});
   resp.mutable_server_window_update()
       ->set_window_increment_downstream_to_sidestream(32768);
@@ -3121,18 +3108,14 @@ TEST_P(XdsExtProcEnd2endTest,
   ASSERT_TRUE(req1.has_value());
   ASSERT_TRUE(req1->has_response_body());
   ASSERT_TRUE(req1->has_flow_control_init());
-  EXPECT_EQ(
-      req1->flow_control_init().initial_window_downstream_to_sidestream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req1->flow_control_init().initial_window_sidestream_to_upstream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req1->flow_control_init().initial_window_upstream_to_sidestream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req1->flow_control_init().initial_window_sidestream_to_downstream(),
-      kExtProcInitialWindowSize);
+  EXPECT_EQ(req1->flow_control_init().initial_window_downstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req1->flow_control_init().initial_window_sidestream_to_upstream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req1->flow_control_init().initial_window_upstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req1->flow_control_init().initial_window_sidestream_to_downstream(),
+            kExtProcInitialWindowSize);
   auto resp1 = MakeResponseBodyMutationResponse(
       req1->response_body().body(), req1->response_body().end_of_stream());
   resp1.mutable_server_window_update()
@@ -3169,18 +3152,14 @@ TEST_P(XdsExtProcEnd2endTest,
   ASSERT_TRUE(req.has_value());
   ASSERT_TRUE(req->has_response_trailers());
   ASSERT_TRUE(req->has_flow_control_init());
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_downstream_to_sidestream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_sidestream_to_upstream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_upstream_to_sidestream(),
-      kExtProcInitialWindowSize);
-  EXPECT_EQ(
-      req->flow_control_init().initial_window_sidestream_to_downstream(),
-      kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_downstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_sidestream_to_upstream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_upstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(req->flow_control_init().initial_window_sidestream_to_downstream(),
+            kExtProcInitialWindowSize);
   auto resp = MakeResponseTrailersMutationResponse({});
   resp.mutable_server_window_update()
       ->set_window_increment_downstream_to_sidestream(32768);
@@ -3326,11 +3305,12 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcFlowControlWindowUpdateThreshold) {
   request.set_message(large_message);
   stream.StartWrite(request);
   auto body_req = ext_proc_stream->GetNextRequest();
-  ASSERT_THAT(body_req, ::testing::Optional(MatchesRequestBody(
-                            EchoRequestMessageIs(large_message), !kEndOfStream)));
-  auto resp = MakeRequestBodyMutationResponse(
-      body_req->request_body().body(),
-      body_req->request_body().end_of_stream());
+  ASSERT_THAT(body_req,
+              ::testing::Optional(MatchesRequestBody(
+                  EchoRequestMessageIs(large_message), !kEndOfStream)));
+  auto resp =
+      MakeRequestBodyMutationResponse(body_req->request_body().body(),
+                                      body_req->request_body().end_of_stream());
   resp.mutable_server_window_update()
       ->set_window_increment_downstream_to_sidestream(40000);
   resp.mutable_server_window_update()
@@ -3339,9 +3319,9 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcFlowControlWindowUpdateThreshold) {
   auto update_req = ext_proc_stream->GetNextRequest();
   ASSERT_TRUE(update_req.has_value());
   ASSERT_TRUE(update_req->has_client_window_update());
-  EXPECT_GE(
-      update_req->client_window_update().window_increment_sidestream_to_upstream(),
-      kExtProcWindowUpdateThreshold);
+  EXPECT_GE(update_req->client_window_update()
+                .window_increment_sidestream_to_upstream(),
+            kExtProcWindowUpdateThreshold);
   EXPECT_TRUE(stream.WaitForWrite());
   EXPECT_THAT(stream.ReadMessage(),
               ::testing::Optional(MatchesEchoResponse(large_message)));
