@@ -484,6 +484,14 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
     return allow && !first_body_message_sent_;
   }
 
+  // Returns pending accumulated client window increments to piggyback on an
+  // outbound request.
+  std::optional<ExtProcClientWindowUpdate> MaybeGetClientWindowUpdate();
+
+  // Dispatches a standalone ClientWindowUpdate if pending increments cross the
+  // threshold or if send windows are exhausted with pending increments.
+  void MaybeSendStandaloneWindowUpdate();
+
   // Fails the intercepted data plane RPC with the given error status by
   // pushing error trailing metadata downstream to the client.
   void CancelCallWithError(absl::Status status) {
@@ -596,6 +604,14 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
   // Latch signaled when the side-stream is closed or drained.
   Latch<void> side_stream_closed_latch_;
 
+  // Flow control windows and pending client window updates in bytes.
+  int64_t downstream_to_sidestream_window_ = kExtProcInitialWindowSize;
+  int64_t upstream_to_sidestream_window_ = kExtProcInitialWindowSize;
+  int64_t pending_increment_sidestream_to_upstream_ = 0;
+  int64_t pending_increment_sidestream_to_downstream_ = 0;
+  Waker downstream_to_sidestream_waker_;
+  Waker upstream_to_sidestream_waker_;
+
   // Send state and waiters for coordinating message sends on the side-stream
   // within the handler_ activity.
   SideStreamSendState ext_proc_send_state_ = SideStreamSendState::kIdle;
@@ -695,6 +711,67 @@ auto ExtProcFilter::ExtProcCall::SendMessageToSideStream(std::string payload) {
         // and policy decisions are handled by HandleSideStreamStatus.
         return Success{};
       });
+}
+
+std::optional<ExtProcClientWindowUpdate>
+ExtProcFilter::ExtProcCall::MaybeGetClientWindowUpdate() {
+  if (config().observability_mode) return std::nullopt;
+  if (pending_increment_sidestream_to_upstream_ == 0 &&
+      pending_increment_sidestream_to_downstream_ == 0) {
+    return std::nullopt;
+  }
+  ExtProcClientWindowUpdate update;
+  update.window_increment_sidestream_to_upstream =
+      std::exchange(pending_increment_sidestream_to_upstream_, 0);
+  update.window_increment_sidestream_to_downstream =
+      std::exchange(pending_increment_sidestream_to_downstream_, 0);
+  return update;
+}
+
+void ExtProcFilter::ExtProcCall::MaybeSendStandaloneWindowUpdate() {
+  if (config().observability_mode || side_stream_closed_latch_.is_set() ||
+      (request_body_drain_state_ != BodyDrainState::kNotDraining &&
+       response_body_drain_state_ != BodyDrainState::kNotDraining) ||
+      ext_proc_send_state_ == SideStreamSendState::kSendFailed) {
+    return;
+  }
+  const bool threshold_reached = pending_increment_sidestream_to_upstream_ >=
+                                     kExtProcWindowUpdateThreshold ||
+                                 pending_increment_sidestream_to_downstream_ >=
+                                     kExtProcWindowUpdateThreshold;
+  const bool window_negative_with_pending =
+      (pending_increment_sidestream_to_upstream_ > 0 ||
+       pending_increment_sidestream_to_downstream_ > 0) &&
+      (downstream_to_sidestream_window_ <= 0 ||
+       upstream_to_sidestream_window_ <= 0);
+  if (!threshold_reached && !window_negative_with_pending) {
+    return;
+  }
+  ExtProcClientWindowUpdate update;
+  update.window_increment_sidestream_to_upstream =
+      std::exchange(pending_increment_sidestream_to_upstream_, 0);
+  update.window_increment_sidestream_to_downstream =
+      std::exchange(pending_increment_sidestream_to_downstream_, 0);
+  if (update.window_increment_sidestream_to_upstream == 0 &&
+      update.window_increment_sidestream_to_downstream == 0) {
+    return;
+  }
+  upb::Arena arena;
+  auto payload = CreateExtProcClientWindowUpdateRequest(arena.ptr(), update);
+  if (!payload.ok()) {
+    HandleSideStreamStatus(payload.status());
+    return;
+  }
+  GRPC_TRACE_LOG(ext_proc_filter, INFO)
+      << DebugTag()
+      << "Sending standalone ClientWindowUpdate: sidestream_to_upstream="
+      << update.window_increment_sidestream_to_upstream
+      << ", sidestream_to_downstream="
+      << update.window_increment_sidestream_to_downstream;
+  handler_.SpawnGuarded("send_client_window_update",
+                        [self = WeakRef(), payload = std::move(*payload)]() {
+                          return self->SendMessageToSideStream(payload);
+                        });
 }
 
 // Spawns the read-from-server loop on initiator_.
@@ -814,6 +891,8 @@ StatusFlag ExtProcFilter::ExtProcCall::HandleClientMessageFromSidestream(
   // Handle message, if any.
   if (!response.mutation.end_of_stream ||
       !response.mutation.end_of_stream_without_message) {
+    pending_increment_sidestream_to_upstream_ += response.mutation.body.size();
+    MaybeSendStandaloneWindowUpdate();
     auto slice = Slice::FromCopiedString(response.mutation.body);
     auto new_msg = initiator_.arena()->MakePooled<Message>(
         SliceBuffer(std::move(slice)), /*flags=*/0);
@@ -942,6 +1021,8 @@ StatusFlag ExtProcFilter::ExtProcCall::HandleServerMessageFromSidestream(
     return Failure{};
   }
   --outstanding_s2c_messages_;
+  pending_increment_sidestream_to_downstream_ += response.mutation.body.size();
+  MaybeSendStandaloneWindowUpdate();
   GRPC_TRACE_LOG(ext_proc_filter, INFO)
       << DebugTag() << "Processing external processor response for server body";
   auto slice = Slice::FromCopiedString(response.mutation.body);
@@ -1032,6 +1113,33 @@ auto ExtProcFilter::ExtProcCall::ProcessSideStreamResponse(
     HandleSideStreamStatus(parsed_response.status());
     return Immediate(StatusFlag(Failure{}));
   }
+  // Parse server_window_update if present.
+  if (parsed_response->server_window_update.has_value()) {
+    const auto& update = *parsed_response->server_window_update;
+    GRPC_TRACE_LOG(ext_proc_filter, INFO)
+        << DebugTag()
+        << "Processing ServerWindowUpdate: downstream_to_sidestream="
+        << update.window_increment_downstream_to_sidestream
+        << ", upstream_to_sidestream="
+        << update.window_increment_upstream_to_sidestream;
+    if (update.window_increment_downstream_to_sidestream < 0 ||
+        update.window_increment_upstream_to_sidestream < 0) {
+      CancelCallWithError(absl::InternalError(
+          "Received negative window increment in ServerWindowUpdate"));
+      return Immediate(StatusFlag(Failure{}));
+    }
+    if (update.window_increment_downstream_to_sidestream > 0) {
+      downstream_to_sidestream_window_ +=
+          update.window_increment_downstream_to_sidestream;
+      downstream_to_sidestream_waker_.Wakeup();
+    }
+    if (update.window_increment_upstream_to_sidestream > 0) {
+      upstream_to_sidestream_window_ +=
+          update.window_increment_upstream_to_sidestream;
+      upstream_to_sidestream_waker_.Wakeup();
+    }
+    MaybeSendStandaloneWindowUpdate();
+  }
   // Handle request body drain initiation.
   if (!side_stream_closed_latch_.is_set() &&
       parsed_response->request_drain_requests &&
@@ -1041,6 +1149,7 @@ auto ExtProcFilter::ExtProcCall::ProcessSideStreamResponse(
       GRPC_TRACE_LOG(ext_proc_filter, INFO)
           << DebugTag() << "initiating request body drain";
       request_body_drain_state_ = BodyDrainState::kDrainInFlight;
+      downstream_to_sidestream_waker_.Wakeup();
       upb::Arena arena;
       auto drain_payload = CreateExtProcClientBodyRequest(
           arena.ptr(), /*body=*/"", /*attributes=*/nullptr,
@@ -1068,6 +1177,7 @@ auto ExtProcFilter::ExtProcCall::ProcessSideStreamResponse(
       GRPC_TRACE_LOG(ext_proc_filter, INFO)
           << DebugTag() << "initiating response body drain";
       response_body_drain_state_ = BodyDrainState::kDrainInFlight;
+      upstream_to_sidestream_waker_.Wakeup();
       upb::Arena arena;
       auto drain_payload = CreateExtProcServerBodyRequest(
           arena.ptr(), /*body=*/"", /*attributes=*/nullptr,
@@ -1115,6 +1225,10 @@ bool ExtProcFilter::ExtProcCall::HandleSideStreamStatus(absl::Status status) {
     return true;
   }
   side_stream_closed_latch_.Set();
+  ext_proc_send_state_ = SideStreamSendState::kSendFailed;
+  ext_proc_send_waiter_.Wake();
+  downstream_to_sidestream_waker_.Wakeup();
+  upstream_to_sidestream_waker_.Wakeup();
   GRPC_TRACE_LOG(ext_proc_filter, INFO)
       << DebugTag() << "status received: " << status;
   const bool has_outstanding_messages =
@@ -1207,7 +1321,8 @@ auto ExtProcFilter::ExtProcCall::HandleInitialMetadataFromClient(
         arena.ptr(), client_initial_metadata_.get(),
         config().forwarding_allowed_headers,
         config().forwarding_disallowed_headers, header_attributes,
-        config().observability_mode, processing_mode);
+        config().observability_mode, processing_mode,
+        MaybeGetClientWindowUpdate());
   }
   // If request body will be sent later and request attributes are
   // configured, extract initial attributes from client metadata.
@@ -1292,6 +1407,10 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromClient(
     }
     if (!config().observability_mode) {
       ++outstanding_c2s_messages_;
+      downstream_to_sidestream_window_ -= message_bytes.size();
+      if (downstream_to_sidestream_window_ <= 0) {
+        MaybeSendStandaloneWindowUpdate();
+      }
     }
     std::optional<ExtProcProcessingMode> processing_mode;
     if (IsFirstMessageOnSideStream()) {
@@ -1302,7 +1421,8 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromClient(
         arena.ptr(), message_bytes, request_attributes_,
         config().observability_mode, processing_mode,
         /*end_of_stream=*/false,
-        /*end_of_stream_without_message=*/false);
+        /*end_of_stream_without_message=*/false,
+        /*drain_complete=*/false, MaybeGetClientWindowUpdate());
     request_attributes_ = nullptr;
   }
   const bool call_cancelled =
@@ -1324,6 +1444,25 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromClient(
                                 }
                                 return Success{};
                               });
+              },
+              Immediate(StatusFlag(Success{}))),
+          // Wait for downstream_to_sidestream_window_ to be positive or
+          // the stream to be closed.
+          If(
+              send_to_sidestream,
+              [self = WeakRef()]() -> Poll<StatusFlag> {
+                if (self->config().observability_mode ||
+                    self->side_stream_closed_latch_.is_set() ||
+                    self->request_body_drain_state_ !=
+                        BodyDrainState::kNotDraining ||
+                    self->ext_proc_send_state_ ==
+                        SideStreamSendState::kSendFailed ||
+                    self->downstream_to_sidestream_window_ > 0) {
+                  return Success{};
+                }
+                self->downstream_to_sidestream_waker_ =
+                    GetContext<Activity>()->MakeNonOwningWaker();
+                return Pending{};
               },
               Immediate(StatusFlag(Success{}))),
           Map(TryJoin<ValueOrFailure>(
@@ -1382,7 +1521,8 @@ auto ExtProcFilter::ExtProcCall::HandleHalfCloseFromClient() {
         arena.ptr(), /*body=*/"", request_attributes_,
         config().observability_mode, processing_mode,
         /*end_of_stream=*/true,
-        /*end_of_stream_without_message=*/true);
+        /*end_of_stream_without_message=*/true,
+        /*drain_complete=*/false, MaybeGetClientWindowUpdate());
     request_attributes_ = nullptr;
   }
   const bool call_cancelled =
@@ -1459,7 +1599,7 @@ auto ExtProcFilter::ExtProcCall::HandleInitialMetadataFromServer(
         config().forwarding_allowed_headers,
         config().forwarding_disallowed_headers,
         /*attributes=*/nullptr, config().observability_mode, processing_mode,
-        /*end_of_stream=*/false);
+        /*end_of_stream=*/false, MaybeGetClientWindowUpdate());
   }
   const bool call_cancelled =
       !payload.ok() && !HandleSideStreamStatus(payload.status());
@@ -1531,13 +1671,14 @@ auto ExtProcFilter::ExtProcCall::HandleTrailingMetadataFromServer(
                         config().forwarding_allowed_headers,
                         config().forwarding_disallowed_headers,
                         /*attributes=*/nullptr, config().observability_mode,
-                        processing_mode, /*end_of_stream=*/true)
+                        processing_mode, /*end_of_stream=*/true,
+                        MaybeGetClientWindowUpdate())
                   : CreateExtProcServerTrailersRequest(
                         arena.ptr(), server_trailing_metadata_.get(),
                         config().forwarding_allowed_headers,
                         config().forwarding_disallowed_headers,
                         /*attributes=*/nullptr, config().observability_mode,
-                        processing_mode);
+                        processing_mode, MaybeGetClientWindowUpdate());
   }
   const bool call_cancelled =
       !payload.ok() && !HandleSideStreamStatus(payload.status());
@@ -1626,6 +1767,10 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromServer(
     }
     if (!config().observability_mode) {
       ++outstanding_s2c_messages_;
+      upstream_to_sidestream_window_ -= message_bytes.size();
+      if (upstream_to_sidestream_window_ <= 0) {
+        MaybeSendStandaloneWindowUpdate();
+      }
     }
     std::optional<ExtProcProcessingMode> processing_mode;
     if (IsFirstMessageOnSideStream()) {
@@ -1634,7 +1779,8 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromServer(
     upb::Arena arena;
     payload = CreateExtProcServerBodyRequest(
         arena.ptr(), message_bytes, /*attributes=*/nullptr,
-        config().observability_mode, processing_mode);
+        config().observability_mode, processing_mode,
+        /*drain_complete=*/false, MaybeGetClientWindowUpdate());
   }
   const bool call_cancelled =
       !payload.ok() && !HandleSideStreamStatus(payload.status());
@@ -1655,6 +1801,25 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromServer(
                                 }
                                 return Success{};
                               });
+              },
+              Immediate(StatusFlag(Success{}))),
+          // Wait for upstream_to_sidestream_window_ to be positive or the
+          // stream to be closed.
+          If(
+              send_to_sidestream,
+              [self = WeakRef()]() -> Poll<StatusFlag> {
+                if (self->config().observability_mode ||
+                    self->side_stream_closed_latch_.is_set() ||
+                    self->response_body_drain_state_ !=
+                        BodyDrainState::kNotDraining ||
+                    self->ext_proc_send_state_ ==
+                        SideStreamSendState::kSendFailed ||
+                    self->upstream_to_sidestream_window_ > 0) {
+                  return Success{};
+                }
+                self->upstream_to_sidestream_waker_ =
+                    GetContext<Activity>()->MakeNonOwningWaker();
+                return Pending{};
               },
               Immediate(StatusFlag(Success{}))),
           Map(TryJoin<ValueOrFailure>(
