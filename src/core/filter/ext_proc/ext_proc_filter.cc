@@ -484,10 +484,6 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
     return allow && !first_body_message_sent_;
   }
 
-  bool IsSideStreamFailureFatal() const {
-    return !IsFailOpenAllowed();
-  }
-
   // Returns a promise that resolves once the downstream_to_sidestream_window_
   // is positive or the stream is closed.
   auto WaitForClientSendWindow();
@@ -507,13 +503,6 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
   // pushing error trailing metadata downstream to the client.
   void CancelCallWithError(absl::Status status) {
     GRPC_CHECK(!status.ok());
-    if (!side_stream_closed_latch_.is_set()) {
-      side_stream_closed_latch_.Set();
-      ext_proc_send_state_ = SideStreamSendState::kSendFailed;
-      ext_proc_send_waiter_.Wake();
-      downstream_to_sidestream_waiters_.TakeWakeupSet().Wakeup();
-      upstream_to_sidestream_waiters_.TakeWakeupSet().Wakeup();
-    }
     auto error_md = CancelledServerMetadataFromStatus(status);
     handler_.PushServerTrailingMetadata(std::move(error_md));
   }
@@ -627,8 +616,8 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
   int64_t upstream_to_sidestream_window_ = kExtProcInitialWindowSize;
   int64_t pending_increment_sidestream_to_upstream_ = 0;
   int64_t pending_increment_sidestream_to_downstream_ = 0;
-  WaitSet downstream_to_sidestream_waiters_;
-  WaitSet upstream_to_sidestream_waiters_;
+  Waker downstream_to_sidestream_waker_;
+  Waker upstream_to_sidestream_waker_;
 
   // Send state and waiters for coordinating message sends on the side-stream
   // within the handler_ activity.
@@ -740,8 +729,9 @@ auto ExtProcFilter::ExtProcCall::WaitForClientSendWindow() {
         self->downstream_to_sidestream_window_ > 0) {
       return Success{};
     }
-    return self->downstream_to_sidestream_waiters_.AddPending(
-        GetContext<Activity>()->MakeNonOwningWaker());
+    self->downstream_to_sidestream_waker_ =
+        GetContext<Activity>()->MakeNonOwningWaker();
+    return Pending{};
   };
 }
 
@@ -754,8 +744,9 @@ auto ExtProcFilter::ExtProcCall::WaitForServerSendWindow() {
         self->upstream_to_sidestream_window_ > 0) {
       return Success{};
     }
-    return self->upstream_to_sidestream_waiters_.AddPending(
-        GetContext<Activity>()->MakeNonOwningWaker());
+    self->upstream_to_sidestream_waker_ =
+        GetContext<Activity>()->MakeNonOwningWaker();
+    return Pending{};
   };
 }
 
@@ -1084,9 +1075,6 @@ StatusFlag ExtProcFilter::ExtProcCall::HandleServerMessageFromSidestream(
 StatusFlag
 ExtProcFilter::ExtProcCall::HandleServerTrailingMetadataFromSidestream(
     const ExtProcResponse::ResponseTrailers& response) {
-  if (config().observability_mode) {
-    return Success{};
-  }
   if (response_event_state_ !=
           SideStreamResponseEventState::kExpectBodyOrTrailers &&
       response_event_state_ != SideStreamResponseEventState::kExpectTrailers) {
@@ -1180,12 +1168,12 @@ auto ExtProcFilter::ExtProcCall::ProcessSideStreamResponse(
     if (update.window_increment_downstream_to_sidestream > 0) {
       downstream_to_sidestream_window_ +=
           update.window_increment_downstream_to_sidestream;
-      downstream_to_sidestream_waiters_.TakeWakeupSet().Wakeup();
+      downstream_to_sidestream_waker_.Wakeup();
     }
     if (update.window_increment_upstream_to_sidestream > 0) {
       upstream_to_sidestream_window_ +=
           update.window_increment_upstream_to_sidestream;
-      upstream_to_sidestream_waiters_.TakeWakeupSet().Wakeup();
+      upstream_to_sidestream_waker_.Wakeup();
     }
     MaybeSendStandaloneWindowUpdate();
   }
@@ -1198,7 +1186,7 @@ auto ExtProcFilter::ExtProcCall::ProcessSideStreamResponse(
       GRPC_TRACE_LOG(ext_proc_filter, INFO)
           << DebugTag() << "initiating request body drain";
       request_body_drain_state_ = BodyDrainState::kDrainInFlight;
-      downstream_to_sidestream_waiters_.TakeWakeupSet().Wakeup();
+      downstream_to_sidestream_waker_.Wakeup();
       upb::Arena arena;
       auto drain_payload = CreateExtProcClientBodyRequest(
           arena.ptr(), /*body=*/"", /*attributes=*/nullptr,
@@ -1226,7 +1214,7 @@ auto ExtProcFilter::ExtProcCall::ProcessSideStreamResponse(
       GRPC_TRACE_LOG(ext_proc_filter, INFO)
           << DebugTag() << "initiating response body drain";
       response_body_drain_state_ = BodyDrainState::kDrainInFlight;
-      upstream_to_sidestream_waiters_.TakeWakeupSet().Wakeup();
+      upstream_to_sidestream_waker_.Wakeup();
       upb::Arena arena;
       auto drain_payload = CreateExtProcServerBodyRequest(
           arena.ptr(), /*body=*/"", /*attributes=*/nullptr,
@@ -1276,8 +1264,8 @@ bool ExtProcFilter::ExtProcCall::HandleSideStreamStatus(absl::Status status) {
   side_stream_closed_latch_.Set();
   ext_proc_send_state_ = SideStreamSendState::kSendFailed;
   ext_proc_send_waiter_.Wake();
-  downstream_to_sidestream_waiters_.TakeWakeupSet().Wakeup();
-  upstream_to_sidestream_waiters_.TakeWakeupSet().Wakeup();
+  downstream_to_sidestream_waker_.Wakeup();
+  upstream_to_sidestream_waker_.Wakeup();
   GRPC_TRACE_LOG(ext_proc_filter, INFO)
       << DebugTag() << "status received: " << status;
   const bool has_outstanding_messages =
@@ -1471,8 +1459,7 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromClient(
         config().observability_mode, processing_mode,
         /*end_of_stream=*/false,
         /*end_of_stream_without_message=*/false,
-        /*drain_complete=*/false,
-        MaybeGetClientWindowUpdate());
+        /*drain_complete=*/false, MaybeGetClientWindowUpdate());
     request_attributes_ = nullptr;
   }
   const bool call_cancelled =
@@ -1498,9 +1485,7 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromClient(
               Immediate(StatusFlag(Success{}))),
           If(
               send_to_sidestream,
-              [self = WeakRef()]() {
-                return self->WaitForClientSendWindow();
-              },
+              [self = WeakRef()]() { return self->WaitForClientSendWindow(); },
               Immediate(StatusFlag(Success{}))),
           Map(TryJoin<ValueOrFailure>(
                   // Forward client message to backend if not waiting for
@@ -1559,8 +1544,7 @@ auto ExtProcFilter::ExtProcCall::HandleHalfCloseFromClient() {
         config().observability_mode, processing_mode,
         /*end_of_stream=*/true,
         /*end_of_stream_without_message=*/true,
-        /*drain_complete=*/false,
-        MaybeGetClientWindowUpdate());
+        /*drain_complete=*/false, MaybeGetClientWindowUpdate());
     request_attributes_ = nullptr;
   }
   const bool call_cancelled =
@@ -1716,8 +1700,7 @@ auto ExtProcFilter::ExtProcCall::HandleTrailingMetadataFromServer(
                         config().forwarding_allowed_headers,
                         config().forwarding_disallowed_headers,
                         /*attributes=*/nullptr, config().observability_mode,
-                        processing_mode,
-                        MaybeGetClientWindowUpdate());
+                        processing_mode, MaybeGetClientWindowUpdate());
   }
   const bool call_cancelled =
       !payload.ok() && !HandleSideStreamStatus(payload.status());
@@ -1819,8 +1802,7 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromServer(
     payload = CreateExtProcServerBodyRequest(
         arena.ptr(), message_bytes, /*attributes=*/nullptr,
         config().observability_mode, processing_mode,
-        /*drain_complete=*/false,
-        MaybeGetClientWindowUpdate());
+        /*drain_complete=*/false, MaybeGetClientWindowUpdate());
   }
   const bool call_cancelled =
       !payload.ok() && !HandleSideStreamStatus(payload.status());
@@ -1845,9 +1827,7 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromServer(
               Immediate(StatusFlag(Success{}))),
           If(
               send_to_sidestream,
-              [self = WeakRef()]() {
-                return self->WaitForServerSendWindow();
-              },
+              [self = WeakRef()]() { return self->WaitForServerSendWindow(); },
               Immediate(StatusFlag(Success{}))),
           Map(TryJoin<ValueOrFailure>(
                   // Forward server message downstream to client if not waiting
