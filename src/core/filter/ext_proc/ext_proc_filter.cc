@@ -484,13 +484,6 @@ class ExtProcFilter::ExtProcCall final : public DualRefCounted<ExtProcCall> {
     return allow && !first_body_message_sent_;
   }
 
-  // Returns a promise that resolves once the downstream_to_sidestream_window_
-  // is positive or the stream is closed.
-  auto WaitForClientSendWindow();
-  // Returns a promise that resolves once the upstream_to_sidestream_window_
-  // is positive or the stream is closed.
-  auto WaitForServerSendWindow();
-
   // Returns pending accumulated client window increments to piggyback on an
   // outbound request.
   std::optional<ExtProcClientWindowUpdate> MaybeGetClientWindowUpdate();
@@ -718,36 +711,6 @@ auto ExtProcFilter::ExtProcCall::SendMessageToSideStream(std::string payload) {
         // and policy decisions are handled by HandleSideStreamStatus.
         return Success{};
       });
-}
-
-auto ExtProcFilter::ExtProcCall::WaitForClientSendWindow() {
-  return [self = WeakRef()]() -> Poll<StatusFlag> {
-    if (self->config().observability_mode ||
-        self->side_stream_closed_latch_.is_set() ||
-        self->request_body_drain_state_ != BodyDrainState::kNotDraining ||
-        self->ext_proc_send_state_ == SideStreamSendState::kSendFailed ||
-        self->downstream_to_sidestream_window_ > 0) {
-      return Success{};
-    }
-    self->downstream_to_sidestream_waker_ =
-        GetContext<Activity>()->MakeNonOwningWaker();
-    return Pending{};
-  };
-}
-
-auto ExtProcFilter::ExtProcCall::WaitForServerSendWindow() {
-  return [self = WeakRef()]() -> Poll<StatusFlag> {
-    if (self->config().observability_mode ||
-        self->side_stream_closed_latch_.is_set() ||
-        self->response_body_drain_state_ != BodyDrainState::kNotDraining ||
-        self->ext_proc_send_state_ == SideStreamSendState::kSendFailed ||
-        self->upstream_to_sidestream_window_ > 0) {
-      return Success{};
-    }
-    self->upstream_to_sidestream_waker_ =
-        GetContext<Activity>()->MakeNonOwningWaker();
-    return Pending{};
-  };
 }
 
 std::optional<ExtProcClientWindowUpdate>
@@ -1483,9 +1446,24 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromClient(
                               });
               },
               Immediate(StatusFlag(Success{}))),
+          // Wait for downstream_to_sidestream_window_ to be positive or
+          // the stream to be closed.
           If(
               send_to_sidestream,
-              [self = WeakRef()]() { return self->WaitForClientSendWindow(); },
+              [self = WeakRef()]() -> Poll<StatusFlag> {
+                if (self->config().observability_mode ||
+                    self->side_stream_closed_latch_.is_set() ||
+                    self->request_body_drain_state_ !=
+                        BodyDrainState::kNotDraining ||
+                    self->ext_proc_send_state_ ==
+                        SideStreamSendState::kSendFailed ||
+                    self->downstream_to_sidestream_window_ > 0) {
+                  return Success{};
+                }
+                self->downstream_to_sidestream_waker_ =
+                    GetContext<Activity>()->MakeNonOwningWaker();
+                return Pending{};
+              },
               Immediate(StatusFlag(Success{}))),
           Map(TryJoin<ValueOrFailure>(
                   // Forward client message to backend if not waiting for
@@ -1825,9 +1803,24 @@ auto ExtProcFilter::ExtProcCall::HandleMessageFromServer(
                               });
               },
               Immediate(StatusFlag(Success{}))),
+          // Wait for upstream_to_sidestream_window_ to be positive or the
+          // stream to be closed.
           If(
               send_to_sidestream,
-              [self = WeakRef()]() { return self->WaitForServerSendWindow(); },
+              [self = WeakRef()]() -> Poll<StatusFlag> {
+                if (self->config().observability_mode ||
+                    self->side_stream_closed_latch_.is_set() ||
+                    self->response_body_drain_state_ !=
+                        BodyDrainState::kNotDraining ||
+                    self->ext_proc_send_state_ ==
+                        SideStreamSendState::kSendFailed ||
+                    self->upstream_to_sidestream_window_ > 0) {
+                  return Success{};
+                }
+                self->upstream_to_sidestream_waker_ =
+                    GetContext<Activity>()->MakeNonOwningWaker();
+                return Pending{};
+              },
               Immediate(StatusFlag(Success{}))),
           Map(TryJoin<ValueOrFailure>(
                   // Forward server message downstream to client if not waiting
