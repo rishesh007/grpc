@@ -144,9 +144,8 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
   bool is_server() const { return is_server_; }
   const EvaluateArgs::PerChannelArgs* per_channel_evaluate_args() const {
-    return per_channel_evaluate_args_.has_value()
-               ? &*per_channel_evaluate_args_
-               : nullptr;
+    return per_channel_evaluate_args_.has_value() ? &*per_channel_evaluate_args_
+                                                  : nullptr;
   }
   absl::string_view sha256_peer_certificate_digest() const {
     return sha256_peer_certificate_digest_;
@@ -196,14 +195,13 @@ class ExtProcFilter final : public V3InterceptorToV2Bridge<ExtProcFilter> {
 
   RefCountedPtr<ExtProcChannel> channel() const { return config_->channel(); }
 
-  void RecordDuration(
-      ClientTelemetryDomain::DoubleHistogramHandle<
-          ExponentialDoubleHistogramShape>
-          client_metric,
-      ServerTelemetryDomain::DoubleHistogramHandle<
-          ExponentialDoubleHistogramShape>
-          server_metric,
-      double duration_seconds) const;
+  void RecordDuration(ClientTelemetryDomain::DoubleHistogramHandle<
+                          ExponentialDoubleHistogramShape>
+                          client_metric,
+                      ServerTelemetryDomain::DoubleHistogramHandle<
+                          ExponentialDoubleHistogramShape>
+                          server_metric,
+                      double duration_seconds) const;
 
   void RecordClientHeadersDuration(double duration_seconds) const;
   void RecordClientHalfCloseDuration(double duration_seconds) const;
