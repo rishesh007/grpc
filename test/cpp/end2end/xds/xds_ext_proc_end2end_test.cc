@@ -803,6 +803,14 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
   }
 
   void SetUp() override {
+    if (GetParam().filter_on_server() &&
+        !grpc_core::IsXdsServerFilterChainPerRouteEnabled()) {
+      GTEST_SKIP()
+          << "test requires xds_server_filter_chain_per_route experiment";
+    }
+    env_var_.emplace(GetParam().filter_on_server()
+                         ? "GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_SERVER"
+                         : "GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_CLIENT");
     InitClient(MakeBootstrapBuilder().SetTrustedXdsServer(),
                /*lb_expected_authority=*/"",
                /*xds_resource_does_not_exist_timeout_ms=*/0,
@@ -817,17 +825,41 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
 
   void TearDown() override {
     ext_proc_server_->Shutdown();
+    env_var_.reset();
     XdsEnd2endTest::TearDown();
   }
 
-  Listener BuildListenerWithExtProcFilter(const ExternalProcessor& ext_proc) {
-    Listener listener = default_listener_;
-    HttpConnectionManager hcm = ClientHcmAccessor().Unpack(listener);
+  void CreateAndStartBackends(
+      size_t num_backends = 1,
+      std::shared_ptr<ServerCredentials> credentials = nullptr) {
+    XdsEnd2endTest::CreateAndStartBackends(
+        num_backends, /*xds_enabled=*/GetParam().filter_on_server(),
+        std::move(credentials));
+    if (GetParam().filter_on_server()) {
+      for (size_t i = 0; i < num_backends; ++i) {
+        EXPECT_THAT(backends_[i]->GetNextStatus(),
+                    ::testing::Optional(absl::OkStatus()));
+      }
+    }
+  }
+
+  Listener BuildListenerWithExtProcFilter(
+      const ExternalProcessor& ext_proc) const {
+    Listener listener;
+    std::unique_ptr<HcmAccessor> hcm_accessor;
+    if (GetParam().filter_on_server()) {
+      listener = default_server_listener_;
+      hcm_accessor = std::make_unique<ServerHcmAccessor>();
+    } else {
+      listener = default_listener_;
+      hcm_accessor = std::make_unique<ClientHcmAccessor>();
+    }
+    HttpConnectionManager hcm = hcm_accessor->Unpack(listener);
     HttpFilter* filter0 = hcm.mutable_http_filters(0);
     *hcm.add_http_filters() = *filter0;
     filter0->set_name(kFilterInstanceName);
     filter0->mutable_typed_config()->PackFrom(ext_proc);
-    ClientHcmAccessor().Pack(hcm, &listener);
+    hcm_accessor->Pack(hcm, &listener);
     return listener;
   }
 
@@ -847,12 +879,44 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     *overrides->mutable_response_attributes() = ext_proc.response_attributes();
     google::protobuf::Any filter_config;
     filter_config.PackFrom(per_route);
-    RouteConfiguration new_route_config = default_route_config_;
+    RouteConfiguration new_route_config = GetParam().filter_on_server()
+                                              ? default_server_route_config_
+                                              : default_route_config_;
     auto* config_map = new_route_config.mutable_virtual_hosts(0)
                            ->mutable_routes(0)
                            ->mutable_typed_per_filter_config();
     (*config_map)[std::string(kFilterInstanceName)] = std::move(filter_config);
     return new_route_config;
+  }
+
+  void SetListenerAndRouteConfiguration(
+      BalancerServerThread* balancer, const Listener& listener,
+      RouteConfiguration route_config = RouteConfiguration(),
+      int backend_port = 0) {
+    if (GetParam().filter_on_server()) {
+      RouteConfiguration server_route_config = default_server_route_config_;
+      if (!route_config.virtual_hosts().empty() &&
+          !route_config.virtual_hosts(0).routes().empty()) {
+        const auto& per_filter_config =
+            route_config.virtual_hosts(0).routes(0).typed_per_filter_config();
+        *server_route_config.mutable_virtual_hosts(0)
+             ->mutable_routes(0)
+             ->mutable_typed_per_filter_config() = per_filter_config;
+      }
+      if (backend_port == 0 && !backends_.empty()) {
+        backend_port = backends_[0]->port();
+      }
+      if (backend_port != 0) {
+        SetServerListenerNameAndRouteConfiguration(
+            balancer, listener, backend_port, server_route_config);
+      }
+    } else {
+      if (route_config.virtual_hosts().empty()) {
+        route_config = default_route_config_;
+      }
+      XdsEnd2endTest::SetListenerAndRouteConfiguration(balancer, listener,
+                                                       route_config);
+    }
   }
 
   void SetFilterConfig(const ExternalProcessor& ext_proc) {
@@ -889,16 +953,19 @@ class XdsExtProcEnd2endTest : public XdsEnd2endTest {
     return *ext_proc_server_->ext_proc_service();
   }
 
-  grpc_core::testing::ScopedExperimentalEnvVar env_var_{
-      "GRPC_EXPERIMENTAL_XDS_EXT_PROC_ON_CLIENT"};
+  std::optional<grpc_core::testing::ScopedExperimentalEnvVar> env_var_;
   std::unique_ptr<ExtProcServerThread> ext_proc_server_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
     XdsTest, XdsExtProcEnd2endTest,
-    ::testing::Values(XdsTestType(),
-                      XdsTestType().set_filter_config_setup(
-                          XdsTestType::kHttpFilterConfigInRoute)),
+    ::testing::Values(
+        XdsTestType(),
+        XdsTestType().set_filter_config_setup(
+            XdsTestType::kHttpFilterConfigInRoute),
+        XdsTestType().set_filter_on_server(),
+        XdsTestType().set_filter_on_server().set_filter_config_setup(
+            XdsTestType::kHttpFilterConfigInRoute)),
     &XdsTestType::Name);
 
 MATCHER(IsStatusOk, "") {
@@ -2599,11 +2666,15 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcClientHeadersDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_THAT(status, IsStatusOk());
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  EXPECT_TRUE(
-      stats_plugin
-          ->GetHistogramValueByName(
-              "grpc.client_ext_proc.client_headers_duration", {expected_target})
-          .has_value());
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.client_headers_duration"
+          : "grpc.client_ext_proc.client_headers_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 TEST_P(XdsExtProcEnd2endTest, ExtProcClientHalfCloseDurationMetric) {
@@ -2635,11 +2706,15 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcClientHalfCloseDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_THAT(status, IsStatusOk());
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  EXPECT_TRUE(stats_plugin
-                  ->GetHistogramValueByName(
-                      "grpc.client_ext_proc.client_half_close_duration",
-                      {expected_target})
-                  .has_value());
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.client_half_close_duration"
+          : "grpc.client_ext_proc.client_half_close_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 TEST_P(XdsExtProcEnd2endTest, ExtProcServerHeadersDurationMetric) {
@@ -2663,11 +2738,15 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcServerHeadersDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_THAT(status, IsStatusOk());
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  EXPECT_TRUE(
-      stats_plugin
-          ->GetHistogramValueByName(
-              "grpc.client_ext_proc.server_headers_duration", {expected_target})
-          .has_value());
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.server_headers_duration"
+          : "grpc.client_ext_proc.server_headers_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 TEST_P(XdsExtProcEnd2endTest, ExtProcServerTrailersDurationMetric) {
@@ -2692,11 +2771,15 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcServerTrailersDurationMetric) {
   Status status = rpc.GetStatus();
   EXPECT_THAT(status, IsStatusOk());
   const std::string expected_target = absl::StrCat("xds:", kServerName);
-  EXPECT_TRUE(stats_plugin
-                  ->GetHistogramValueByName(
-                      "grpc.client_ext_proc.server_trailers_duration",
-                      {expected_target})
-                  .has_value());
+  const std::string metric_name =
+      GetParam().filter_on_server()
+          ? "grpc.server_ext_proc.server_trailers_duration"
+          : "grpc.client_ext_proc.server_trailers_duration";
+  const std::vector<absl::string_view> labels =
+      GetParam().filter_on_server()
+          ? std::vector<absl::string_view>{}
+          : std::vector<absl::string_view>{expected_target};
+  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 }  // namespace
@@ -2713,6 +2796,7 @@ int main(int argc, char** argv) {
   grpc_core::ConfigVars::SetOverrides(overrides);
   grpc_core::ForceEnableExperiment("v2_non_owning_waker_implementation", true);
   grpc_core::ForceEnableExperiment("recv_message_filter_bypass_fix", true);
+  grpc_core::ForceEnableExperiment("xds_server_filter_chain_per_route", true);
   grpc_init();
   const auto result = RUN_ALL_TESTS();
   grpc_shutdown();

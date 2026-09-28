@@ -939,6 +939,13 @@ bool BaseCallData::ReceiveMessage::IsIdle() const {
   }
 }
 
+void BaseCallData::ReceiveMessage::CloseInboundPipe() {
+  if (state_ == State::kIdle || state_ == State::kCancelledWhilstIdle) {
+    interceptor()->Push()->Close();
+    state_ = State::kCancelled;
+  }
+}
+
 void BaseCallData::ReceiveMessage::WakeInsideCombiner(Flusher* flusher,
                                                       bool allow_push_to_pipe) {
   GRPC_TRACE_LOG(channel, INFO)
@@ -2670,6 +2677,16 @@ void ServerCallData::WakeInsideCombiner(Flusher* flusher) {
   if (receive_message() != nullptr) {
     receive_message()->WakeInsideCombiner(flusher, true);
   }
+  // Server ends the RPC with OK status and is no longer reading messages:
+  // close the inbound messages pipe with clean EOF so filters observe client
+  // half-close.
+  if (receive_message() != nullptr && receive_message()->IsIdle() &&
+      (send_trailing_state_ == SendTrailingState::kQueued ||
+       send_trailing_state_ == SendTrailingState::kQueuedBehindSendMessage ||
+       send_trailing_state_ ==
+           SendTrailingState::kQueuedButHaventClosedSends)) {
+    receive_message()->CloseInboundPipe();
+  }
   if (promise_.has_value()) {
     Poll<ServerMetadataHandle> poll;
     poll = promise_();
@@ -2698,11 +2715,13 @@ void ServerCallData::WakeInsideCombiner(Flusher* flusher) {
              });
 
       if (auto* nr = p.value_if_ready()) {
-        ServerMetadataHandle md = std::move(nr->value());
-        if (send_initial_metadata_->batch->payload->send_initial_metadata
-                .send_initial_metadata != md.get()) {
-          *send_initial_metadata_->batch->payload->send_initial_metadata
-               .send_initial_metadata = std::move(*md);
+        if (nr->has_value()) {
+          ServerMetadataHandle md = std::move(nr->value());
+          if (send_initial_metadata_->batch->payload->send_initial_metadata
+                  .send_initial_metadata != md.get()) {
+            *send_initial_metadata_->batch->payload->send_initial_metadata
+                 .send_initial_metadata = std::move(*md);
+          }
         }
         send_initial_metadata_->state = SendInitialMetadata::kForwarded;
         poll_ctx.Repoll();
