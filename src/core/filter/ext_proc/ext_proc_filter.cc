@@ -1758,14 +1758,13 @@ ExtProcFilter::ExtProcFilter(const ChannelArgs& args,
       event_engine_(
           args.GetObjectRef<grpc_event_engine::experimental::EventEngine>()),
       default_authority_(Slice::FromCopiedString(
-          is_server_
-              ? args.GetString(GRPC_ARG_DEFAULT_AUTHORITY).value_or("")
-              : args.GetString(GRPC_ARG_DEFAULT_AUTHORITY)
-                    .value_or(CoreConfiguration::Get()
-                                  .resolver_registry()
-                                  .GetDefaultAuthority(
-                                      args.GetString(GRPC_ARG_SERVER_URI)
-                                          .value_or(""))))),
+          is_server_ ? args.GetString(GRPC_ARG_DEFAULT_AUTHORITY).value_or("")
+                     : args.GetString(GRPC_ARG_DEFAULT_AUTHORITY)
+                           .value_or(CoreConfiguration::Get()
+                                         .resolver_registry()
+                                         .GetDefaultAuthority(
+                                             args.GetString(GRPC_ARG_SERVER_URI)
+                                                 .value_or(""))))),
       telemetry_storage_([&]() -> TelemetryStorage {
         auto stats_plugin_group =
             args.GetObjectRef<GlobalStatsPluginRegistry::StatsPluginGroup>();
@@ -1806,14 +1805,13 @@ ExtProcFilter::~ExtProcFilter() {
       << "ExtProcFilter " << this << " destroyed";
 }
 
-void ExtProcFilter::RecordDuration(
-    ClientTelemetryDomain::DoubleHistogramHandle<
-        ExponentialDoubleHistogramShape>
-        client_metric,
-    ServerTelemetryDomain::DoubleHistogramHandle<
-        ExponentialDoubleHistogramShape>
-        server_metric,
-    double duration_seconds) const {
+void ExtProcFilter::RecordDuration(ClientTelemetryDomain::DoubleHistogramHandle<
+                                       ExponentialDoubleHistogramShape>
+                                       client_metric,
+                                   ServerTelemetryDomain::DoubleHistogramHandle<
+                                       ExponentialDoubleHistogramShape>
+                                       server_metric,
+                                   double duration_seconds) const {
   Match(
       telemetry_storage_, [](const std::monostate&) {},
       [duration_seconds,

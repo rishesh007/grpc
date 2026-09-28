@@ -2650,7 +2650,8 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcClientHeadersDurationMetric) {
       GetParam().filter_on_server()
           ? std::vector<absl::string_view>{}
           : std::vector<absl::string_view>{expected_target};
-  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
+  EXPECT_TRUE(
+      stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 TEST_P(XdsExtProcEnd2endTest, ExtProcClientHalfCloseDurationMetric) {
@@ -2690,7 +2691,8 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcClientHalfCloseDurationMetric) {
       GetParam().filter_on_server()
           ? std::vector<absl::string_view>{}
           : std::vector<absl::string_view>{expected_target};
-  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
+  EXPECT_TRUE(
+      stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 TEST_P(XdsExtProcEnd2endTest, ExtProcServerHeadersDurationMetric) {
@@ -2722,7 +2724,8 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcServerHeadersDurationMetric) {
       GetParam().filter_on_server()
           ? std::vector<absl::string_view>{}
           : std::vector<absl::string_view>{expected_target};
-  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
+  EXPECT_TRUE(
+      stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 TEST_P(XdsExtProcEnd2endTest, ExtProcServerTrailersDurationMetric) {
@@ -2755,7 +2758,8 @@ TEST_P(XdsExtProcEnd2endTest, ExtProcServerTrailersDurationMetric) {
       GetParam().filter_on_server()
           ? std::vector<absl::string_view>{}
           : std::vector<absl::string_view>{expected_target};
-  EXPECT_TRUE(stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
+  EXPECT_TRUE(
+      stats_plugin->GetHistogramValueByName(metric_name, labels).has_value());
 }
 
 }  // namespace
