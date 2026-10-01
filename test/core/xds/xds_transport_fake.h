@@ -106,7 +106,8 @@ class FakeXdsTransportFactory : public XdsTransportFactory {
       explicit RefCountedEventHandler(
           : event_handler_(std::move(event_handler)) {}
 
-      void OnRequestSent(bool ok) { event_handler_->OnRequestSent(ok); }
+      void OnRequestSent(bool ok) {
+        event_handler_->OnRequestSent(ok); }
       void OnRecvMessage(absl::string_view payload) {
         event_handler_->OnRecvMessage(payload);
       }
