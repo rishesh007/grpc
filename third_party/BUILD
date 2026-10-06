@@ -149,6 +149,18 @@ alias(
 )
 
 alias(
+    name = "cel_c_error",
+    actual = "@cel_c//cel-c:error",
+    tags = ["manual"],
+)
+
+alias(
+    name = "cel_c_error_code",
+    actual = "@cel_c//cel-c:error_code",
+    tags = ["manual"],
+)
+
+alias(
     name = "cel_c_runtime",
     actual = "@cel_c//cel-c:runtime",
     tags = ["manual"],

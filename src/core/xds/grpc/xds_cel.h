@@ -25,6 +25,7 @@
 #include "cel-c/activation.h"
 #include "cel-c/program.h"
 #include "cel/expr/checked.upb.h"
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 
 namespace grpc_core {
@@ -35,9 +36,13 @@ namespace grpc_core {
 // multiple threads.
 class CelProgram {
  public:
-  // Compiles a type-checked CEL expression.
+  // The type that the expression must evaluate to.
+  enum class ResultType { kBool, kString };
+
+  // Validates and compiles a type-checked CEL expression.  Validation
+  // enforces the restrictions in gRFC A106; see ValidateCelExpr().
   static absl::StatusOr<std::unique_ptr<CelProgram>> Create(
-      const cel_expr_CheckedExpr* checked_expr);
+      const cel_expr_CheckedExpr* checked_expr, ResultType result_type);
 
   // Evaluates the expression, resolving variables via resolver.
   // Returns std::nullopt if evaluation fails or the result is not of the
@@ -67,6 +72,16 @@ class CelProgram {
   std::string serialized_expr_;
   ProgramPtr program_;
 };
+
+// Checks that a type-checked CEL expression conforms to gRFC A106:
+// - its result type is result_type;
+// - the only variable is `request`;
+// - no comprehensions (e.g. exists(), all(), cel.bind());
+// - no string() conversions and no string or list concatenation;
+// - matches() patterns are constant, valid RE2 regexes with a program size
+//   of at most 100.
+absl::Status ValidateCelExpr(const cel_expr_CheckedExpr* checked_expr,
+                             CelProgram::ResultType result_type);
 
 }  // namespace grpc_core
 

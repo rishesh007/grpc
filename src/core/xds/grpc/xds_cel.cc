@@ -17,10 +17,12 @@
 #include "src/core/xds/grpc/xds_cel.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "cel-c/alloc.h"
 #include "cel-c/arena.h"
@@ -31,12 +33,15 @@
 #include "cel-c/status_absl.h"
 #include "cel-c/string_view_absl.h"
 #include "cel-c/value.h"
+#include "cel/expr/syntax.upb.h"
 #include "google/protobuf/any.upbdefs.h"
 #include "google/protobuf/duration.upbdefs.h"
 #include "google/protobuf/struct.upbdefs.h"
 #include "google/protobuf/timestamp.upbdefs.h"
 #include "google/protobuf/wrappers.upbdefs.h"
+#include "re2/re2.h"
 #include "src/core/util/no_destruct.h"
+#include "upb/base/string_view.h"
 #include "upb/mem/arena.hpp"
 #include "upb/reflection/def.hpp"
 #include "upb/wire/encode.h"
@@ -45,6 +50,7 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 
 namespace grpc_core {
 
@@ -139,13 +145,164 @@ bool Evaluate(const cel_Program* program, const cel_VariableResolver& resolver,
   return true;
 }
 
+// Matches Envoy's regex_max_program_size CEL runtime option.
+constexpr int kMaxRegexProgramSize = 100;
+
+absl::string_view ToStringView(upb_StringView s) {
+  return absl::string_view(s.data, s.size);
+}
+
+absl::Status ValidateResultType(const cel_expr_CheckedExpr* checked_expr,
+                                int64_t root_id,
+                                CelProgram::ResultType result_type) {
+  cel_expr_Type* type;
+  if (!cel_expr_CheckedExpr_type_map_get(checked_expr, root_id, &type)) {
+    return absl::InvalidArgumentError(
+        "CEL expression has no type for its result");
+  }
+  const int32_t expected = result_type == CelProgram::ResultType::kBool
+                               ? cel_expr_Type_BOOL
+                               : cel_expr_Type_STRING;
+  if (!cel_expr_Type_has_primitive(type) ||
+      cel_expr_Type_primitive(type) != expected) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "CEL expression must evaluate to ",
+        result_type == CelProgram::ResultType::kBool ? "bool" : "string"));
+  }
+  return absl::OkStatus();
+}
+
+absl::Status ValidateRegex(const cel_expr_Expr* pattern) {
+  if (!cel_expr_Expr_has_const_expr(pattern) ||
+      !cel_expr_Constant_has_string_value(cel_expr_Expr_const_expr(pattern))) {
+    return absl::InvalidArgumentError(
+        "CEL matches() pattern must be a constant string");
+  }
+  RE2 re(ToStringView(
+      cel_expr_Constant_string_value(cel_expr_Expr_const_expr(pattern))));
+  if (!re.ok()) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("CEL matches() pattern is invalid: ", re.error()));
+  }
+  if (re.ProgramSize() > kMaxRegexProgramSize) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("CEL matches() pattern program size ", re.ProgramSize(),
+                     " exceeds the limit of ", kMaxRegexProgramSize));
+  }
+  return absl::OkStatus();
+}
+
+absl::Status ValidateCall(const cel_expr_CheckedExpr* checked_expr, int64_t id,
+                          const cel_expr_Expr_Call* call) {
+  absl::string_view function = ToStringView(cel_expr_Expr_Call_function(call));
+  size_t num_args;
+  const cel_expr_Expr* const* args = cel_expr_Expr_Call_args(call, &num_args);
+  if (function == "string") {
+    return absl::InvalidArgumentError(
+        "CEL string() conversions are not supported");
+  }
+  if (function == "_+_") {
+    // Which overload of + this is can only be told from the type-checker's
+    // reference map.  Reject if it might be string or list concatenation.
+    cel_expr_Reference* reference;
+    size_t num_overloads = 0;
+    const upb_StringView* overloads = nullptr;
+    if (cel_expr_CheckedExpr_reference_map_get(checked_expr, id, &reference)) {
+      overloads = cel_expr_Reference_overload_id(reference, &num_overloads);
+    }
+    if (num_overloads == 0) {
+      return absl::InvalidArgumentError("CEL expression has no overload for +");
+    }
+    for (size_t i = 0; i < num_overloads; ++i) {
+      absl::string_view overload = ToStringView(overloads[i]);
+      if (overload == "add_string" || overload == "add_list") {
+        return absl::InvalidArgumentError(
+            "CEL string and list concatenation are not supported");
+      }
+    }
+  }
+  if (function == "matches") {
+    // Receiver style x.matches(re) or global style matches(x, re).  Calls
+    // with other arities fail to compile.
+    const size_t pattern_index = cel_expr_Expr_Call_has_target(call) ? 0 : 1;
+    if (num_args == pattern_index + 1) {
+      return ValidateRegex(args[pattern_index]);
+    }
+  }
+  return absl::OkStatus();
+}
+
 }  // namespace
 
-absl::StatusOr<std::unique_ptr<CelProgram>> CelProgram::Create(
-    const cel_expr_CheckedExpr* checked_expr) {
+absl::Status ValidateCelExpr(const cel_expr_CheckedExpr* checked_expr,
+                             CelProgram::ResultType result_type) {
   if (checked_expr == nullptr) {
     return absl::InvalidArgumentError("CEL expression not set");
   }
+  const cel_expr_Expr* root = cel_expr_CheckedExpr_expr(checked_expr);
+  if (root == nullptr) {
+    return absl::InvalidArgumentError("CEL expression not set");
+  }
+  absl::Status status =
+      ValidateResultType(checked_expr, cel_expr_Expr_id(root), result_type);
+  if (!status.ok()) return status;
+  // Walk the AST iteratively, since it comes from the control plane and
+  // may be arbitrarily deep.
+  std::vector<const cel_expr_Expr*> stack = {root};
+  while (!stack.empty()) {
+    const cel_expr_Expr* expr = stack.back();
+    stack.pop_back();
+    if (cel_expr_Expr_has_ident_expr(expr)) {
+      absl::string_view name = ToStringView(
+          cel_expr_Expr_Ident_name(cel_expr_Expr_ident_expr(expr)));
+      if (name != "request") {
+        return absl::InvalidArgumentError(
+            absl::StrCat("CEL variable \"", name, "\" is not supported"));
+      }
+    } else if (cel_expr_Expr_has_select_expr(expr)) {
+      const cel_expr_Expr* operand =
+          cel_expr_Expr_Select_operand(cel_expr_Expr_select_expr(expr));
+      if (operand != nullptr) stack.push_back(operand);
+    } else if (cel_expr_Expr_has_call_expr(expr)) {
+      const cel_expr_Expr_Call* call = cel_expr_Expr_call_expr(expr);
+      status = ValidateCall(checked_expr, cel_expr_Expr_id(expr), call);
+      if (!status.ok()) return status;
+      if (cel_expr_Expr_Call_has_target(call)) {
+        stack.push_back(cel_expr_Expr_Call_target(call));
+      }
+      size_t num_args;
+      const cel_expr_Expr* const* args =
+          cel_expr_Expr_Call_args(call, &num_args);
+      stack.insert(stack.end(), args, args + num_args);
+    } else if (cel_expr_Expr_has_list_expr(expr)) {
+      size_t num_elements;
+      const cel_expr_Expr* const* elements = cel_expr_Expr_CreateList_elements(
+          cel_expr_Expr_list_expr(expr), &num_elements);
+      stack.insert(stack.end(), elements, elements + num_elements);
+    } else if (cel_expr_Expr_has_struct_expr(expr)) {
+      size_t num_entries;
+      const cel_expr_Expr_CreateStruct_Entry* const* entries =
+          cel_expr_Expr_CreateStruct_entries(cel_expr_Expr_struct_expr(expr),
+                                             &num_entries);
+      for (size_t i = 0; i < num_entries; ++i) {
+        const cel_expr_Expr* key =
+            cel_expr_Expr_CreateStruct_Entry_map_key(entries[i]);
+        const cel_expr_Expr* value =
+            cel_expr_Expr_CreateStruct_Entry_value(entries[i]);
+        if (key != nullptr) stack.push_back(key);
+        if (value != nullptr) stack.push_back(value);
+      }
+    } else if (cel_expr_Expr_has_comprehension_expr(expr)) {
+      return absl::InvalidArgumentError("CEL comprehensions are not supported");
+    }
+  }
+  return absl::OkStatus();
+}
+
+absl::StatusOr<std::unique_ptr<CelProgram>> CelProgram::Create(
+    const cel_expr_CheckedExpr* checked_expr, ResultType result_type) {
+  absl::Status validation = ValidateCelExpr(checked_expr, result_type);
+  if (!validation.ok()) return validation;
   // Serialize deterministically for use in equality comparisons.
   upb::Arena upb_arena;
   size_t size;
