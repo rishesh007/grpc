@@ -731,6 +731,8 @@ grpc_cc_test(
     uses_event_engine = False,
     uses_polling = False,
     deps = [
+        ":cel_expr_builder",
+        "//:cel_expr_checked_upb",
         "//:xds_client",
         "//:xds_type_matcher_upb",
         "//src/core:down_cast",
@@ -740,6 +742,7 @@ grpc_cc_test(
         "//src/core:validation_errors",
         "//src/core:xds_bootstrap_grpc",
         "//src/core:xds_bootstrap_grpc_builder",
+        "//src/core:xds_cel",
         "//src/core:xds_cel_request_resolver",
         "//src/core:xds_common_types",
         "//src/core:xds_matcher",
