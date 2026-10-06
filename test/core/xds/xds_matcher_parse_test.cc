@@ -20,14 +20,18 @@
 
 #include "envoy/type/matcher/v3/http_inputs.pb.h"
 #include "google/protobuf/wrappers.upb.h"
+#include "src/core/call/metadata_batch.h"
 #include "src/core/util/down_cast.h"
 #include "src/core/util/upb_utils.h"
 #include "src/core/util/validation_errors.h"
 #include "src/core/xds/grpc/xds_bootstrap_grpc.h"
 #include "src/core/xds/grpc/xds_bootstrap_grpc_builder.h"
+#include "src/core/xds/grpc/xds_cel_request_resolver.h"
+#include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/grpc/xds_matcher.h"
 #include "src/core/xds/grpc/xds_matcher_action.h"
 #include "src/core/xds/grpc/xds_matcher_context.h"
+#include "src/core/xds/grpc/xds_matcher_input.h"
 #include "src/core/xds/xds_client/xds_client.h"
 #include "src/core/xds/xds_client/xds_resource_type.h"
 #include "test/core/test_util/test_config.h"
@@ -1111,6 +1115,63 @@ TEST_F(MatcherTest, ExceedsMaxDepth) {
             "matcher_tree.exact_match_map.on_match.matcher."
             "matcher_tree.exact_match_map.on_match.matcher "
             "error:matcher tree exceeds max recursion depth]");
+}
+
+//
+// CEL input registry
+//
+
+class CelInputRegistryTest : public MatcherTest {
+ protected:
+  const XdsMatcherInputRegistry<CelRequestResolver>& registry() {
+    return DownCast<const GrpcXdsBootstrap&>(xds_client_->bootstrap())
+        .matcher_cel_input_registry();
+  }
+
+  std::unique_ptr<XdsMatcher::InputValue<CelRequestResolver>> ParseInput(
+      absl::string_view type, absl::string_view serialized_value,
+      ValidationErrors* errors) {
+    XdsExtension extension;
+    extension.type = type;
+    extension.value = serialized_value;
+    return registry().ParseAndCreateInput(decode_context_, extension,
+                                          RpcMatchContext::Type(), errors);
+  }
+};
+
+TEST_F(CelInputRegistryTest, HttpAttributesCelMatchInput) {
+  ValidationErrors errors;
+  auto input = ParseInput("xds.type.matcher.v3.HttpAttributesCelMatchInput", "",
+                          &errors);
+  ASSERT_TRUE(errors.ok())
+      << errors.status(absl::StatusCode::kInvalidArgument, "").message();
+  ASSERT_NE(input, nullptr);
+  EXPECT_EQ(input->ToString(), "HttpAttributesCelMatchInput");
+  EXPECT_TRUE(input->Equals(HttpAttributesCelMatchInput()));
+  grpc_metadata_batch metadata;
+  RpcMatchContext context(&metadata);
+  EXPECT_TRUE(input->GetValue(context).has_value());
+}
+
+TEST_F(CelInputRegistryTest, MalformedHttpAttributesCelMatchInput) {
+  ValidationErrors errors;
+  auto input = ParseInput("xds.type.matcher.v3.HttpAttributesCelMatchInput",
+                          "\xff", &errors);
+  EXPECT_EQ(input, nullptr);
+  EXPECT_THAT(
+      errors.status(absl::StatusCode::kInvalidArgument, "").message(),
+      ::testing::HasSubstr("Failed to parse HttpAttributesCelMatchInput"));
+}
+
+TEST_F(CelInputRegistryTest, StringInputNotSupported) {
+  ValidationErrors errors;
+  auto input = ParseInput("envoy.type.matcher.v3.HttpRequestHeaderMatchInput",
+                          "", &errors);
+  EXPECT_EQ(input, nullptr);
+  EXPECT_THAT(
+      errors.status(absl::StatusCode::kInvalidArgument, "").message(),
+      ::testing::HasSubstr("Unsupported Input type:envoy.type.matcher.v3."
+                           "HttpRequestHeaderMatchInput"));
 }
 
 }  // namespace

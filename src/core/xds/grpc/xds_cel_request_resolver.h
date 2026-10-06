@@ -26,16 +26,13 @@ namespace grpc_core {
 // gRFC A106, backed by an RpcMatchContext.  All attributes are resolved
 // lazily, when the expression accesses them.
 //
-// The resolver holds a reference to the context, which must outlive it.
-// Values returned to CEL are only valid for the duration of a single
-// evaluation.
+// The resolver holds a reference to the context, which must outlive it and
+// any values it returns.  Values returned to CEL are only valid for the
+// duration of a single evaluation.  Copies are cheap and refer to the same
+// context.
 class CelRequestResolver : public cel_VariableResolver {
  public:
   explicit CelRequestResolver(const RpcMatchContext& context);
-
-  // Values handed to CEL point back to this object.
-  CelRequestResolver(const CelRequestResolver&) = delete;
-  CelRequestResolver& operator=(const CelRequestResolver&) = delete;
 
  private:
   static cel_Trilean Find(const cel_VariableResolver* resolver,
