@@ -634,6 +634,47 @@ grpc_cc_test(
     ],
 )
 
+grpc_cc_library(
+    name = "cel_expr_builder",
+    testonly = True,
+    srcs = ["cel_expr_builder.cc"],
+    hdrs = ["cel_expr_builder.h"],
+    external_deps = [
+        "absl/strings",
+        "cel_c_string_view_absl",
+    ],
+    deps = [
+        "//:cel_expr_checked_upb",
+        "//:cel_expr_syntax_upb",
+        "//src/core:xds_cel",
+        "@com_google_protobuf//upb/mem",
+    ],
+)
+
+grpc_cc_test(
+    name = "xds_cel_matcher_test",
+    srcs = ["xds_cel_matcher_test.cc"],
+    external_deps = [
+        "absl/strings",
+        "gtest",
+    ],
+    tags = ["xds_test"],
+    uses_event_engine = False,
+    uses_polling = False,
+    deps = [
+        ":cel_expr_builder",
+        "//src/core:metadata_batch",
+        "//src/core:slice",
+        "//src/core:xds_cel",
+        "//src/core:xds_cel_matcher",
+        "//src/core:xds_cel_request_resolver",
+        "//src/core:xds_matcher",
+        "//src/core:xds_matcher_context",
+        "//src/core:xds_matcher_input",
+        "@com_google_protobuf//upb/mem",
+    ],
+)
+
 grpc_cc_test(
     name = "xds_cel_test",
     srcs = ["xds_cel_test.cc"],

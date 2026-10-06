@@ -7531,6 +7531,25 @@ grpc_cc_library(
 )
 
 grpc_cc_library(
+    name = "xds_cel_matcher",
+    hdrs = [
+        "xds/grpc/xds_cel_matcher.h",
+    ],
+    external_deps = [
+        "absl/strings",
+    ],
+    tags = ["nofixdeps"],
+    visibility = ["//bazel:xds_client_grpc"],
+    deps = [
+        "down_cast",
+        "unique_type_name",
+        "xds_cel",
+        "xds_cel_request_resolver",
+        "xds_matcher",
+    ],
+)
+
+grpc_cc_library(
     name = "xds_cel_request_resolver",
     srcs = [
         "xds/grpc/xds_cel_request_resolver.cc",
