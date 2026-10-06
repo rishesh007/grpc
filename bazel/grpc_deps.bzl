@@ -372,6 +372,10 @@ def grpc_deps():
     if "cel_c" not in native.existing_rules():
         http_archive(
             name = "cel_c",
+            patch_args = ["-p1"],
+            patches = [
+                "@com_github_grpc_grpc//third_party:cel-c.patch",
+            ],
             # cel-c's BUILD files use the bzlmod module names of its
             # dependencies, which differ from the repo names used here.
             repo_mapping = {
