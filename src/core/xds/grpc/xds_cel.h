@@ -73,6 +73,39 @@ class CelProgram {
   ProgramPtr program_;
 };
 
+// Extracts a string from a request using a CEL expression
+// (xds.type.v3.CelExtractString in gRFC A106).
+class CelStringExtractor {
+ public:
+  CelStringExtractor(std::unique_ptr<CelProgram> program,
+                     std::optional<std::string> default_value)
+      : program_(std::move(program)),
+        default_value_(std::move(default_value)) {}
+
+  // Returns the result of evaluating the expression.  If evaluation fails
+  // or does not produce a string, returns the default value, if any.
+  std::optional<std::string> Extract(
+      const cel_VariableResolver& resolver) const {
+    auto result = program_->EvaluateString(resolver);
+    if (result.has_value()) return result;
+    return default_value_;
+  }
+
+  bool operator==(const CelStringExtractor& other) const {
+    return *program_ == *other.program_ &&
+           default_value_ == other.default_value_;
+  }
+  bool operator!=(const CelStringExtractor& other) const {
+    return !(*this == other);
+  }
+
+  std::string ToString() const;
+
+ private:
+  std::unique_ptr<CelProgram> program_;
+  std::optional<std::string> default_value_;
+};
+
 // Checks that a type-checked CEL expression conforms to gRFC A106:
 // - its result type is result_type;
 // - the only variable is `request`;

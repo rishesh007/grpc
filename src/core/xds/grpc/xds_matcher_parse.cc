@@ -19,12 +19,12 @@
 #include <utility>
 #include <variant>
 
-#include "cel/expr/checked.upb.h"
 #include "src/core/util/down_cast.h"
 #include "src/core/util/upb_utils.h"
 #include "src/core/xds/grpc/xds_bootstrap_grpc.h"
 #include "src/core/xds/grpc/xds_cel.h"
 #include "src/core/xds/grpc/xds_cel_matcher.h"
+#include "src/core/xds/grpc/xds_cel_parser.h"
 #include "src/core/xds/grpc/xds_cel_request_resolver.h"
 #include "src/core/xds/grpc/xds_common_types_parser.h"
 #include "src/core/xds/grpc/xds_matcher.h"
@@ -35,7 +35,6 @@
 #include "xds/type/matcher/v3/cel.upb.h"
 #include "xds/type/matcher/v3/matcher.upb.h"
 #include "xds/type/matcher/v3/string.upb.h"
-#include "xds/type/v3/cel.upb.h"
 #include "absl/strings/string_view.h"
 
 namespace grpc_core {
@@ -88,34 +87,6 @@ std::unique_ptr<XdsMatcher::InputValue<absl::string_view>> ParseStringInput(
   return ParseInput(context, input,
                     GetBootstrap(context).matcher_string_input_registry(),
                     matcher_context, errors);
-}
-
-// Parses an xds.type.v3.CelExpression into a CelProgram.
-std::unique_ptr<CelProgram> ParseCelExpression(
-    const xds_type_v3_CelExpression* cel_expression,
-    CelProgram::ResultType result_type, ValidationErrors* errors) {
-  if (cel_expression == nullptr) {
-    errors->AddError("field not present");
-    return nullptr;
-  }
-  if (xds_type_v3_CelExpression_cel_expr_string(cel_expression).size != 0) {
-    ValidationErrors::ScopedField field(errors, ".cel_expr_string");
-    errors->AddError("not supported");
-    return nullptr;
-  }
-  ValidationErrors::ScopedField field(errors, ".cel_expr_checked");
-  const cel_expr_CheckedExpr* checked_expr =
-      xds_type_v3_CelExpression_cel_expr_checked(cel_expression);
-  if (checked_expr == nullptr) {
-    errors->AddError("field not present");
-    return nullptr;
-  }
-  auto program = CelProgram::Create(checked_expr, result_type);
-  if (!program.ok()) {
-    errors->AddError(program.status().message());
-    return nullptr;
-  }
-  return std::move(*program);
 }
 
 // Parses SinglePredicate.custom_match.  CelMatcher is the only supported

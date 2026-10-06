@@ -363,4 +363,12 @@ std::string CelProgram::ToString() const {
                       "}");
 }
 
+std::string CelStringExtractor::ToString() const {
+  return absl::StrCat("CelStringExtractor{", program_->ToString(),
+                      default_value_.has_value()
+                          ? absl::StrCat(", default_value=", *default_value_)
+                          : "",
+                      "}");
+}
+
 }  // namespace grpc_core

@@ -22,7 +22,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "cel-c/activation.h"
 #include "cel-c/alloc.h"
@@ -31,11 +30,11 @@
 #include "cel-c/string_view_absl.h"
 #include "cel-c/value.h"
 #include "cel/expr/checked.upb.h"
-#include "cel/expr/syntax.upb.h"
 #include "src/core/call/metadata_batch.h"
 #include "src/core/lib/slice/slice.h"
 #include "src/core/xds/grpc/xds_cel.h"
 #include "src/core/xds/grpc/xds_matcher_context.h"
+#include "test/core/xds/cel_expr_builder.h"
 #include "upb/mem/arena.hpp"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -66,69 +65,6 @@ class CelRequestResolverTest : public ::testing::Test {
                      });
   }
 
-  // Helpers for building CheckedExpr protos by hand.
-  cel_expr_Expr* NewExpr(cel_expr_Expr* expr) {
-    cel_expr_Expr_set_id(expr, next_id_++);
-    return expr;
-  }
-
-  // Creates a CheckedExpr whose result has the given type.
-  cel_expr_CheckedExpr* NewCheckedExpr(cel_expr_Expr** root,
-                                       ResultType result_type) {
-    cel_expr_CheckedExpr* checked = cel_expr_CheckedExpr_new(arena_.ptr());
-    *root = NewExpr(cel_expr_CheckedExpr_mutable_expr(checked, arena_.ptr()));
-    cel_expr_Type* type = cel_expr_Type_new(arena_.ptr());
-    cel_expr_Type_set_primitive(type, result_type == ResultType::kBool
-                                          ? cel_expr_Type_BOOL
-                                          : cel_expr_Type_STRING);
-    cel_expr_CheckedExpr_type_map_set(checked, cel_expr_Expr_id(*root), type,
-                                      arena_.ptr());
-    return checked;
-  }
-
-  void SetStringConst(cel_expr_Expr* expr, absl::string_view value) {
-    cel_expr_Constant_set_string_value(
-        cel_expr_Expr_mutable_const_expr(expr, arena_.ptr()),
-        cel_StringView_FromAbsl(value));
-  }
-
-  void SetIdent(cel_expr_Expr* expr, absl::string_view name) {
-    cel_expr_Expr_Ident_set_name(
-        cel_expr_Expr_mutable_ident_expr(expr, arena_.ptr()),
-        cel_StringView_FromAbsl(name));
-  }
-
-  // Makes expr `operand.field` (or `has(operand.field)` if test_only),
-  // returning the operand expr.
-  cel_expr_Expr* SetSelect(cel_expr_Expr* expr, absl::string_view field,
-                           bool test_only = false) {
-    cel_expr_Expr_Select* select =
-        cel_expr_Expr_mutable_select_expr(expr, arena_.ptr());
-    cel_expr_Expr_Select_set_field(select, cel_StringView_FromAbsl(field));
-    cel_expr_Expr_Select_set_test_only(select, test_only);
-    return NewExpr(cel_expr_Expr_Select_mutable_operand(select, arena_.ptr()));
-  }
-
-  // Makes expr `request.<field>`.
-  void SetRequestField(cel_expr_Expr* expr, absl::string_view field,
-                       bool test_only = false) {
-    SetIdent(SetSelect(expr, field, test_only), "request");
-  }
-
-  // Makes expr a global call to function, returning the arg exprs.
-  std::vector<cel_expr_Expr*> SetCall(cel_expr_Expr* expr,
-                                      absl::string_view function,
-                                      int num_args) {
-    cel_expr_Expr_Call* call =
-        cel_expr_Expr_mutable_call_expr(expr, arena_.ptr());
-    cel_expr_Expr_Call_set_function(call, cel_StringView_FromAbsl(function));
-    std::vector<cel_expr_Expr*> args;
-    for (int i = 0; i < num_args; ++i) {
-      args.push_back(NewExpr(cel_expr_Expr_Call_add_args(call, arena_.ptr())));
-    }
-    return args;
-  }
-
   std::unique_ptr<CelProgram> Compile(const cel_expr_CheckedExpr* checked,
                                       ResultType result_type) {
     auto program = CelProgram::Create(checked, result_type);
@@ -139,8 +75,8 @@ class CelRequestResolverTest : public ::testing::Test {
   // Compiles `request.<field>` and evaluates it as a string.
   std::optional<std::string> EvaluateRequestField(absl::string_view field) {
     cel_expr_Expr* root;
-    auto* checked = NewCheckedExpr(&root, ResultType::kString);
-    SetRequestField(root, field);
+    auto* checked = builder_.NewCheckedExpr(&root, ResultType::kString);
+    builder_.SetRequestField(root, field);
     auto program = Compile(checked, ResultType::kString);
     if (program == nullptr) return std::nullopt;
     return program->EvaluateString(resolver_);
@@ -149,8 +85,8 @@ class CelRequestResolverTest : public ::testing::Test {
   // Compiles `has(request.<field>)` and evaluates it.
   std::optional<bool> EvaluateHasRequestField(absl::string_view field) {
     cel_expr_Expr* root;
-    auto* checked = NewCheckedExpr(&root, ResultType::kBool);
-    SetRequestField(root, field, /*test_only=*/true);
+    auto* checked = builder_.NewCheckedExpr(&root, ResultType::kBool);
+    builder_.SetRequestField(root, field, /*test_only=*/true);
     auto program = Compile(checked, ResultType::kBool);
     if (program == nullptr) return std::nullopt;
     return program->EvaluateBool(resolver_);
@@ -159,10 +95,10 @@ class CelRequestResolverTest : public ::testing::Test {
   // Compiles `request.headers[key]` and evaluates it as a string.
   std::optional<std::string> EvaluateHeader(absl::string_view key) {
     cel_expr_Expr* root;
-    auto* checked = NewCheckedExpr(&root, ResultType::kString);
-    auto args = SetCall(root, "_[_]", 2);
-    SetRequestField(args[0], "headers");
-    SetStringConst(args[1], key);
+    auto* checked = builder_.NewCheckedExpr(&root, ResultType::kString);
+    auto args = builder_.SetCall(root, "_[_]", 2);
+    builder_.SetRequestField(args[0], "headers");
+    builder_.SetStringConst(args[1], key);
     auto program = Compile(checked, ResultType::kString);
     if (program == nullptr) return std::nullopt;
     return program->EvaluateString(resolver_);
@@ -171,17 +107,17 @@ class CelRequestResolverTest : public ::testing::Test {
   // Compiles `key in request.headers` and evaluates it.
   std::optional<bool> EvaluateInHeaders(absl::string_view key) {
     cel_expr_Expr* root;
-    auto* checked = NewCheckedExpr(&root, ResultType::kBool);
-    auto args = SetCall(root, "@in", 2);
-    SetStringConst(args[0], key);
-    SetRequestField(args[1], "headers");
+    auto* checked = builder_.NewCheckedExpr(&root, ResultType::kBool);
+    auto args = builder_.SetCall(root, "@in", 2);
+    builder_.SetStringConst(args[0], key);
+    builder_.SetRequestField(args[1], "headers");
     auto program = Compile(checked, ResultType::kBool);
     if (program == nullptr) return std::nullopt;
     return program->EvaluateBool(resolver_);
   }
 
   upb::Arena arena_;
-  int64_t next_id_ = 1;
+  CelExprBuilder builder_{arena_.ptr()};
   grpc_metadata_batch metadata_;
   RpcMatchContext context_{&metadata_};
   CelRequestResolver resolver_{context_};
@@ -244,13 +180,13 @@ TEST_F(CelRequestResolverTest, MapEquality) {
   // Map equality goes through the size and iteration paths of the map.
   for (absl::string_view field : {"", "headers"}) {
     cel_expr_Expr* root;
-    auto* checked = NewCheckedExpr(&root, ResultType::kBool);
-    auto args = SetCall(root, "_==_", 2);
+    auto* checked = builder_.NewCheckedExpr(&root, ResultType::kBool);
+    auto args = builder_.SetCall(root, "_==_", 2);
     for (cel_expr_Expr* arg : args) {
       if (field.empty()) {
-        SetIdent(arg, "request");
+        builder_.SetIdent(arg, "request");
       } else {
-        SetRequestField(arg, field);
+        builder_.SetRequestField(arg, field);
       }
     }
     auto program = Compile(checked, ResultType::kBool);
@@ -266,8 +202,8 @@ class CelRequestMapTest : public CelRequestResolverTest {
   CelRequestMapTest() {
     cel_Status_Construct(&status_);
     cel_arena_ = cel_Arena_New(cel_DefaultAllocator);
-    context_.alloc = cel_DefaultAllocator;
-    context_.arena = cel_arena_;
+    value_context_.alloc = cel_DefaultAllocator;
+    value_context_.arena = cel_arena_;
   }
 
   ~CelRequestMapTest() override {
@@ -291,29 +227,30 @@ class CelRequestMapTest : public CelRequestResolverTest {
     cel_MapValueKey key;
     cel_MapValueKey_SetString(&key, cel_StringView_FromAbsl("headers"));
     cel_Value headers;
-    EXPECT_TRUE(cel_MapValue_Find(cel_Value_GetMap(&request), &context_, &key,
-                                  &headers, &status_));
+    EXPECT_TRUE(cel_MapValue_Find(cel_Value_GetMap(&request), &value_context_,
+                                  &key, &headers, &status_));
     EXPECT_TRUE(cel_Value_IsMap(&headers));
     return headers;
   }
 
   int64_t Size(const cel_Value& map) {
     cel_Value size;
-    EXPECT_TRUE(
-        cel_MapValue_Size(cel_Value_GetMap(&map), &context_, &size, &status_));
+    EXPECT_TRUE(cel_MapValue_Size(cel_Value_GetMap(&map), &value_context_,
+                                  &size, &status_));
     return cel_Value_GetInt(&size);
   }
 
   // Returns all entries of the map.  Map values are shown as "<map>".
   std::map<std::string, std::string> Entries(const cel_Value& map) {
     std::map<std::string, std::string> entries;
-    cel_MapValueIterator* iter =
-        cel_MapValue_NewIterator(cel_Value_GetMap(&map), &context_, &status_);
+    cel_MapValueIterator* iter = cel_MapValue_NewIterator(
+        cel_Value_GetMap(&map), &value_context_, &status_);
     EXPECT_NE(iter, nullptr);
     if (iter == nullptr) return entries;
     cel_MapValueKey key;
     cel_Value value;
-    while (cel_MapValueIterator_Next(iter, &context_, &key, &value, &status_)) {
+    while (cel_MapValueIterator_Next(iter, &value_context_, &key, &value,
+                                     &status_)) {
       std::string key_str(
           cel_StringView_ToAbsl(cel_MapValueKey_GetString(&key)));
       entries[key_str] =
@@ -327,7 +264,7 @@ class CelRequestMapTest : public CelRequestResolverTest {
 
   cel_Status status_;
   cel_Arena* cel_arena_;
-  cel_ValueContext context_{};
+  cel_ValueContext value_context_{};
 };
 
 TEST_F(CelRequestMapTest, RequestEntries) {

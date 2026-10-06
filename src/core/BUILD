@@ -7480,6 +7480,7 @@ grpc_cc_library(
         "xds_bootstrap_grpc",
         "xds_cel",
         "xds_cel_matcher",
+        "xds_cel_parser",
         "xds_cel_request_resolver",
         "xds_common_types_parser",
         "xds_extension_upb",
@@ -7487,9 +7488,27 @@ grpc_cc_library(
         "xds_matcher_action",
         "xds_matcher_input",
         "xds_type_matcher_upb",
+        "//:xds_client",
+    ],
+)
+
+grpc_cc_library(
+    name = "xds_cel_parser",
+    srcs = [
+        "xds/grpc/xds_cel_parser.cc",
+    ],
+    hdrs = [
+        "xds/grpc/xds_cel_parser.h",
+    ],
+    tags = ["nofixdeps"],
+    visibility = ["//bazel:xds_client_grpc"],
+    deps = [
+        "protobuf_wrappers_upb",
+        "upb_utils",
+        "validation_errors",
+        "xds_cel",
         "xds_type_upb",
         "//:cel_expr_checked_upb",
-        "//:xds_client",
     ],
 )
 

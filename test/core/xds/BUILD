@@ -676,6 +676,33 @@ grpc_cc_test(
 )
 
 grpc_cc_test(
+    name = "xds_cel_parser_test",
+    srcs = ["xds_cel_parser_test.cc"],
+    external_deps = [
+        "absl/strings",
+        "gtest",
+    ],
+    tags = ["xds_test"],
+    uses_event_engine = False,
+    uses_polling = False,
+    deps = [
+        ":cel_expr_builder",
+        "//:cel_expr_checked_upb",
+        "//src/core:metadata_batch",
+        "//src/core:protobuf_wrappers_upb",
+        "//src/core:slice",
+        "//src/core:upb_utils",
+        "//src/core:validation_errors",
+        "//src/core:xds_cel",
+        "//src/core:xds_cel_parser",
+        "//src/core:xds_cel_request_resolver",
+        "//src/core:xds_matcher_context",
+        "//src/core:xds_type_upb",
+        "@com_google_protobuf//upb/mem",
+    ],
+)
+
+grpc_cc_test(
     name = "xds_cel_test",
     srcs = ["xds_cel_test.cc"],
     external_deps = [
@@ -689,6 +716,7 @@ grpc_cc_test(
     uses_event_engine = False,
     uses_polling = False,
     deps = [
+        ":cel_expr_builder",
         "//:cel_expr_checked_upb",
         "//:cel_expr_syntax_upb",
         "//src/core:xds_cel",
@@ -712,8 +740,8 @@ grpc_cc_test(
     uses_event_engine = False,
     uses_polling = False,
     deps = [
+        ":cel_expr_builder",
         "//:cel_expr_checked_upb",
-        "//:cel_expr_syntax_upb",
         "//src/core:metadata_batch",
         "//src/core:slice",
         "//src/core:xds_cel",
