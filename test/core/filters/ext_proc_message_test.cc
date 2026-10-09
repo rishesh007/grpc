@@ -62,15 +62,17 @@ MATCHER_P2(IsHeaderMutation, set_headers_matcher, remove_headers_matcher, "") {
                                        arg.remove_headers, result_listener);
 }
 
-MATCHER_P3(IsBodyMutation, body_matcher, end_of_stream_matcher,
-           end_of_stream_without_message_matcher, "") {
+MATCHER_P4(IsBodyMutation, body_matcher, end_of_stream_matcher,
+           end_of_stream_without_message_matcher, drain_complete_matcher, "") {
   return ::testing::ExplainMatchResult(body_matcher, arg.body,
                                        result_listener) &&
          ::testing::ExplainMatchResult(end_of_stream_matcher, arg.end_of_stream,
                                        result_listener) &&
          ::testing::ExplainMatchResult(end_of_stream_without_message_matcher,
                                        arg.end_of_stream_without_message,
-                                       result_listener);
+                                       result_listener) &&
+         ::testing::ExplainMatchResult(drain_complete_matcher,
+                                       arg.drain_complete, result_listener);
 }
 
 MATCHER_P2(IsRequestHeaders, set_headers_matcher, remove_headers_matcher, "") {
@@ -99,23 +101,25 @@ MATCHER_P2(IsResponseTrailers, set_headers_matcher, remove_headers_matcher,
       arg, result_listener);
 }
 
-MATCHER_P3(IsRequestBody, body_matcher, end_of_stream_matcher,
-           end_of_stream_without_message_matcher, "") {
+MATCHER_P4(IsRequestBody, body_matcher, end_of_stream_matcher,
+           end_of_stream_without_message_matcher, drain_complete_matcher, "") {
   return ::testing::ExplainMatchResult(
-      ::testing::VariantWith<ExtProcResponse::RequestBody>(::testing::Field(
-          &ExtProcResponse::RequestBody::mutation,
-          IsBodyMutation(body_matcher, end_of_stream_matcher,
-                         end_of_stream_without_message_matcher))),
+      ::testing::VariantWith<ExtProcResponse::RequestBody>(
+          ::testing::Field(&ExtProcResponse::RequestBody::mutation,
+                           IsBodyMutation(body_matcher, end_of_stream_matcher,
+                                          end_of_stream_without_message_matcher,
+                                          drain_complete_matcher))),
       arg, result_listener);
 }
 
-MATCHER_P3(IsResponseBody, body_matcher, end_of_stream_matcher,
-           end_of_stream_without_message_matcher, "") {
+MATCHER_P4(IsResponseBody, body_matcher, end_of_stream_matcher,
+           end_of_stream_without_message_matcher, drain_complete_matcher, "") {
   return ::testing::ExplainMatchResult(
-      ::testing::VariantWith<ExtProcResponse::ResponseBody>(::testing::Field(
-          &ExtProcResponse::ResponseBody::mutation,
-          IsBodyMutation(body_matcher, end_of_stream_matcher,
-                         end_of_stream_without_message_matcher))),
+      ::testing::VariantWith<ExtProcResponse::ResponseBody>(
+          ::testing::Field(&ExtProcResponse::ResponseBody::mutation,
+                           IsBodyMutation(body_matcher, end_of_stream_matcher,
+                                          end_of_stream_without_message_matcher,
+                                          drain_complete_matcher))),
       arg, result_listener);
 }
 
@@ -280,6 +284,166 @@ TEST_F(CreateExtProcRequestTest, RequestHeadersProtocolConfig) {
   EXPECT_EQ(
       parsed.protocol_config().response_body_mode(),
       envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::GRPC);
+}
+
+TEST_F(CreateExtProcRequestTest, FlowControlInit) {
+  upb::Arena arena;
+  grpc_metadata_batch batch;
+  ExtProcProcessingMode processing_mode;
+  processing_mode.send_request_headers = true;
+  // Normal mode with default window size (kExtProcInitialWindowSize)
+  std::string serialized_default =
+      CreateExtProcClientHeadersRequest(arena.ptr(), &batch, {}, {}, nullptr,
+                                        /*observability_mode=*/false,
+                                        processing_mode)
+          .value();
+  auto parsed_default = ParseRequest(serialized_default);
+  ASSERT_TRUE(parsed_default.has_flow_control_init());
+  EXPECT_EQ(parsed_default.flow_control_init()
+                .initial_window_downstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(parsed_default.flow_control_init()
+                .initial_window_sidestream_to_upstream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(parsed_default.flow_control_init()
+                .initial_window_upstream_to_sidestream(),
+            kExtProcInitialWindowSize);
+  EXPECT_EQ(parsed_default.flow_control_init()
+                .initial_window_sidestream_to_downstream(),
+            kExtProcInitialWindowSize);
+  // Observability mode: flow_control_init must NOT be present
+  std::string serialized_obs = CreateExtProcClientHeadersRequest(
+                                   arena.ptr(), &batch, {}, {}, nullptr,
+                                   /*observability_mode=*/true, processing_mode)
+                                   .value();
+  auto parsed_obs = ParseRequest(serialized_obs);
+  EXPECT_FALSE(parsed_obs.has_flow_control_init());
+}
+
+TEST_F(CreateExtProcRequestTest, StandaloneClientWindowUpdateRequest) {
+  upb::Arena arena;
+  ExtProcClientWindowUpdate update;
+  update.window_increment_sidestream_to_upstream = 16384;
+  update.window_increment_sidestream_to_downstream = 32768;
+  std::string serialized =
+      CreateExtProcClientWindowUpdateRequest(arena.ptr(), update).value();
+  auto parsed = ParseRequest(serialized);
+  ASSERT_TRUE(parsed.has_client_window_update());
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_upstream(),
+      16384);
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_downstream(),
+      32768);
+  EXPECT_FALSE(parsed.has_flow_control_init());
+  EXPECT_FALSE(parsed.observability_mode());
+}
+
+TEST_F(CreateExtProcRequestTest, PiggybackedClientWindowUpdateClientHeaders) {
+  upb::Arena arena;
+  grpc_metadata_batch client_headers;
+  ExtProcClientWindowUpdate update;
+  update.window_increment_sidestream_to_upstream = 4096;
+  update.window_increment_sidestream_to_downstream = 8192;
+  std::string serialized = CreateExtProcClientHeadersRequest(
+                               arena.ptr(), &client_headers, {}, {}, nullptr,
+                               /*observability_mode=*/false,
+                               /*processing_mode=*/std::nullopt, update)
+                               .value();
+  auto parsed = ParseRequest(serialized);
+  ASSERT_TRUE(parsed.has_client_window_update());
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_upstream(),
+      4096);
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_downstream(),
+      8192);
+}
+
+TEST_F(CreateExtProcRequestTest, PiggybackedClientWindowUpdateClientBody) {
+  upb::Arena arena;
+  ExtProcClientWindowUpdate update;
+  update.window_increment_sidestream_to_upstream = 4096;
+  update.window_increment_sidestream_to_downstream = 8192;
+  std::string serialized =
+      CreateExtProcClientBodyRequest(
+          arena.ptr(), "test-payload", nullptr, /*observability_mode=*/false,
+          /*processing_mode=*/std::nullopt, /*end_of_stream=*/false,
+          /*end_of_stream_without_message=*/false, /*drain_complete=*/false,
+          update)
+          .value();
+  auto parsed = ParseRequest(serialized);
+  ASSERT_TRUE(parsed.has_client_window_update());
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_upstream(),
+      4096);
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_downstream(),
+      8192);
+}
+
+TEST_F(CreateExtProcRequestTest, PiggybackedClientWindowUpdateServerBody) {
+  upb::Arena arena;
+  ExtProcClientWindowUpdate update;
+  update.window_increment_sidestream_to_upstream = 4096;
+  update.window_increment_sidestream_to_downstream = 8192;
+  std::string serialized =
+      CreateExtProcServerBodyRequest(arena.ptr(), "test-payload", nullptr,
+                                     /*observability_mode=*/false,
+                                     /*processing_mode=*/std::nullopt,
+                                     /*drain_complete=*/false, update)
+          .value();
+  auto parsed = ParseRequest(serialized);
+  ASSERT_TRUE(parsed.has_client_window_update());
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_upstream(),
+      4096);
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_downstream(),
+      8192);
+}
+
+TEST_F(CreateExtProcRequestTest, PiggybackedClientWindowUpdateServerTrailers) {
+  upb::Arena arena;
+  grpc_metadata_batch trailers;
+  ExtProcClientWindowUpdate update;
+  update.window_increment_sidestream_to_upstream = 4096;
+  update.window_increment_sidestream_to_downstream = 8192;
+  std::string serialized = CreateExtProcServerTrailersRequest(
+                               arena.ptr(), &trailers, {}, {}, nullptr,
+                               /*observability_mode=*/false,
+                               /*processing_mode=*/std::nullopt, update)
+                               .value();
+  auto parsed = ParseRequest(serialized);
+  ASSERT_TRUE(parsed.has_client_window_update());
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_upstream(),
+      4096);
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_downstream(),
+      8192);
+}
+
+TEST_F(CreateExtProcRequestTest, PiggybackedClientWindowUpdateServerHeaders) {
+  upb::Arena arena;
+  grpc_metadata_batch server_headers;
+  ExtProcClientWindowUpdate update;
+  update.window_increment_sidestream_to_upstream = 4096;
+  update.window_increment_sidestream_to_downstream = 8192;
+  std::string serialized =
+      CreateExtProcServerHeadersRequest(
+          arena.ptr(), &server_headers, {}, {}, nullptr,
+          /*observability_mode=*/false, /*processing_mode=*/std::nullopt,
+          /*end_of_stream=*/false, update)
+          .value();
+  auto parsed = ParseRequest(serialized);
+  ASSERT_TRUE(parsed.has_client_window_update());
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_upstream(),
+      4096);
+  EXPECT_EQ(
+      parsed.client_window_update().window_increment_sidestream_to_downstream(),
+      8192);
 }
 
 TEST_F(CreateExtProcRequestTest,
@@ -653,6 +817,21 @@ TEST_F(CreateExtProcRequestTest, RequestBodyProtocolConfig) {
       envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::GRPC);
 }
 
+TEST_F(CreateExtProcRequestTest, RequestBodyDrainComplete) {
+  upb::Arena arena;
+  std::string serialized =
+      CreateExtProcClientBodyRequest(arena.ptr(), "", {},
+                                     /*observability_mode=*/false,
+                                     /*processing_mode=*/std::nullopt,
+                                     /*end_of_stream=*/false,
+                                     /*end_of_stream_without_message=*/false,
+                                     /*drain_complete=*/true)
+          .value();
+  auto parsed = ParseRequest(serialized);
+  ASSERT_TRUE(parsed.has_request_body());
+  EXPECT_TRUE(parsed.request_body().drain_complete());
+}
+
 TEST_F(CreateExtProcRequestTest, ResponseBodyPayloadValid) {
   upb::Arena arena;
   constexpr absl::string_view kBodyData = "test response body data";
@@ -696,6 +875,19 @@ TEST_F(CreateExtProcRequestTest, ResponseBodyProtocolConfig) {
   EXPECT_EQ(
       parsed.protocol_config().response_body_mode(),
       envoy::extensions::filters::http::ext_proc::v3::ProcessingMode::GRPC);
+}
+
+TEST_F(CreateExtProcRequestTest, ResponseBodyDrainComplete) {
+  upb::Arena arena;
+  std::string serialized =
+      CreateExtProcServerBodyRequest(arena.ptr(), "", {},
+                                     /*observability_mode=*/false,
+                                     /*processing_mode=*/std::nullopt,
+                                     /*drain_complete=*/true)
+          .value();
+  auto parsed = ParseRequest(serialized);
+  ASSERT_TRUE(parsed.has_response_body());
+  EXPECT_TRUE(parsed.response_body().drain_complete());
 }
 
 TEST_F(CreateExtProcRequestTest, AttributesPayload) {
@@ -971,13 +1163,57 @@ TEST_F(ParseExtProcResponseTest, ResponseInvalid) {
             absl::InternalError("Failed to parse ProcessingResponse"));
 }
 
-TEST_F(ParseExtProcResponseTest, RequestDrain) {
+TEST_F(ParseExtProcResponseTest, RequestDrainRequests) {
   upb::Arena arena;
   envoy::service::ext_proc::v3::ProcessingResponse response;
-  response.set_request_drain(true);
+  response.set_request_drain_requests(true);
   auto parsed = ParseResponse(response);
   ASSERT_TRUE(parsed.ok()) << parsed.status();
-  EXPECT_TRUE(parsed->request_drain);
+  EXPECT_TRUE(parsed->request_drain_requests);
+  EXPECT_FALSE(parsed->request_drain_responses);
+}
+
+TEST_F(ParseExtProcResponseTest, RequestDrainResponses) {
+  upb::Arena arena;
+  envoy::service::ext_proc::v3::ProcessingResponse response;
+  response.set_request_drain_responses(true);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_FALSE(parsed->request_drain_requests);
+  EXPECT_TRUE(parsed->request_drain_responses);
+}
+
+TEST_F(ParseExtProcResponseTest, ServerWindowUpdate) {
+  upb::Arena arena;
+  envoy::service::ext_proc::v3::ProcessingResponse response;
+  auto* window_update = response.mutable_server_window_update();
+  window_update->set_window_increment_downstream_to_sidestream(10000);
+  window_update->set_window_increment_upstream_to_sidestream(20000);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  ASSERT_TRUE(parsed->server_window_update.has_value());
+  EXPECT_EQ(
+      parsed->server_window_update->window_increment_downstream_to_sidestream,
+      10000);
+  EXPECT_EQ(
+      parsed->server_window_update->window_increment_upstream_to_sidestream,
+      20000);
+}
+
+TEST_F(ParseExtProcResponseTest, NegativeServerWindowUpdate) {
+  envoy::service::ext_proc::v3::ProcessingResponse response;
+  auto* window_update = response.mutable_server_window_update();
+  window_update->set_window_increment_downstream_to_sidestream(-10000);
+  window_update->set_window_increment_upstream_to_sidestream(-20000);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  ASSERT_TRUE(parsed->server_window_update.has_value());
+  EXPECT_EQ(
+      parsed->server_window_update->window_increment_downstream_to_sidestream,
+      -10000);
+  EXPECT_EQ(
+      parsed->server_window_update->window_increment_upstream_to_sidestream,
+      -20000);
 }
 
 TEST_F(ParseExtProcResponseTest, UnsupportedResponseCaseRequestTrailers) {
@@ -1148,7 +1384,22 @@ TEST_F(ParseExtProcResponseTest, RequestBodyMutation) {
   auto parsed = ParseResponse(response);
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   EXPECT_THAT(parsed->response,
-              IsRequestBody("test request body", true, false));
+              IsRequestBody("test request body", true, false, false));
+}
+
+TEST_F(ParseExtProcResponseTest, RequestBodyDrainComplete) {
+  upb::Arena arena;
+  envoy::service::ext_proc::v3::ProcessingResponse response;
+  auto* body_response = response.mutable_request_body();
+  auto* common_response = body_response->mutable_response();
+  common_response->set_status(
+      envoy::service::ext_proc::v3::CommonResponse::CONTINUE);
+  auto* body_mutation = common_response->mutable_body_mutation();
+  auto* streamed_response = body_mutation->mutable_streamed_response();
+  streamed_response->set_drain_complete(true);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_THAT(parsed->response, IsRequestBody("", false, false, true));
 }
 
 TEST_F(ParseExtProcResponseTest, RequestBodyUnsupportedStatus) {
@@ -1226,7 +1477,22 @@ TEST_F(ParseExtProcResponseTest, ResponseBodyMutation) {
   auto parsed = ParseResponse(response);
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   EXPECT_THAT(parsed->response,
-              IsResponseBody("test response body", false, false));
+              IsResponseBody("test response body", false, false, false));
+}
+
+TEST_F(ParseExtProcResponseTest, ResponseBodyDrainComplete) {
+  upb::Arena arena;
+  envoy::service::ext_proc::v3::ProcessingResponse response;
+  auto* body_response = response.mutable_response_body();
+  auto* common_response = body_response->mutable_response();
+  common_response->set_status(
+      envoy::service::ext_proc::v3::CommonResponse::CONTINUE);
+  auto* body_mutation = common_response->mutable_body_mutation();
+  auto* streamed_response = body_mutation->mutable_streamed_response();
+  streamed_response->set_drain_complete(true);
+  auto parsed = ParseResponse(response);
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  EXPECT_THAT(parsed->response, IsResponseBody("", false, false, true));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseBodyEndOfStreamRejected) {
@@ -1280,7 +1546,7 @@ TEST_F(ParseExtProcResponseTest,
   auto parsed = ParseResponse(response);
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   EXPECT_THAT(parsed->response,
-              IsRequestBody("test request body", false, false));
+              IsRequestBody("test request body", false, false, false));
 }
 
 TEST_F(ParseExtProcResponseTest, ResponseBodyUnsupportedStatus) {
