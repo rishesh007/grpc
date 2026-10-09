@@ -64,6 +64,39 @@ struct ExtProcProcessingMode {
   std::string ToString() const;
 };
 
+// Flow control window increments sent by client/server to external processor.
+struct ExtProcClientWindowUpdate {
+  int64_t window_increment_sidestream_to_upstream = 0;
+  int64_t window_increment_sidestream_to_downstream = 0;
+
+  bool operator==(const ExtProcClientWindowUpdate& other) const {
+    return window_increment_sidestream_to_upstream ==
+               other.window_increment_sidestream_to_upstream &&
+           window_increment_sidestream_to_downstream ==
+               other.window_increment_sidestream_to_downstream;
+  }
+};
+
+// Flow control window increments received from external processor.
+struct ExtProcServerWindowUpdate {
+  int64_t window_increment_downstream_to_sidestream = 0;
+  int64_t window_increment_upstream_to_sidestream = 0;
+
+  bool operator==(const ExtProcServerWindowUpdate& other) const {
+    return window_increment_downstream_to_sidestream ==
+               other.window_increment_downstream_to_sidestream &&
+           window_increment_upstream_to_sidestream ==
+               other.window_increment_upstream_to_sidestream;
+  }
+};
+
+// Default initial window size and update threshold in bytes for ext_proc flow
+// control.
+// TODO(rishesh): It's better if we can make this configurable.
+inline constexpr int64_t kExtProcInitialWindowSize = 65536;
+inline constexpr int64_t kExtProcWindowUpdateThreshold =
+    kExtProcInitialWindowSize / 2;
+
 // Creates a serialized envoy.service.ext_proc.v3.ProcessingRequest containing a
 // HttpHeaders message for client request headers.
 //
@@ -83,12 +116,16 @@ struct ExtProcProcessingMode {
 //  - processing_mode: If present, populates the protocol_config field in the
 //  request (sent on the first message of a stream to configure desired
 //  processing modes as per gRFC A93).
+//  - client_window_update: If present, populates client_window_update in the
+//  request message.
 absl::StatusOr<std::string> CreateExtProcClientHeadersRequest(
     upb_Arena* arena, grpc_metadata_batch* metadata,
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    std::optional<ExtProcProcessingMode> processing_mode);
+    std::optional<ExtProcProcessingMode> processing_mode,
+    std::optional<ExtProcClientWindowUpdate> client_window_update =
+        std::nullopt);
 
 // Creates a serialized envoy.service.ext_proc.v3.ProcessingRequest containing a
 // HttpHeaders message for server response headers.
@@ -113,12 +150,16 @@ absl::StatusOr<std::string> CreateExtProcClientHeadersRequest(
 //    gRFC A93).
 //  - end_of_stream: If true, indicates that this header message is also the end
 //  of the HTTP/gRPC stream.
+//  - client_window_update: If present, populates client_window_update in the
+//  request message.
 absl::StatusOr<std::string> CreateExtProcServerHeadersRequest(
     upb_Arena* arena, grpc_metadata_batch* metadata,
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    std::optional<ExtProcProcessingMode> processing_mode, bool end_of_stream);
+    std::optional<ExtProcProcessingMode> processing_mode, bool end_of_stream,
+    std::optional<ExtProcClientWindowUpdate> client_window_update =
+        std::nullopt);
 
 // Creates a serialized envoy.service.ext_proc.v3.ProcessingRequest containing a
 // HttpBody message for a client request body payload chunk.
@@ -142,11 +183,17 @@ absl::StatusOr<std::string> CreateExtProcServerHeadersRequest(
 //  - end_of_stream_without_message: If end_of_stream is true and this is true,
 //  indicates end of stream without a message (e.g. half-close). Ignored if
 //  end_of_stream is false.
+//  - drain_complete: If true, indicates external processor acknowledgment of
+//  request body drain.
+//  - client_window_update: If present, populates client_window_update in the
+//  request message.
 absl::StatusOr<std::string> CreateExtProcClientBodyRequest(
     upb_Arena* arena, absl::string_view body,
     ::google_protobuf_Struct* attributes, bool observability_mode,
     std::optional<ExtProcProcessingMode> processing_mode, bool end_of_stream,
-    bool end_of_stream_without_message);
+    bool end_of_stream_without_message, bool drain_complete = false,
+    std::optional<ExtProcClientWindowUpdate> client_window_update =
+        std::nullopt);
 
 // Creates a serialized envoy.service.ext_proc.v3.ProcessingRequest containing a
 // HttpBody message for a server response body payload chunk.
@@ -165,10 +212,17 @@ absl::StatusOr<std::string> CreateExtProcClientBodyRequest(
 //  - processing_mode: If present, populates the protocol_config field in the
 //  request (sent on the first message of a stream to configure desired
 //  processing modes as per gRFC A93).
+//  - drain_complete: If true, indicates external processor acknowledgment of
+//  response body drain.
+//  - client_window_update: If present, populates client_window_update in the
+//  request message.
 absl::StatusOr<std::string> CreateExtProcServerBodyRequest(
     upb_Arena* arena, absl::string_view body,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    std::optional<ExtProcProcessingMode> processing_mode);
+    std::optional<ExtProcProcessingMode> processing_mode,
+    bool drain_complete = false,
+    std::optional<ExtProcClientWindowUpdate> client_window_update =
+        std::nullopt);
 
 // Creates a serialized envoy.service.ext_proc.v3.ProcessingRequest containing a
 // HttpTrailers message for server response trailers.
@@ -189,12 +243,27 @@ absl::StatusOr<std::string> CreateExtProcServerBodyRequest(
 //  - processing_mode: If present, populates the protocol_config field in the
 //  request (sent on the first message of a stream to configure desired
 //  processing modes as per gRFC A93).
+//  - client_window_update: If present, populates client_window_update in the
+//  request message.
 absl::StatusOr<std::string> CreateExtProcServerTrailersRequest(
     upb_Arena* arena, grpc_metadata_batch* trailers,
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    std::optional<ExtProcProcessingMode> processing_mode);
+    std::optional<ExtProcProcessingMode> processing_mode,
+    std::optional<ExtProcClientWindowUpdate> client_window_update =
+        std::nullopt);
+
+// Creates a serialized envoy.service.ext_proc.v3.ProcessingRequest containing
+// only a ClientWindowUpdate message.
+//
+// Parameters:
+//  - arena: The upb arena used for memory allocation during proto creation and
+//  serialization.
+//  - client_window_update: Populates client_window_update in the request
+//  message.
+absl::StatusOr<std::string> CreateExtProcClientWindowUpdateRequest(
+    upb_Arena* arena, const ExtProcClientWindowUpdate& client_window_update);
 
 // Computes the value of the "connection.sha256_peer_certificate_digest"
 // attribute (see gRFC A103): the hex-encoded SHA-256 digest of the peer's
@@ -259,6 +328,8 @@ struct ExtProcResponse {
     bool end_of_stream = false;
     // If true, indicates the end of the stream without a message.
     bool end_of_stream_without_message = false;
+    // If true, indicates external processor acknowledgment of body drain.
+    bool drain_complete = false;
   };
 
   struct RequestHeaders {
@@ -299,11 +370,18 @@ struct ExtProcResponse {
                    ImmediateResponse>;
 
   ResponseValue response;
-  // If true, indicates that the client request should be drained as specified
-  // in gRFC A93: the filter sends a half-close on the ext_proc stream and
-  // pauses data plane reading until the ext_proc server echoes remaining
-  // messages and terminates the stream with OK status.
-  bool request_drain = false;
+  // If true, indicates that request body messages should be drained as
+  // specified in gRFC A93: the filter stops sending request body messages to
+  // ext_proc, sends HttpBody.drain_complete = true, and waits for
+  // acknowledgment.
+  bool request_drain_requests = false;
+  // If true, indicates that response body messages should be drained as
+  // specified in gRFC A93: the filter stops sending response body messages to
+  // ext_proc, sends HttpBody.drain_complete = true, and waits for
+  // acknowledgment.
+  bool request_drain_responses = false;
+  // Flow control window updates received from the external processor.
+  std::optional<ExtProcServerWindowUpdate> server_window_update;
 
   // Parses a serialized envoy.service.ext_proc.v3.ProcessingResponse proto.
   //

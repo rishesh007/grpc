@@ -162,8 +162,12 @@ absl::StatusOr<ExtProcResponse::BodyMutation> ParseExtProcBodyMutation(
       end_of_stream &&
       envoy_service_ext_proc_v3_StreamedBodyResponse_end_of_stream_without_message(
           streamed_response);
+  bool drain_complete =
+      envoy_service_ext_proc_v3_StreamedBodyResponse_drain_complete(
+          streamed_response);
   return ExtProcResponse::BodyMutation{
-      UpbStringToStdString(body), end_of_stream, end_of_stream_without_message};
+      UpbStringToStdString(body), end_of_stream, end_of_stream_without_message,
+      drain_complete};
 }
 }  // namespace
 
@@ -176,9 +180,29 @@ absl::StatusOr<ExtProcResponse> ExtProcResponse::Parse(
     return absl::InternalError("Failed to parse ProcessingResponse");
   }
   ExtProcResponse ext_proc_response;
-  // parse request_drain
-  ext_proc_response.request_drain =
-      envoy_service_ext_proc_v3_ProcessingResponse_request_drain(response);
+  // parse request_drain_requests and request_drain_responses
+  ext_proc_response.request_drain_requests =
+      envoy_service_ext_proc_v3_ProcessingResponse_request_drain_requests(
+          response);
+  ext_proc_response.request_drain_responses =
+      envoy_service_ext_proc_v3_ProcessingResponse_request_drain_responses(
+          response);
+  if (envoy_service_ext_proc_v3_ProcessingResponse_has_server_window_update(
+          response)) {
+    const auto* server_window_update =
+        envoy_service_ext_proc_v3_ProcessingResponse_server_window_update(
+            response);
+    if (server_window_update != nullptr) {
+      ExtProcServerWindowUpdate window_update;
+      window_update.window_increment_downstream_to_sidestream =
+          envoy_service_ext_proc_v3_ProcessingResponse_ServerWindowUpdate_window_increment_downstream_to_sidestream(
+              server_window_update);
+      window_update.window_increment_upstream_to_sidestream =
+          envoy_service_ext_proc_v3_ProcessingResponse_ServerWindowUpdate_window_increment_upstream_to_sidestream(
+              server_window_update);
+      ext_proc_response.server_window_update = window_update;
+    }
+  }
   switch (
       envoy_service_ext_proc_v3_ProcessingResponse_response_case(response)) {
     case envoy_service_ext_proc_v3_ProcessingResponse_response_request_headers: {
@@ -420,7 +444,7 @@ void SetExtProcResponseHeaders(
 
 void SetExtProcRequestBody(
     upb_Arena* arena, upb_StringView buf, bool end_of_stream,
-    bool end_of_stream_without_message,
+    bool end_of_stream_without_message, bool drain_complete,
     envoy_service_ext_proc_v3_ProcessingRequest* request) {
   envoy_service_ext_proc_v3_HttpBody* body =
       envoy_service_ext_proc_v3_HttpBody_new(arena);
@@ -432,15 +456,21 @@ void SetExtProcRequestBody(
           body, true);
     }
   }
+  if (drain_complete) {
+    envoy_service_ext_proc_v3_HttpBody_set_drain_complete(body, true);
+  }
   envoy_service_ext_proc_v3_ProcessingRequest_set_request_body(request, body);
 }
 
 void SetExtProcResponseBody(
-    upb_Arena* arena, upb_StringView buf,
+    upb_Arena* arena, upb_StringView buf, bool drain_complete,
     envoy_service_ext_proc_v3_ProcessingRequest* request) {
   envoy_service_ext_proc_v3_HttpBody* body =
       envoy_service_ext_proc_v3_HttpBody_new(arena);
   envoy_service_ext_proc_v3_HttpBody_set_body(body, buf);
+  if (drain_complete) {
+    envoy_service_ext_proc_v3_HttpBody_set_drain_complete(body, true);
+  }
   envoy_service_ext_proc_v3_ProcessingRequest_set_response_body(request, body);
 }
 
@@ -480,6 +510,18 @@ void SetExtProcProtocolConfig(
           : envoy_extensions_filters_http_ext_proc_v3_ProcessingMode_NONE);
 }
 
+void SetExtProcClientWindowUpdate(
+    upb_Arena* arena, const ExtProcClientWindowUpdate& update,
+    envoy_service_ext_proc_v3_ProcessingRequest* request) {
+  auto* update_msg =
+      envoy_service_ext_proc_v3_ProcessingRequest_mutable_client_window_update(
+          request, arena);
+  envoy_service_ext_proc_v3_ProcessingRequest_ClientWindowUpdate_set_window_increment_sidestream_to_upstream(
+      update_msg, update.window_increment_sidestream_to_upstream);
+  envoy_service_ext_proc_v3_ProcessingRequest_ClientWindowUpdate_set_window_increment_sidestream_to_downstream(
+      update_msg, update.window_increment_sidestream_to_downstream);
+}
+
 absl::StatusOr<std::string> SerializeExtProcMessage(
     envoy_service_ext_proc_v3_ProcessingRequest* request, upb_Arena* arena) {
   size_t size;
@@ -494,13 +536,30 @@ absl::StatusOr<std::string> SerializeExtProcMessage(
 envoy_service_ext_proc_v3_ProcessingRequest* CreateCommonRequest(
     upb_Arena* arena, ::google_protobuf_Struct* attributes,
     bool observability_mode,
-    std::optional<ExtProcProcessingMode> processing_mode) {
+    std::optional<ExtProcProcessingMode> processing_mode,
+    std::optional<ExtProcClientWindowUpdate> client_window_update) {
   auto* request = envoy_service_ext_proc_v3_ProcessingRequest_new(arena);
   SetExtProcAttributes(arena, attributes, request);
   envoy_service_ext_proc_v3_ProcessingRequest_set_observability_mode(
       request, observability_mode);
   if (processing_mode.has_value()) {
+    if (!observability_mode) {
+      auto* init_msg =
+          envoy_service_ext_proc_v3_ProcessingRequest_mutable_flow_control_init(
+              request, arena);
+      envoy_service_ext_proc_v3_ProcessingRequest_FlowControlInit_set_initial_window_downstream_to_sidestream(
+          init_msg, kExtProcInitialWindowSize);
+      envoy_service_ext_proc_v3_ProcessingRequest_FlowControlInit_set_initial_window_sidestream_to_upstream(
+          init_msg, kExtProcInitialWindowSize);
+      envoy_service_ext_proc_v3_ProcessingRequest_FlowControlInit_set_initial_window_upstream_to_sidestream(
+          init_msg, kExtProcInitialWindowSize);
+      envoy_service_ext_proc_v3_ProcessingRequest_FlowControlInit_set_initial_window_sidestream_to_downstream(
+          init_msg, kExtProcInitialWindowSize);
+    }
     SetExtProcProtocolConfig(arena, *processing_mode, request);
+  }
+  if (client_window_update.has_value()) {
+    SetExtProcClientWindowUpdate(arena, *client_window_update, request);
   }
   return request;
 }
@@ -674,10 +733,11 @@ absl::StatusOr<std::string> CreateRequestAndSerialize(
     upb_Arena* arena, ::google_protobuf_Struct* attributes,
     bool observability_mode,
     std::optional<ExtProcProcessingMode> processing_mode,
+    std::optional<ExtProcClientWindowUpdate> client_window_update,
     absl::FunctionRef<void(envoy_service_ext_proc_v3_ProcessingRequest*)>
         populate_payload) {
   auto* request = CreateCommonRequest(arena, attributes, observability_mode,
-                                      processing_mode);
+                                      processing_mode, client_window_update);
   populate_payload(request);
   return SerializeExtProcMessage(request, arena);
 }
@@ -689,9 +749,11 @@ absl::StatusOr<std::string> CreateExtProcClientHeadersRequest(
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    std::optional<ExtProcProcessingMode> processing_mode) {
+    std::optional<ExtProcProcessingMode> processing_mode,
+    std::optional<ExtProcClientWindowUpdate> client_window_update) {
   return CreateRequestAndSerialize(
       arena, attributes, observability_mode, processing_mode,
+      client_window_update,
       [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
         auto* upb_headers = CreateUpbHeaderMap(
             arena, *metadata, allowed_headers, disallowed_headers);
@@ -704,9 +766,11 @@ absl::StatusOr<std::string> CreateExtProcServerHeadersRequest(
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    std::optional<ExtProcProcessingMode> processing_mode, bool end_of_stream) {
+    std::optional<ExtProcProcessingMode> processing_mode, bool end_of_stream,
+    std::optional<ExtProcClientWindowUpdate> client_window_update) {
   return CreateRequestAndSerialize(
       arena, attributes, observability_mode, processing_mode,
+      client_window_update,
       [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
         auto* upb_headers = CreateUpbHeaderMap(
             arena, *metadata, allowed_headers, disallowed_headers);
@@ -718,23 +782,29 @@ absl::StatusOr<std::string> CreateExtProcClientBodyRequest(
     upb_Arena* arena, absl::string_view body,
     ::google_protobuf_Struct* attributes, bool observability_mode,
     std::optional<ExtProcProcessingMode> processing_mode, bool end_of_stream,
-    bool end_of_stream_without_message) {
+    bool end_of_stream_without_message, bool drain_complete,
+    std::optional<ExtProcClientWindowUpdate> client_window_update) {
   return CreateRequestAndSerialize(
       arena, attributes, observability_mode, processing_mode,
+      client_window_update,
       [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
         SetExtProcRequestBody(arena, StdStringToUpbString(body), end_of_stream,
-                              end_of_stream_without_message, request);
+                              end_of_stream_without_message, drain_complete,
+                              request);
       });
 }
 
 absl::StatusOr<std::string> CreateExtProcServerBodyRequest(
     upb_Arena* arena, absl::string_view body,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    std::optional<ExtProcProcessingMode> processing_mode) {
+    std::optional<ExtProcProcessingMode> processing_mode, bool drain_complete,
+    std::optional<ExtProcClientWindowUpdate> client_window_update) {
   return CreateRequestAndSerialize(
       arena, attributes, observability_mode, processing_mode,
+      client_window_update,
       [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
-        SetExtProcResponseBody(arena, StdStringToUpbString(body), request);
+        SetExtProcResponseBody(arena, StdStringToUpbString(body),
+                               drain_complete, request);
       });
 }
 
@@ -743,14 +813,24 @@ absl::StatusOr<std::string> CreateExtProcServerTrailersRequest(
     const std::vector<StringMatcher>& allowed_headers,
     const std::vector<StringMatcher>& disallowed_headers,
     ::google_protobuf_Struct* attributes, bool observability_mode,
-    std::optional<ExtProcProcessingMode> processing_mode) {
+    std::optional<ExtProcProcessingMode> processing_mode,
+    std::optional<ExtProcClientWindowUpdate> client_window_update) {
   return CreateRequestAndSerialize(
       arena, attributes, observability_mode, processing_mode,
+      client_window_update,
       [&](envoy_service_ext_proc_v3_ProcessingRequest* request) {
         auto* upb_trailers = CreateUpbHeaderMap(
             arena, *trailers, allowed_headers, disallowed_headers);
         SetExtProcResponseTrailers(arena, upb_trailers, request);
       });
+}
+
+absl::StatusOr<std::string> CreateExtProcClientWindowUpdateRequest(
+    upb_Arena* arena, const ExtProcClientWindowUpdate& client_window_update) {
+  return CreateRequestAndSerialize(
+      arena, /*attributes=*/nullptr, /*observability_mode=*/false,
+      /*processing_mode=*/std::nullopt, client_window_update,
+      [](envoy_service_ext_proc_v3_ProcessingRequest*) {});
 }
 
 }  // namespace grpc_core
