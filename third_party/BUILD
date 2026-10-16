@@ -123,8 +123,6 @@ alias(
     tags = ["manual"],
 )
 
-# cel-c restricts its targets to :friends. The BCR module (bzlmod) and
-# third_party/cel-c.patch (WORKSPACE) widen it so gRPC Core can depend on them.
 alias(
     name = "cel_c_alloc",
     actual = "@cel_c//cel-c:alloc",
