@@ -35,13 +35,38 @@
 namespace grpc_core {
 
 template <typename T>
-class XdsMatcherInputFactory {
+class XdsMatcherInputFactory final {
+ public:
+  virtual absl::string_view type() const = delete;
+  virtual UniqueTypeName context_type() const = delete;
+  virtual std::unique_ptr<XdsMatcher::InputValue<T>> ParseAndCreateInput(
+      const XdsResourceType::DecodeContext& context,
+      absl::string_view serialized_value,
+      ValidationErrors* errors) const = delete;
+  virtual ~XdsMatcherInputFactory() = default;
+};
+
+template <>
+class XdsMatcherInputFactory<absl::string_view> {
  public:
   virtual absl::string_view type() const = 0;
   virtual UniqueTypeName context_type() const = 0;
-  virtual std::unique_ptr<XdsMatcher::InputValue<T>> ParseAndCreateInput(
-      const XdsResourceType::DecodeContext& context,
-      absl::string_view serialized_value, ValidationErrors* errors) const = 0;
+  virtual std::unique_ptr<XdsMatcher::InputValue<absl::string_view>>
+  ParseAndCreateInput(const XdsResourceType::DecodeContext& context,
+                      absl::string_view serialized_value,
+                      ValidationErrors* errors) const = 0;
+  virtual ~XdsMatcherInputFactory() = default;
+};
+
+template <>
+class XdsMatcherInputFactory<CelRequestResolver> {
+ public:
+  virtual absl::string_view type() const = 0;
+  virtual UniqueTypeName context_type() const = 0;
+  virtual std::unique_ptr<XdsMatcher::InputValue<CelRequestResolver>>
+  ParseAndCreateInput(const XdsResourceType::DecodeContext& context,
+                      absl::string_view serialized_value,
+                      ValidationErrors* errors) const = 0;
   virtual ~XdsMatcherInputFactory() = default;
 };
 
