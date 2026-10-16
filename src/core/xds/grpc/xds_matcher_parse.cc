@@ -52,11 +52,6 @@ std::unique_ptr<XdsMatcher> ParseXdsMatcherRecursive(
     const UniqueTypeName& matcher_context, bool allow_keep_matching, int depth,
     ValidationErrors* errors);
 
-const GrpcXdsBootstrap& GetBootstrap(
-    const XdsResourceType::DecodeContext& context) {
-  return DownCast<const GrpcXdsBootstrap&>(context.client->bootstrap());
-}
-
 // Function to parse "xds_core_v3_TypedExtensionConfig" to generate
 // XdsMatcher::InputValue<T> using the given registry.
 template <typename T>
@@ -84,9 +79,11 @@ std::unique_ptr<XdsMatcher::InputValue<absl::string_view>> ParseStringInput(
     const XdsResourceType::DecodeContext& context,
     const xds_core_v3_TypedExtensionConfig* input,
     const UniqueTypeName& matcher_context, ValidationErrors* errors) {
-  return ParseInput(context, input,
-                    GetBootstrap(context).matcher_string_input_registry(),
-                    matcher_context, errors);
+  return ParseInput(
+      context, input,
+      DownCast<const GrpcXdsBootstrap&>(context.client->bootstrap())
+          .matcher_string_input_registry(),
+      matcher_context, errors);
 }
 
 // Parses SinglePredicate.custom_match.  CelMatcher is the only supported
@@ -245,9 +242,11 @@ std::unique_ptr<XdsMatcherList::Predicate> ParseSinglePredicate(
     std::unique_ptr<XdsMatcher::InputValue<CelRequestResolver>> input;
     {
       ValidationErrors::ScopedField field(errors, ".input");
-      input = ParseInput(context, input_proto,
-                         GetBootstrap(context).matcher_cel_input_registry(),
-                         matcher_context, errors);
+      input = ParseInput(
+          context, input_proto,
+          DownCast<const GrpcXdsBootstrap&>(context.client->bootstrap())
+              .matcher_cel_input_registry(),
+          matcher_context, errors);
     }
     if (input == nullptr || matcher == nullptr) return nullptr;
     return XdsMatcherList::CreateSinglePredicate(std::move(input),
