@@ -390,6 +390,10 @@ def grpc_deps():
     if "cel_c" not in native.existing_rules():
         http_archive(
             name = "cel_c",
+            patch_args = ["-p1"],
+            patches = [
+                "@com_github_grpc_grpc//third_party:cel-c.patch",
+            ],
             # cel-c's BUILD files use the bzlmod module names of its
             # dependencies, which differ from the repo names used here.
             repo_mapping = {
@@ -399,11 +403,11 @@ def grpc_deps():
                 "@googletest": "@com_google_googletest",
                 "@protobuf": "@com_google_protobuf",
             },
-            sha256 = "4ac93b6424dddebde797226c096607756b17e688efbd6f0574ff9dd3b091a76c",
-            strip_prefix = "cel-c-bbdb358f202b275731a0d7ee3162fd211886c945",
+            sha256 = "a7ac147924d2aea238ce58129b5c0c20be35ab2207895426c9e5487baa590f05",
+            strip_prefix = "cel-c-900f60bb7800576387dbc7f76d6a9f7a5fde993c",
             urls = [
-                "https://storage.googleapis.com/grpc-bazel-mirror/github.com/cel-expr/cel-c/archive/bbdb358f202b275731a0d7ee3162fd211886c945.tar.gz",
-                "https://github.com/cel-expr/cel-c/archive/bbdb358f202b275731a0d7ee3162fd211886c945.tar.gz",
+                "https://storage.googleapis.com/grpc-bazel-mirror/github.com/cel-expr/cel-c/archive/900f60bb7800576387dbc7f76d6a9f7a5fde993c.tar.gz",
+                "https://github.com/cel-expr/cel-c/archive/900f60bb7800576387dbc7f76d6a9f7a5fde993c.tar.gz",
             ],
         )
 
