@@ -16,9 +16,11 @@
 
 #include <string>
 
+#include "src/core/call/metadata_batch.h"
 #include "src/core/lib/slice/slice.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/match.h"
+#include "absl/strings/string_view.h"
 
 namespace grpc_core {
 
@@ -50,6 +52,10 @@ std::optional<absl::string_view> RpcMatchContext::GetHeaderValue(
     return std::nullopt;
   } else if (header_name == "content-type") {
     return "application/grpc";
+  } else if (IsAuthorityHeaderName(header_name)) {
+    const Slice* authority = GetAuthorityOrHost(*initial_metadata_);
+    if (authority == nullptr) return std::nullopt;
+    return authority->as_string_view();
   }
   return initial_metadata_->GetStringValue(header_name, &buffer_);
 }

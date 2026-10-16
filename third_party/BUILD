@@ -13,6 +13,7 @@ exports_files([
     "typing_extensions.BUILD",
     "enum34.BUILD",
     "futures.BUILD",
+    "envoy-api.patch",
     "opencensus-cpp.patch",
     "protobuf.patch",
     "protoc-gen-validate.patch",
