@@ -24,6 +24,20 @@
 
 namespace grpc_core {
 
+std::optional<absl::string_view> RpcMatchContext::GetHeaderValue(
+    absl::string_view header_name) const {
+  if (absl::EndsWith(header_name, "-bin")) {
+    return std::nullopt;
+  } else if (header_name == "content-type") {
+    return "application/grpc";
+  } else if (IsAuthorityHeaderName(header_name)) {
+    const Slice* authority = GetAuthorityOrHost(*initial_metadata_);
+    if (authority == nullptr) return std::nullopt;
+    return authority->as_string_view();
+  }
+  return initial_metadata_->GetStringValue(header_name, &buffer_);
+}
+
 namespace {
 
 // Collects the names of all encodable headers in a metadata batch.
@@ -45,20 +59,6 @@ class HeaderNameCollector {
 };
 
 }  // namespace
-
-std::optional<absl::string_view> RpcMatchContext::GetHeaderValue(
-    absl::string_view header_name) const {
-  if (absl::EndsWith(header_name, "-bin")) {
-    return std::nullopt;
-  } else if (header_name == "content-type") {
-    return "application/grpc";
-  } else if (IsAuthorityHeaderName(header_name)) {
-    const Slice* authority = GetAuthorityOrHost(*initial_metadata_);
-    if (authority == nullptr) return std::nullopt;
-    return authority->as_string_view();
-  }
-  return initial_metadata_->GetStringValue(header_name, &buffer_);
-}
 
 void RpcMatchContext::ForEachHeaderName(
     absl::FunctionRef<void(absl::string_view)> fn) const {
