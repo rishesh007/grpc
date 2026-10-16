@@ -19,7 +19,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <variant>
 
 #include "src/core/util/down_cast.h"
 #include "src/core/util/unique_type_name.h"
@@ -80,27 +79,7 @@ class XdsMatcherInputRegistry {
 
   std::unique_ptr<XdsMatcher::InputValue<T>> ParseAndCreateInput(
       const XdsResourceType::DecodeContext& context, const XdsExtension& input,
-      const UniqueTypeName& matcher_context, ValidationErrors* errors) const {
-    const auto it = factories_.find(input.type);
-    if (it == factories_.cend()) {
-      errors->AddError(absl::StrCat("Unsupported Input type:", input.type));
-      return nullptr;
-    }
-    if (it->second->context_type() != matcher_context) {
-      errors->AddError(
-          absl::StrCat("Unsupported context:", it->second->context_type(),
-                       ". Parser supported context:", matcher_context));
-      return nullptr;
-    }
-    const absl::string_view* serialized_value =
-        std::get_if<absl::string_view>(&input.value);
-    if (serialized_value == nullptr) {
-      errors->AddError(
-          "Unsuppored input format (Json found instead of string)");
-      return nullptr;
-    }
-    return it->second->ParseAndCreateInput(context, *serialized_value, errors);
-  }
+      const UniqueTypeName& matcher_context, ValidationErrors* errors) const;
 
  private:
   using FactoryMap =
@@ -113,6 +92,10 @@ template <>
 XdsMatcherInputRegistry<absl::string_view>::XdsMatcherInputRegistry();
 template <>
 XdsMatcherInputRegistry<CelRequestResolver>::XdsMatcherInputRegistry();
+
+// Explicitly instantiated in xds_matcher_input.cc.
+extern template class XdsMatcherInputRegistry<absl::string_view>;
+extern template class XdsMatcherInputRegistry<CelRequestResolver>;
 
 class MetadataInput : public XdsMatcher::InputValue<absl::string_view> {
  public:

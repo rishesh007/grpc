@@ -14,11 +14,14 @@
 
 #include "src/core/xds/grpc/xds_matcher_input.h"
 
+#include <variant>
+
 #include "envoy/type/matcher/v3/http_inputs.upb.h"
 #include "src/core/util/upb_utils.h"
 #include "src/core/xds/grpc/xds_matcher.h"
 #include "src/core/xds/grpc/xds_matcher_context.h"
 #include "xds/type/matcher/v3/http_inputs.upb.h"
+#include "absl/strings/str_cat.h"
 
 namespace grpc_core {
 std::optional<absl::string_view> MetadataInput::GetValue(
@@ -77,5 +80,33 @@ XdsMatcherInputRegistry<CelRequestResolver>::XdsMatcherInputRegistry() {
   factories_.emplace(HttpAttributesCelMatchInputFactory::Type(),
                      std::make_unique<HttpAttributesCelMatchInputFactory>());
 }
+
+template <typename T>
+std::unique_ptr<XdsMatcher::InputValue<T>>
+XdsMatcherInputRegistry<T>::ParseAndCreateInput(
+    const XdsResourceType::DecodeContext& context, const XdsExtension& input,
+    const UniqueTypeName& matcher_context, ValidationErrors* errors) const {
+  const auto it = factories_.find(input.type);
+  if (it == factories_.cend()) {
+    errors->AddError(absl::StrCat("Unsupported Input type:", input.type));
+    return nullptr;
+  }
+  if (it->second->context_type() != matcher_context) {
+    errors->AddError(
+        absl::StrCat("Unsupported context:", it->second->context_type(),
+                     ". Parser supported context:", matcher_context));
+    return nullptr;
+  }
+  const absl::string_view* serialized_value =
+      std::get_if<absl::string_view>(&input.value);
+  if (serialized_value == nullptr) {
+    errors->AddError("Unsuppored input format (Json found instead of string)");
+    return nullptr;
+  }
+  return it->second->ParseAndCreateInput(context, *serialized_value, errors);
+}
+
+template class XdsMatcherInputRegistry<absl::string_view>;
+template class XdsMatcherInputRegistry<CelRequestResolver>;
 
 }  // namespace grpc_core
