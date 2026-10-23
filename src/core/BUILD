@@ -9932,6 +9932,7 @@ grpc_cc_library(
         "ref_counted",
         "resource_quota",
         "resource_quota_telemetry",
+        "seq",
         "sleep",
         "status_flag",
         "stream_data_queue",
@@ -11885,6 +11886,25 @@ grpc_cc_library(
 )
 
 grpc_cc_library(
+    name = "lame_channel",
+    srcs = [
+        "client_channel/lame_channel.cc",
+    ],
+    hdrs = [
+        "client_channel/lame_channel.h",
+    ],
+    external_deps = [
+        "absl/status",
+        "absl/status:statusor",
+    ],
+    deps = [
+        "event_engine_context",
+        "//:channel",
+        "//:grpc_base",
+    ],
+)
+
+grpc_cc_library(
     name = "metadata_batch",
     srcs = [
         "call/metadata_batch.cc",
@@ -12183,7 +12203,6 @@ grpc_cc_library(
         "1999",
         "channel_args",
         "grpc_check",
-        "if",
         "inter_activity_latch",
         "latch",
         "map",
@@ -12193,6 +12212,7 @@ grpc_cc_library(
         "ping_rate_policy",
         "poll",
         "race",
+        "seq",
         "shared_bit_gen",
         "sleep",
         "time",

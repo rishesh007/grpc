@@ -1,8 +1,6 @@
-diff --git a/cel-c/internal/message_equality.cc b/cel-c/internal/message_equality.cc
-index 409c6b2..599be4b 100644
 --- a/cel-c/internal/message_equality.cc
 +++ b/cel-c/internal/message_equality.cc
-@@ -69,12 +69,15 @@ _cel_MessageEqualityState_Arena(_cel_MessageEqualityState* cel_nonnull state) {
+@@ -69,12 +69,15 @@
    return arena;
  }
  
@@ -19,7 +17,7 @@ index 409c6b2..599be4b 100644
    switch (result) {
      case kUpb_UnknownCompareResult_Equal:
        return true;
-@@ -90,6 +93,8 @@ static bool _cel_MessageEqualityState_UnknownEquals(
+@@ -90,6 +93,8 @@
    }
  }
  
