@@ -7013,6 +7013,7 @@ grpc_cc_library(
         "validation_errors",
         "xds_audit_logger_registry",
         "xds_certificate_provider_store",
+        "xds_cel_request_resolver",
         "xds_cluster_specifier_plugin",
         "xds_http_filter_registry",
         "xds_lb_policy_registry",
@@ -7401,7 +7402,11 @@ grpc_cc_library(
     hdrs = [
         "xds/grpc/xds_matcher_context.h",
     ],
-    external_deps = ["absl/strings"],
+    external_deps = [
+        "absl/container:flat_hash_set",
+        "absl/functional:function_ref",
+        "absl/strings",
+    ],
     tags = ["nofixdeps"],
     visibility = ["//bazel:xds_client_grpc"],
     deps = [
@@ -7442,11 +7447,17 @@ grpc_cc_library(
     tags = ["nofixdeps"],
     visibility = ["//bazel:xds_client_grpc"],
     deps = [
+        "down_cast",
         "envoy_type_matcher_upb",
+        "unique_type_name",
         "upb_utils",
+        "validation_errors",
+        "xds_cel_request_resolver",
         "xds_common_types",
         "xds_matcher",
         "xds_matcher_context",
+        "xds_type_matcher_upb",
+        "//:grpc_base",
         "//:xds_client",
     ],
 )
@@ -7465,10 +7476,15 @@ grpc_cc_library(
     tags = ["nofixdeps"],
     visibility = ["//bazel:xds_client_grpc"],
     deps = [
+        "down_cast",
         "unique_type_name",
         "upb_utils",
         "validation_errors",
         "xds_bootstrap_grpc",
+        "xds_cel",
+        "xds_cel_matcher",
+        "xds_cel_parser",
+        "xds_cel_request_resolver",
         "xds_common_types_parser",
         "xds_extension_upb",
         "xds_matcher",
@@ -7476,6 +7492,114 @@ grpc_cc_library(
         "xds_matcher_input",
         "xds_type_matcher_upb",
         "//:xds_client",
+    ],
+)
+
+grpc_cc_library(
+    name = "xds_cel_parser",
+    srcs = [
+        "xds/grpc/xds_cel_parser.cc",
+    ],
+    hdrs = [
+        "xds/grpc/xds_cel_parser.h",
+    ],
+    tags = ["nofixdeps"],
+    visibility = ["//bazel:xds_client_grpc"],
+    deps = [
+        "protobuf_wrappers_upb",
+        "upb_utils",
+        "validation_errors",
+        "xds_cel",
+        "xds_type_upb",
+        "//:cel_expr_checked_upb",
+    ],
+)
+
+grpc_cc_library(
+    name = "xds_cel",
+    srcs = [
+        "xds/grpc/xds_cel.cc",
+    ],
+    hdrs = [
+        "xds/grpc/xds_cel.h",
+    ],
+    external_deps = [
+        "absl/functional:function_ref",
+        "absl/log:check",
+        "absl/status",
+        "absl/status:statusor",
+        "absl/strings",
+        "cel_c_alloc",
+        "cel_c_arena",
+        "cel_c_ast",
+        "cel_c_ast_proto",
+        "cel_c_runtime",
+        "cel_c_status",
+        "cel_c_status_absl",
+        "cel_c_string_view_absl",
+        "cel_c_value",
+        "re2",
+    ],
+    tags = ["nofixdeps"],
+    visibility = ["//bazel:xds_client_grpc"],
+    deps = [
+        "no_destruct",
+        "protobuf_any_upbdefs",
+        "protobuf_duration_upbdefs",
+        "protobuf_struct_upbdefs",
+        "protobuf_timestamp_upbdefs",
+        "protobuf_wrappers_upbdefs",
+        "//:cel_expr_checked_upb",
+        "//:cel_expr_syntax_upb",
+        "@com_google_protobuf//upb/base",
+        "@com_google_protobuf//upb/mem",
+        "@com_google_protobuf//upb/reflection",
+        "@com_google_protobuf//upb/wire",
+    ],
+)
+
+grpc_cc_library(
+    name = "xds_cel_matcher",
+    hdrs = [
+        "xds/grpc/xds_cel_matcher.h",
+    ],
+    external_deps = [
+        "absl/strings",
+    ],
+    tags = ["nofixdeps"],
+    visibility = ["//bazel:xds_client_grpc"],
+    deps = [
+        "down_cast",
+        "unique_type_name",
+        "xds_cel",
+        "xds_cel_request_resolver",
+        "xds_matcher",
+    ],
+)
+
+grpc_cc_library(
+    name = "xds_cel_request_resolver",
+    srcs = [
+        "xds/grpc/xds_cel_request_resolver.cc",
+    ],
+    hdrs = [
+        "xds/grpc/xds_cel_request_resolver.h",
+    ],
+    external_deps = [
+        "absl/functional:function_ref",
+        "absl/strings",
+        "cel_c_arena",
+        "cel_c_error",
+        "cel_c_error_code",
+        "cel_c_runtime",
+        "cel_c_status",
+        "cel_c_string_view_absl",
+        "cel_c_value",
+    ],
+    tags = ["nofixdeps"],
+    visibility = ["//bazel:xds_client_grpc"],
+    deps = [
+        "xds_matcher_context",
     ],
 )
 
