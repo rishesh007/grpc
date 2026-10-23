@@ -265,6 +265,7 @@ Pod::Spec.new do |s|
     ss.dependency 'abseil/memory/memory', abseil_version
     ss.dependency 'abseil/meta/type_traits', abseil_version
     ss.dependency 'abseil/numeric/bits', abseil_version
+    ss.dependency 'abseil/numeric/int128', abseil_version
     ss.dependency 'abseil/random/bit_gen_ref', abseil_version
     ss.dependency 'abseil/random/distributions', abseil_version
     ss.dependency 'abseil/random/random', abseil_version
@@ -1608,7 +1609,6 @@ Pod::Spec.new do |s|
                       'third_party/cel-c/cel-c/error_code.h',
                       'third_party/cel-c/cel-c/error_space.h',
                       'third_party/cel-c/cel-c/function_scope.h',
-                      'third_party/cel-c/cel-c/hash.h',
                       'third_party/cel-c/cel-c/internal/align.h',
                       'third_party/cel-c/cel-c/internal/alloca.h',
                       'third_party/cel-c/cel-c/internal/any.h',
@@ -1627,12 +1627,12 @@ Pod::Spec.new do |s|
                       'third_party/cel-c/cel-c/internal/durationconv.h',
                       'third_party/cel-c/cel-c/internal/empty_list_value.h',
                       'third_party/cel-c/cel-c/internal/empty_map_value.h',
-                      'third_party/cel-c/cel-c/internal/endian.h',
                       'third_party/cel-c/cel-c/internal/flat_hash_map.h',
                       'third_party/cel-c/cel-c/internal/generic_array.h',
                       'third_party/cel-c/cel-c/internal/generic_deque.h',
                       'third_party/cel-c/cel-c/internal/generic_flat_hash.h',
                       'third_party/cel-c/cel-c/internal/generic_string.h',
+                      'third_party/cel-c/cel-c/internal/hash.h',
                       'third_party/cel-c/cel-c/internal/malloc.h',
                       'third_party/cel-c/cel-c/internal/map_value.h',
                       'third_party/cel-c/cel-c/internal/memory.h',
@@ -1654,8 +1654,7 @@ Pod::Spec.new do |s|
                       'third_party/cel-c/cel-c/internal/sort.h',
                       'third_party/cel-c/cel-c/internal/string.h',
                       'third_party/cel-c/cel-c/internal/timestampconv.h',
-                      'third_party/cel-c/cel-c/internal/uchar.h',
-                      'third_party/cel-c/cel-c/internal/uint128.h',
+                      'third_party/cel-c/cel-c/internal/trivial_relocation.hpp',
                       'third_party/cel-c/cel-c/internal/unaligned.h',
                       'third_party/cel-c/cel-c/internal/unicode.h',
                       'third_party/cel-c/cel-c/internal/utf8.h',
@@ -3115,7 +3114,6 @@ Pod::Spec.new do |s|
                               'third_party/cel-c/cel-c/error_code.h',
                               'third_party/cel-c/cel-c/error_space.h',
                               'third_party/cel-c/cel-c/function_scope.h',
-                              'third_party/cel-c/cel-c/hash.h',
                               'third_party/cel-c/cel-c/internal/align.h',
                               'third_party/cel-c/cel-c/internal/alloca.h',
                               'third_party/cel-c/cel-c/internal/any.h',
@@ -3134,12 +3132,12 @@ Pod::Spec.new do |s|
                               'third_party/cel-c/cel-c/internal/durationconv.h',
                               'third_party/cel-c/cel-c/internal/empty_list_value.h',
                               'third_party/cel-c/cel-c/internal/empty_map_value.h',
-                              'third_party/cel-c/cel-c/internal/endian.h',
                               'third_party/cel-c/cel-c/internal/flat_hash_map.h',
                               'third_party/cel-c/cel-c/internal/generic_array.h',
                               'third_party/cel-c/cel-c/internal/generic_deque.h',
                               'third_party/cel-c/cel-c/internal/generic_flat_hash.h',
                               'third_party/cel-c/cel-c/internal/generic_string.h',
+                              'third_party/cel-c/cel-c/internal/hash.h',
                               'third_party/cel-c/cel-c/internal/malloc.h',
                               'third_party/cel-c/cel-c/internal/map_value.h',
                               'third_party/cel-c/cel-c/internal/memory.h',
@@ -3161,8 +3159,7 @@ Pod::Spec.new do |s|
                               'third_party/cel-c/cel-c/internal/sort.h',
                               'third_party/cel-c/cel-c/internal/string.h',
                               'third_party/cel-c/cel-c/internal/timestampconv.h',
-                              'third_party/cel-c/cel-c/internal/uchar.h',
-                              'third_party/cel-c/cel-c/internal/uint128.h',
+                              'third_party/cel-c/cel-c/internal/trivial_relocation.hpp',
                               'third_party/cel-c/cel-c/internal/unaligned.h',
                               'third_party/cel-c/cel-c/internal/unicode.h',
                               'third_party/cel-c/cel-c/internal/utf8.h',

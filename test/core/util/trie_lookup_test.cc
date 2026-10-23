@@ -112,6 +112,23 @@ TEST_F(TrieLookupTreeTest, ForEachPrefixMatch) {
   EXPECT_THAT(matches_3, ::testing::ElementsAre("first", "third", "second"));
 }
 
+TEST_F(TrieLookupTreeTest, ForEachPrefixMatchEmptyKey) {
+  trie_.AddNode("", "empty");
+  trie_.AddNode("a", "first");
+  std::vector<std::string> matches;
+  trie_.ForEachPrefixMatch("ab",
+                           [&](const std::string& v) { matches.push_back(v); });
+  EXPECT_THAT(matches, ::testing::ElementsAre("empty", "first"));
+  matches.clear();
+  trie_.ForEachPrefixMatch("",
+                           [&](const std::string& v) { matches.push_back(v); });
+  EXPECT_THAT(matches, ::testing::ElementsAre("empty"));
+  matches.clear();
+  trie_.ForEachPrefixMatch("x",
+                           [&](const std::string& v) { matches.push_back(v); });
+  EXPECT_THAT(matches, ::testing::ElementsAre("empty"));
+}
+
 TEST_F(TrieLookupTreeTest, ForEachTest) {
   trie_.AddNode("a", "first");
   trie_.AddNode("a/b/c", "second");

@@ -66,6 +66,23 @@ class TestPathInput : public XdsMatcher::InputValue<absl::string_view> {
   std::string ToString() const override { return "TestPathInput"; }
 };
 
+// An input that is never present (e.g. a missing header).
+class TestAbsentInput : public XdsMatcher::InputValue<absl::string_view> {
+ public:
+  std::optional<absl::string_view> GetValue(
+      const XdsMatcher::MatchContext& /*context*/) const override {
+    return std::nullopt;
+  }
+  static UniqueTypeName Type() {
+    return GRPC_UNIQUE_TYPE_NAME_HERE("TestAbsentInput");
+  }
+  UniqueTypeName type() const override { return Type(); }
+  bool Equals(const XdsMatcher::InputValue<absl::string_view>&) const override {
+    return true;
+  }
+  std::string ToString() const override { return "TestAbsentInput"; }
+};
+
 // A concrete implementation of Action for testing.
 class TestAction : public XdsMatcher::Action {
  public:
@@ -666,6 +683,122 @@ TEST(RpcMatchContextGetHeaderValueTest, HostOnlyUsesHost) {
   RpcMatchContext context(&md);
   EXPECT_EQ(context.GetHeaderValue("host"), "host");
   EXPECT_EQ(context.GetHeaderValue(":authority"), "host");
+}
+
+TEST(RpcMatchContextGetHeaderValueTest, TeIsHidden) {
+  grpc_metadata_batch md;
+  md.Set(TeMetadata(), TeMetadata::kTrailers);
+  md.Append("x-foo", Slice::FromStaticString("bar"),
+            [](absl::string_view, const Slice&) { FAIL(); });
+  RpcMatchContext context(&md);
+  EXPECT_EQ(context.GetHeaderValue("te"), std::nullopt);
+  EXPECT_EQ(context.GetHeaderValue("x-foo"), "bar");
+  std::vector<std::string> names;
+  context.ForEachHeaderName(
+      [&](absl::string_view name) { names.emplace_back(name); });
+  EXPECT_THAT(names, ::testing::Contains("x-foo"));
+  EXPECT_THAT(names, ::testing::Not(::testing::Contains("te")));
+}
+
+//
+// Absent input
+//
+
+// Returns a list with a single matcher applying string_matcher to input.
+std::unique_ptr<XdsMatcherList> MakeSinglePredicateList(
+    std::unique_ptr<XdsMatcher::InputValue<absl::string_view>> input,
+    StringMatcher string_matcher, bool negate) {
+  std::unique_ptr<XdsMatcherList::Predicate> predicate =
+      XdsMatcherList::CreateSinglePredicate(
+          std::move(input),
+          std::make_unique<XdsMatcherList::StringInputMatcher>(
+              std::move(string_matcher)));
+  if (negate) {
+    predicate = XdsMatcherList::NotPredicate::Create(std::move(predicate));
+  }
+  std::vector<XdsMatcherList::FieldMatcher> matchers;
+  matchers.emplace_back(
+      std::move(predicate),
+      XdsMatcher::OnMatch(std::make_unique<TestAction>("match"), false));
+  return std::make_unique<XdsMatcherList>(std::move(matchers), std::nullopt);
+}
+
+TEST(XdsMatcherAbsentInputTest, StringMatcherDoesNotMatchAbsentInput) {
+  TestMatchContext context("");
+  // Matchers that would match an empty string.
+  for (StringMatcher string_matcher :
+       {StringMatcher::Create(StringMatcher::Type::kExact, "").value(),
+        StringMatcher::Create(StringMatcher::Type::kSafeRegex, ".*").value()}) {
+    // Sanity check: a present but empty input matches.
+    XdsMatcher::Result result;
+    auto present = MakeSinglePredicateList(std::make_unique<TestPathInput>(),
+                                           string_matcher, /*negate=*/false);
+    EXPECT_TRUE(present->FindMatches(context, result))
+        << string_matcher.ToString();
+    // An absent input does not match...
+    result.clear();
+    auto absent = MakeSinglePredicateList(std::make_unique<TestAbsentInput>(),
+                                          string_matcher, /*negate=*/false);
+    EXPECT_FALSE(absent->FindMatches(context, result))
+        << string_matcher.ToString();
+    EXPECT_TRUE(result.empty());
+    // ...so its negation does.
+    auto negated = MakeSinglePredicateList(std::make_unique<TestAbsentInput>(),
+                                           string_matcher, /*negate=*/true);
+    EXPECT_TRUE(negated->FindMatches(context, result))
+        << string_matcher.ToString();
+    EXPECT_THAT(result, ::testing::ElementsAre(IsTestAction("match")));
+  }
+}
+
+TEST(XdsMatcherAbsentInputTest, ExactMapUsesOnNoMatch) {
+  TestMatchContext context("");
+  XdsMatcher::Result result;
+  absl::flat_hash_map<std::string, XdsMatcher::OnMatch> map;
+  map.emplace("", XdsMatcher::OnMatch(std::make_unique<TestAction>("empty_key"),
+                                      false));
+  XdsMatcherExactMap matcher(
+      std::make_unique<TestAbsentInput>(), std::move(map),
+      XdsMatcher::OnMatch(std::make_unique<TestAction>("no_match"), false));
+  EXPECT_TRUE(matcher.FindMatches(context, result));
+  EXPECT_THAT(result, ::testing::ElementsAre(IsTestAction("no_match")));
+}
+
+TEST(XdsMatcherAbsentInputTest, PrefixMapUsesOnNoMatch) {
+  auto make_matcher =
+      [](std::unique_ptr<XdsMatcher::InputValue<absl::string_view>> input) {
+        absl::flat_hash_map<std::string, XdsMatcher::OnMatch> map;
+        map.emplace("",
+                    XdsMatcher::OnMatch(
+                        std::make_unique<TestAction>("empty_prefix"), false));
+        return XdsMatcherPrefixMap(
+            std::move(input), std::move(map),
+            XdsMatcher::OnMatch(std::make_unique<TestAction>("no_match"),
+                                false));
+      };
+  TestMatchContext context("/foo");
+  // Sanity check: the empty prefix matches any present input.
+  XdsMatcher::Result result;
+  auto present = make_matcher(std::make_unique<TestPathInput>());
+  EXPECT_TRUE(present.FindMatches(context, result));
+  EXPECT_THAT(result, ::testing::ElementsAre(IsTestAction("empty_prefix")));
+  // But not an absent one.
+  result.clear();
+  auto absent = make_matcher(std::make_unique<TestAbsentInput>());
+  EXPECT_TRUE(absent.FindMatches(context, result));
+  EXPECT_THAT(result, ::testing::ElementsAre(IsTestAction("no_match")));
+}
+
+TEST(XdsMatcherAbsentInputTest, NoMatchWithoutOnNoMatch) {
+  TestMatchContext context("");
+  XdsMatcher::Result result;
+  absl::flat_hash_map<std::string, XdsMatcher::OnMatch> map;
+  map.emplace("", XdsMatcher::OnMatch(std::make_unique<TestAction>("empty_key"),
+                                      false));
+  XdsMatcherExactMap matcher(std::make_unique<TestAbsentInput>(),
+                             std::move(map), std::nullopt);
+  EXPECT_FALSE(matcher.FindMatches(context, result));
+  EXPECT_TRUE(result.empty());
 }
 
 }  // namespace

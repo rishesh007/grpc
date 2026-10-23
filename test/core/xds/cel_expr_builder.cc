@@ -47,6 +47,15 @@ cel_expr_CheckedExpr* CelExprBuilder::NewCheckedExpr(
   return checked;
 }
 
+cel_expr_CheckedExpr* CelExprBuilder::NewDynCheckedExpr(cel_expr_Expr** root) {
+  cel_expr_CheckedExpr* checked = NewCheckedExpr(root);
+  cel_expr_Type* type = cel_expr_Type_new(arena_);
+  cel_expr_Type_mutable_dyn(type, arena_);
+  cel_expr_CheckedExpr_type_map_set(checked, cel_expr_Expr_id(*root), type,
+                                    arena_);
+  return checked;
+}
+
 cel_expr_Expr* CelExprBuilder::NewExpr(cel_expr_Expr* expr) {
   cel_expr_Expr_set_id(expr, next_id_++);
   return expr;

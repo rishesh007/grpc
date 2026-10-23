@@ -3217,12 +3217,9 @@ add_library(grpc
   third_party/cel-c/cel-c/error.cc
   third_party/cel-c/cel-c/error_code.cc
   third_party/cel-c/cel-c/error_space.cc
-  third_party/cel-c/cel-c/hash.cc
   third_party/cel-c/cel-c/internal/any.cc
-  third_party/cel-c/cel-c/internal/bit.cc
   third_party/cel-c/cel-c/internal/bitset.cc
   third_party/cel-c/cel-c/internal/charconv.cc
-  third_party/cel-c/cel-c/internal/ctype.cc
   third_party/cel-c/cel-c/internal/durationconv.cc
   third_party/cel-c/cel-c/internal/empty_list_value.cc
   third_party/cel-c/cel-c/internal/empty_map_value.cc
@@ -3230,6 +3227,7 @@ add_library(grpc
   third_party/cel-c/cel-c/internal/generic_deque.cc
   third_party/cel-c/cel-c/internal/generic_flat_hash.cc
   third_party/cel-c/cel-c/internal/generic_string.cc
+  third_party/cel-c/cel-c/internal/hash.cc
   third_party/cel-c/cel-c/internal/list_value.cc
   third_party/cel-c/cel-c/internal/malloc.cc
   third_party/cel-c/cel-c/internal/map_value.cc
@@ -3325,6 +3323,7 @@ target_link_libraries(grpc
   absl::function_ref
   absl::hash
   absl::type_traits
+  absl::int128
   absl::random_bit_gen_ref
   absl::random_distributions
   absl::statusor
@@ -40803,11 +40802,14 @@ add_executable(xds_cel_matcher_test
   src/core/call/call_filters.cc
   src/core/call/call_spine.cc
   src/core/call/call_state.cc
+  src/core/call/client_call.cc
   src/core/call/interception_chain.cc
   src/core/call/message.cc
   src/core/call/metadata.cc
   src/core/call/metadata_batch.cc
   src/core/call/parsed_metadata.cc
+  src/core/call/server_call.cc
+  src/core/call/status_util.cc
   src/core/channelz/channel_trace.cc
   src/core/channelz/channelz.cc
   src/core/channelz/channelz_registry.cc
@@ -40921,6 +40923,7 @@ add_executable(xds_cel_matcher_test
   src/core/ext/upb-gen/envoy/type/v3/range.upb_minitable.c
   src/core/ext/upb-gen/envoy/type/v3/ratelimit_strategy.upb_minitable.c
   src/core/ext/upb-gen/envoy/type/v3/ratelimit_unit.upb_minitable.c
+  src/core/ext/upb-gen/envoy/type/v3/scope.upb_minitable.c
   src/core/ext/upb-gen/envoy/type/v3/semantic_version.upb_minitable.c
   src/core/ext/upb-gen/envoy/type/v3/token_bucket.upb_minitable.c
   src/core/ext/upb-gen/google/api/annotations.upb_minitable.c
@@ -41070,6 +41073,7 @@ add_executable(xds_cel_matcher_test
   src/core/ext/upbdefs-gen/envoy/type/v3/range.upbdefs.c
   src/core/ext/upbdefs-gen/envoy/type/v3/ratelimit_strategy.upbdefs.c
   src/core/ext/upbdefs-gen/envoy/type/v3/ratelimit_unit.upbdefs.c
+  src/core/ext/upbdefs-gen/envoy/type/v3/scope.upbdefs.c
   src/core/ext/upbdefs-gen/envoy/type/v3/semantic_version.upbdefs.c
   src/core/ext/upbdefs-gen/envoy/type/v3/token_bucket.upbdefs.c
   src/core/ext/upbdefs-gen/google/api/annotations.upbdefs.c
@@ -41125,23 +41129,140 @@ add_executable(xds_cel_matcher_test
   src/core/lib/address_utils/sockaddr_utils.cc
   src/core/lib/channel/channel_args.cc
   src/core/lib/channel/channel_args_preconditioning.cc
+  src/core/lib/channel/channel_stack.cc
   src/core/lib/channel/channel_stack_builder.cc
+  src/core/lib/channel/channel_stack_builder_impl.cc
+  src/core/lib/channel/connected_channel.cc
+  src/core/lib/channel/promise_based_filter.cc
   src/core/lib/compression/compression.cc
   src/core/lib/compression/compression_internal.cc
+  src/core/lib/compression/message_compress.cc
   src/core/lib/debug/trace.cc
   src/core/lib/debug/trace_flags.cc
+  src/core/lib/event_engine/ares_resolver.cc
+  src/core/lib/event_engine/cf_engine/cf_engine.cc
+  src/core/lib/event_engine/cf_engine/cfsocket_listener.cc
+  src/core/lib/event_engine/cf_engine/cfstream_endpoint.cc
+  src/core/lib/event_engine/cf_engine/dns_service_resolver.cc
+  src/core/lib/event_engine/channel_args_endpoint_config.cc
+  src/core/lib/event_engine/default_event_engine.cc
+  src/core/lib/event_engine/default_event_engine_factory.cc
+  src/core/lib/event_engine/event_engine.cc
+  src/core/lib/event_engine/posix_engine/ev_epoll1_linux.cc
+  src/core/lib/event_engine/posix_engine/ev_poll_posix.cc
+  src/core/lib/event_engine/posix_engine/event_poller_posix_default.cc
+  src/core/lib/event_engine/posix_engine/file_descriptor_collection.cc
+  src/core/lib/event_engine/posix_engine/internal_errqueue.cc
+  src/core/lib/event_engine/posix_engine/lockfree_event.cc
+  src/core/lib/event_engine/posix_engine/native_posix_dns_resolver.cc
+  src/core/lib/event_engine/posix_engine/posix_endpoint.cc
+  src/core/lib/event_engine/posix_engine/posix_engine.cc
+  src/core/lib/event_engine/posix_engine/posix_engine_listener.cc
+  src/core/lib/event_engine/posix_engine/posix_engine_listener_utils.cc
+  src/core/lib/event_engine/posix_engine/posix_interface_posix.cc
+  src/core/lib/event_engine/posix_engine/posix_interface_windows.cc
+  src/core/lib/event_engine/posix_engine/posix_write_event_sink.cc
+  src/core/lib/event_engine/posix_engine/set_socket_dualstack.cc
+  src/core/lib/event_engine/posix_engine/tcp_socket_utils.cc
+  src/core/lib/event_engine/posix_engine/timer.cc
+  src/core/lib/event_engine/posix_engine/timer_heap.cc
+  src/core/lib/event_engine/posix_engine/timer_manager.cc
+  src/core/lib/event_engine/posix_engine/traced_buffer_list.cc
+  src/core/lib/event_engine/posix_engine/wakeup_fd_eventfd.cc
+  src/core/lib/event_engine/posix_engine/wakeup_fd_pipe.cc
+  src/core/lib/event_engine/posix_engine/wakeup_fd_posix_default.cc
+  src/core/lib/event_engine/resolved_address.cc
+  src/core/lib/event_engine/shim.cc
+  src/core/lib/event_engine/slice.cc
+  src/core/lib/event_engine/slice_buffer.cc
+  src/core/lib/event_engine/tcp_socket_utils.cc
+  src/core/lib/event_engine/thread_pool/thread_count.cc
+  src/core/lib/event_engine/thread_pool/thread_pool_factory.cc
+  src/core/lib/event_engine/thread_pool/work_stealing_thread_pool.cc
+  src/core/lib/event_engine/thready_event_engine/thready_event_engine.cc
+  src/core/lib/event_engine/time_util.cc
+  src/core/lib/event_engine/utils.cc
+  src/core/lib/event_engine/windows/grpc_polled_fd_windows.cc
+  src/core/lib/event_engine/windows/iocp.cc
+  src/core/lib/event_engine/windows/native_windows_dns_resolver.cc
+  src/core/lib/event_engine/windows/win_socket.cc
+  src/core/lib/event_engine/windows/windows_endpoint.cc
+  src/core/lib/event_engine/windows/windows_engine.cc
+  src/core/lib/event_engine/windows/windows_listener.cc
+  src/core/lib/event_engine/work_queue/basic_work_queue.cc
   src/core/lib/experiments/config.cc
   src/core/lib/experiments/experiments.cc
+  src/core/lib/iomgr/buffer_list.cc
+  src/core/lib/iomgr/call_combiner.cc
+  src/core/lib/iomgr/cfstream_handle.cc
   src/core/lib/iomgr/closure.cc
   src/core/lib/iomgr/combiner.cc
+  src/core/lib/iomgr/dualstack_socket_posix.cc
+  src/core/lib/iomgr/endpoint.cc
+  src/core/lib/iomgr/endpoint_cfstream.cc
+  src/core/lib/iomgr/endpoint_pair_posix.cc
+  src/core/lib/iomgr/endpoint_pair_windows.cc
   src/core/lib/iomgr/error.cc
+  src/core/lib/iomgr/error_cfstream.cc
+  src/core/lib/iomgr/ev_apple.cc
+  src/core/lib/iomgr/ev_epoll1_linux.cc
+  src/core/lib/iomgr/ev_poll_posix.cc
+  src/core/lib/iomgr/ev_posix.cc
+  src/core/lib/iomgr/event_engine_shims/closure.cc
+  src/core/lib/iomgr/event_engine_shims/endpoint.cc
+  src/core/lib/iomgr/event_engine_shims/tcp_client.cc
   src/core/lib/iomgr/exec_ctx.cc
+  src/core/lib/iomgr/fork_posix.cc
+  src/core/lib/iomgr/fork_windows.cc
+  src/core/lib/iomgr/internal_errqueue.cc
+  src/core/lib/iomgr/iocp_windows.cc
+  src/core/lib/iomgr/iomgr.cc
   src/core/lib/iomgr/iomgr_internal.cc
+  src/core/lib/iomgr/iomgr_posix.cc
+  src/core/lib/iomgr/iomgr_posix_cfstream.cc
+  src/core/lib/iomgr/iomgr_windows.cc
+  src/core/lib/iomgr/lockfree_event.cc
+  src/core/lib/iomgr/polling_entity.cc
+  src/core/lib/iomgr/pollset.cc
   src/core/lib/iomgr/pollset_set.cc
+  src/core/lib/iomgr/pollset_set_windows.cc
+  src/core/lib/iomgr/pollset_windows.cc
   src/core/lib/iomgr/sockaddr_utils_posix.cc
+  src/core/lib/iomgr/socket_factory_posix.cc
+  src/core/lib/iomgr/socket_mutator.cc
+  src/core/lib/iomgr/socket_utils_common_posix.cc
+  src/core/lib/iomgr/socket_utils_linux.cc
+  src/core/lib/iomgr/socket_utils_posix.cc
   src/core/lib/iomgr/socket_utils_windows.cc
+  src/core/lib/iomgr/socket_windows.cc
+  src/core/lib/iomgr/systemd_utils.cc
+  src/core/lib/iomgr/tcp_client.cc
+  src/core/lib/iomgr/tcp_client_cfstream.cc
+  src/core/lib/iomgr/tcp_client_posix.cc
+  src/core/lib/iomgr/tcp_client_windows.cc
+  src/core/lib/iomgr/tcp_posix.cc
+  src/core/lib/iomgr/tcp_server.cc
+  src/core/lib/iomgr/tcp_server_posix.cc
+  src/core/lib/iomgr/tcp_server_utils_posix_common.cc
+  src/core/lib/iomgr/tcp_server_utils_posix_ifaddrs.cc
+  src/core/lib/iomgr/tcp_server_utils_posix_noifaddrs.cc
+  src/core/lib/iomgr/tcp_server_windows.cc
+  src/core/lib/iomgr/tcp_windows.cc
+  src/core/lib/iomgr/timer.cc
+  src/core/lib/iomgr/timer_generic.cc
+  src/core/lib/iomgr/timer_heap.cc
+  src/core/lib/iomgr/timer_manager.cc
+  src/core/lib/iomgr/unix_sockets_posix.cc
+  src/core/lib/iomgr/unix_sockets_posix_noop.cc
+  src/core/lib/iomgr/vsock.cc
+  src/core/lib/iomgr/wakeup_fd_eventfd.cc
+  src/core/lib/iomgr/wakeup_fd_nospecial.cc
+  src/core/lib/iomgr/wakeup_fd_pipe.cc
+  src/core/lib/iomgr/wakeup_fd_posix.cc
   src/core/lib/promise/activity.cc
   src/core/lib/promise/party.cc
+  src/core/lib/promise/wait_set.cc
+  src/core/lib/resource_quota/api.cc
   src/core/lib/resource_quota/arena.cc
   src/core/lib/resource_quota/memory_quota.cc
   src/core/lib/resource_quota/periodic_update.cc
@@ -41154,20 +41275,40 @@ add_executable(xds_cel_matcher_test
   src/core/lib/slice/slice.cc
   src/core/lib/slice/slice_buffer.cc
   src/core/lib/slice/slice_string_helpers.cc
+  src/core/lib/surface/byte_buffer.cc
+  src/core/lib/surface/byte_buffer_reader.cc
+  src/core/lib/surface/call.cc
+  src/core/lib/surface/call_details.cc
+  src/core/lib/surface/call_log_batch.cc
+  src/core/lib/surface/call_utils.cc
+  src/core/lib/surface/channel.cc
   src/core/lib/surface/channel_init.cc
   src/core/lib/surface/channel_stack_type.cc
+  src/core/lib/surface/completion_queue.cc
+  src/core/lib/surface/completion_queue_factory.cc
+  src/core/lib/surface/event_string.cc
+  src/core/lib/surface/filter_stack_call.cc
+  src/core/lib/surface/init_internally.cc
+  src/core/lib/surface/lame_client.cc
+  src/core/lib/surface/metadata_array.cc
+  src/core/lib/surface/validate_metadata.cc
+  src/core/lib/surface/version.cc
   src/core/lib/transport/call_final_info.cc
   src/core/lib/transport/connectivity_state.cc
   src/core/lib/transport/error_utils.cc
   src/core/lib/transport/status_conversion.cc
   src/core/lib/transport/timeout_encoding.cc
+  src/core/lib/transport/transport.cc
+  src/core/lib/transport/transport_op_string.cc
   src/core/load_balancing/lb_policy.cc
   src/core/load_balancing/lb_policy_registry.cc
+  src/core/net/socket_mutator.cc
   src/core/resolver/endpoint_addresses.cc
   src/core/resolver/resolver.cc
   src/core/resolver/resolver_registry.cc
   src/core/service_config/service_config_parser.cc
   src/core/telemetry/call_tracer.cc
+  src/core/telemetry/context_list_entry.cc
   src/core/telemetry/histogram_view.cc
   src/core/telemetry/instrument.cc
   src/core/telemetry/metrics.cc
@@ -41175,8 +41316,13 @@ add_executable(xds_cel_matcher_test
   src/core/telemetry/stats_data.cc
   src/core/telemetry/tcp_tracer.cc
   src/core/tsi/alts/handshaker/transport_security_common_api.cc
+  src/core/util/address_sorting_init.cc
   src/core/util/backoff.cc
   src/core/util/dump_args.cc
+  src/core/util/event_log.cc
+  src/core/util/gethostname_fallback.cc
+  src/core/util/gethostname_host_name_max.cc
+  src/core/util/gethostname_sysconf.cc
   src/core/util/glob.cc
   src/core/util/grpc_check.cc
   src/core/util/grpc_if_nametoindex_posix.cc
@@ -41185,6 +41331,7 @@ add_executable(xds_cel_matcher_test
   src/core/util/json/json_reader.cc
   src/core/util/json/json_writer.cc
   src/core/util/latent_see.cc
+  src/core/util/load_file.cc
   src/core/util/matchers.cc
   src/core/util/per_cpu.cc
   src/core/util/postmortem_emit.cc
@@ -41192,8 +41339,10 @@ add_executable(xds_cel_matcher_test
   src/core/util/shared_bit_gen.cc
   src/core/util/status_helper.cc
   src/core/util/time.cc
+  src/core/util/time_averaged_stats.cc
   src/core/util/uri.cc
   src/core/util/validation_errors.cc
+  src/core/util/wait_for_single_owner.cc
   src/core/util/work_serializer.cc
   src/core/xds/grpc/xds_cel.cc
   src/core/xds/grpc/xds_cel_request_resolver.cc
@@ -41224,12 +41373,9 @@ add_executable(xds_cel_matcher_test
   third_party/cel-c/cel-c/error.cc
   third_party/cel-c/cel-c/error_code.cc
   third_party/cel-c/cel-c/error_space.cc
-  third_party/cel-c/cel-c/hash.cc
   third_party/cel-c/cel-c/internal/any.cc
-  third_party/cel-c/cel-c/internal/bit.cc
   third_party/cel-c/cel-c/internal/bitset.cc
   third_party/cel-c/cel-c/internal/charconv.cc
-  third_party/cel-c/cel-c/internal/ctype.cc
   third_party/cel-c/cel-c/internal/durationconv.cc
   third_party/cel-c/cel-c/internal/empty_list_value.cc
   third_party/cel-c/cel-c/internal/empty_map_value.cc
@@ -41237,6 +41383,7 @@ add_executable(xds_cel_matcher_test
   third_party/cel-c/cel-c/internal/generic_deque.cc
   third_party/cel-c/cel-c/internal/generic_flat_hash.cc
   third_party/cel-c/cel-c/internal/generic_string.cc
+  third_party/cel-c/cel-c/internal/hash.cc
   third_party/cel-c/cel-c/internal/list_value.cc
   third_party/cel-c/cel-c/internal/malloc.cc
   third_party/cel-c/cel-c/internal/map_value.cc
@@ -41308,6 +41455,7 @@ target_link_libraries(xds_cel_matcher_test
   gtest
   upb_json_lib
   upb_textformat_lib
+  ${_gRPC_ZLIB_LIBRARIES}
   absl::no_destructor
   absl::btree
   absl::flat_hash_map
@@ -41316,11 +41464,14 @@ target_link_libraries(xds_cel_matcher_test
   absl::function_ref
   absl::hash
   absl::type_traits
+  absl::int128
   absl::statusor
   absl::string_view
   absl::span
   absl::utility
+  ${_gRPC_CARES_LIBRARIES}
   gpr
+  ${_gRPC_ADDRESS_SORTING_LIBRARIES}
 )
 
 
@@ -41446,12 +41597,9 @@ add_executable(xds_cel_parser_test
   third_party/cel-c/cel-c/error.cc
   third_party/cel-c/cel-c/error_code.cc
   third_party/cel-c/cel-c/error_space.cc
-  third_party/cel-c/cel-c/hash.cc
   third_party/cel-c/cel-c/internal/any.cc
-  third_party/cel-c/cel-c/internal/bit.cc
   third_party/cel-c/cel-c/internal/bitset.cc
   third_party/cel-c/cel-c/internal/charconv.cc
-  third_party/cel-c/cel-c/internal/ctype.cc
   third_party/cel-c/cel-c/internal/durationconv.cc
   third_party/cel-c/cel-c/internal/empty_list_value.cc
   third_party/cel-c/cel-c/internal/empty_map_value.cc
@@ -41459,6 +41607,7 @@ add_executable(xds_cel_parser_test
   third_party/cel-c/cel-c/internal/generic_deque.cc
   third_party/cel-c/cel-c/internal/generic_flat_hash.cc
   third_party/cel-c/cel-c/internal/generic_string.cc
+  third_party/cel-c/cel-c/internal/hash.cc
   third_party/cel-c/cel-c/internal/list_value.cc
   third_party/cel-c/cel-c/internal/malloc.cc
   third_party/cel-c/cel-c/internal/map_value.cc
@@ -41537,6 +41686,7 @@ target_link_libraries(xds_cel_parser_test
   absl::function_ref
   absl::hash
   absl::type_traits
+  absl::int128
   absl::statusor
   absl::string_view
   absl::span
@@ -41652,12 +41802,9 @@ add_executable(xds_cel_request_resolver_test
   third_party/cel-c/cel-c/error.cc
   third_party/cel-c/cel-c/error_code.cc
   third_party/cel-c/cel-c/error_space.cc
-  third_party/cel-c/cel-c/hash.cc
   third_party/cel-c/cel-c/internal/any.cc
-  third_party/cel-c/cel-c/internal/bit.cc
   third_party/cel-c/cel-c/internal/bitset.cc
   third_party/cel-c/cel-c/internal/charconv.cc
-  third_party/cel-c/cel-c/internal/ctype.cc
   third_party/cel-c/cel-c/internal/durationconv.cc
   third_party/cel-c/cel-c/internal/empty_list_value.cc
   third_party/cel-c/cel-c/internal/empty_map_value.cc
@@ -41665,6 +41812,7 @@ add_executable(xds_cel_request_resolver_test
   third_party/cel-c/cel-c/internal/generic_deque.cc
   third_party/cel-c/cel-c/internal/generic_flat_hash.cc
   third_party/cel-c/cel-c/internal/generic_string.cc
+  third_party/cel-c/cel-c/internal/hash.cc
   third_party/cel-c/cel-c/internal/list_value.cc
   third_party/cel-c/cel-c/internal/malloc.cc
   third_party/cel-c/cel-c/internal/map_value.cc
@@ -41743,6 +41891,7 @@ target_link_libraries(xds_cel_request_resolver_test
   absl::function_ref
   absl::hash
   absl::type_traits
+  absl::int128
   absl::statusor
   absl::string_view
   absl::span
@@ -41779,12 +41928,9 @@ add_executable(xds_cel_test
   third_party/cel-c/cel-c/error.cc
   third_party/cel-c/cel-c/error_code.cc
   third_party/cel-c/cel-c/error_space.cc
-  third_party/cel-c/cel-c/hash.cc
   third_party/cel-c/cel-c/internal/any.cc
-  third_party/cel-c/cel-c/internal/bit.cc
   third_party/cel-c/cel-c/internal/bitset.cc
   third_party/cel-c/cel-c/internal/charconv.cc
-  third_party/cel-c/cel-c/internal/ctype.cc
   third_party/cel-c/cel-c/internal/durationconv.cc
   third_party/cel-c/cel-c/internal/empty_list_value.cc
   third_party/cel-c/cel-c/internal/empty_map_value.cc
@@ -41792,6 +41938,7 @@ add_executable(xds_cel_test
   third_party/cel-c/cel-c/internal/generic_deque.cc
   third_party/cel-c/cel-c/internal/generic_flat_hash.cc
   third_party/cel-c/cel-c/internal/generic_string.cc
+  third_party/cel-c/cel-c/internal/hash.cc
   third_party/cel-c/cel-c/internal/list_value.cc
   third_party/cel-c/cel-c/internal/malloc.cc
   third_party/cel-c/cel-c/internal/map_value.cc
@@ -41858,6 +42005,8 @@ target_link_libraries(xds_cel_test
   absl::core_headers
   absl::function_ref
   absl::check
+  absl::bits
+  absl::int128
   absl::status
   absl::statusor
   absl::cord
@@ -59138,7 +59287,7 @@ generate_pkgconfig(
   "gRPC"
   "high performance general RPC framework"
   "${gRPC_CORE_VERSION}"
-  "absl_algorithm_container absl_any_invocable absl_base absl_bind_front absl_bits absl_btree absl_check absl_cleanup absl_config absl_cord absl_core_headers absl_flags absl_flags_marshalling absl_flat_hash_map absl_flat_hash_set absl_function_ref absl_hash absl_inlined_vector absl_log absl_log_globals absl_log_severity absl_memory absl_no_destructor absl_node_hash_map absl_optional absl_random_bit_gen_ref absl_random_distributions absl_random_random absl_span absl_status absl_statusor absl_str_format absl_string_view absl_strings absl_synchronization absl_time absl_type_traits absl_utility gpr"
+  "absl_algorithm_container absl_any_invocable absl_base absl_bind_front absl_bits absl_btree absl_check absl_cleanup absl_config absl_cord absl_core_headers absl_flags absl_flags_marshalling absl_flat_hash_map absl_flat_hash_set absl_function_ref absl_hash absl_inlined_vector absl_int128 absl_log absl_log_globals absl_log_severity absl_memory absl_no_destructor absl_node_hash_map absl_optional absl_random_bit_gen_ref absl_random_distributions absl_random_random absl_span absl_status absl_statusor absl_str_format absl_string_view absl_strings absl_synchronization absl_time absl_type_traits absl_utility gpr"
   "libcares openssl re2 zlib"
   "-lgrpc"
   "-laddress_sorting -lupb_textformat_lib -lupb_json_lib -lupb_reflection_lib -lupb_wire_lib -lupb_message_lib -lutf8_range_lib -lupb_descriptor_lib -lupb_mini_descriptor_lib -lupb_mini_table_lib -lupb_hash_lib -lupb_mem_lib -lupb_base_lib -lupb_lex_lib"
@@ -59160,7 +59309,7 @@ generate_pkgconfig(
   "gRPC++"
   "C++ wrapper for gRPC"
   "${gRPC_CPP_VERSION}"
-  "absl_absl_check absl_absl_log absl_algorithm_container absl_any_invocable absl_base absl_bind_front absl_bits absl_btree absl_charset absl_check absl_cleanup absl_config absl_cord absl_core_headers absl_dynamic_annotations absl_flags absl_flags_marshalling absl_flat_hash_map absl_flat_hash_set absl_function_ref absl_hash absl_inlined_vector absl_layout absl_log absl_log_globals absl_log_severity absl_memory absl_no_destructor absl_node_hash_map absl_optional absl_prefetch absl_random_bit_gen_ref absl_random_distributions absl_random_random absl_span absl_status absl_statusor absl_str_format absl_string_view absl_strings absl_strings_internal absl_synchronization absl_time absl_type_traits absl_utility gpr grpc"
+  "absl_absl_check absl_absl_log absl_algorithm_container absl_any_invocable absl_base absl_bind_front absl_bits absl_btree absl_charset absl_check absl_cleanup absl_config absl_cord absl_core_headers absl_dynamic_annotations absl_flags absl_flags_marshalling absl_flat_hash_map absl_flat_hash_set absl_function_ref absl_hash absl_inlined_vector absl_int128 absl_layout absl_log absl_log_globals absl_log_severity absl_memory absl_no_destructor absl_node_hash_map absl_optional absl_prefetch absl_random_bit_gen_ref absl_random_distributions absl_random_random absl_span absl_status absl_statusor absl_str_format absl_string_view absl_strings absl_strings_internal absl_synchronization absl_time absl_type_traits absl_utility gpr grpc"
   "libcares openssl re2 zlib"
   "-lgrpc++"
   "-laddress_sorting -lupb_textformat_lib -lupb_json_lib -lupb_reflection_lib -lupb_wire_lib -lupb_message_lib -lutf8_range_lib -lupb_descriptor_lib -lupb_mini_descriptor_lib -lupb_mini_table_lib -lupb_hash_lib -lupb_mem_lib -lupb_base_lib -lupb_lex_lib"
@@ -59183,7 +59332,7 @@ if(gRPC_BUILD_GRPCPP_OTEL_PLUGIN)
     "gRPC++ OpenTelemetry Plugin"
     "OpenTelemetry Plugin for gRPC C++"
     "${gRPC_CPP_VERSION}"
-    "absl_absl_check absl_absl_log absl_algorithm_container absl_any_invocable absl_base absl_bind_front absl_bits absl_btree absl_charset absl_check absl_cleanup absl_config absl_cord absl_core_headers absl_dynamic_annotations absl_flags absl_flags_marshalling absl_flat_hash_map absl_flat_hash_set absl_function_ref absl_hash absl_inlined_vector absl_layout absl_log absl_log_globals absl_log_severity absl_memory absl_no_destructor absl_node_hash_map absl_optional absl_prefetch absl_random_bit_gen_ref absl_random_distributions absl_random_random absl_span absl_status absl_statusor absl_str_format absl_string_view absl_strings absl_strings_internal absl_synchronization absl_time absl_type_traits absl_utility gpr grpc grpc++ opentelemetry_api"
+    "absl_absl_check absl_absl_log absl_algorithm_container absl_any_invocable absl_base absl_bind_front absl_bits absl_btree absl_charset absl_check absl_cleanup absl_config absl_cord absl_core_headers absl_dynamic_annotations absl_flags absl_flags_marshalling absl_flat_hash_map absl_flat_hash_set absl_function_ref absl_hash absl_inlined_vector absl_int128 absl_layout absl_log absl_log_globals absl_log_severity absl_memory absl_no_destructor absl_node_hash_map absl_optional absl_prefetch absl_random_bit_gen_ref absl_random_distributions absl_random_random absl_span absl_status absl_statusor absl_str_format absl_string_view absl_strings absl_strings_internal absl_synchronization absl_time absl_type_traits absl_utility gpr grpc grpc++ opentelemetry_api"
     "libcares openssl re2 zlib"
     "-lgrpcpp_otel_plugin"
     "-laddress_sorting -lupb_textformat_lib -lupb_json_lib -lupb_reflection_lib -lupb_wire_lib -lupb_message_lib -lutf8_range_lib -lupb_descriptor_lib -lupb_mini_descriptor_lib -lupb_mini_table_lib -lupb_hash_lib -lupb_mem_lib -lupb_base_lib -lupb_lex_lib"

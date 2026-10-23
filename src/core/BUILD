@@ -7457,6 +7457,7 @@ grpc_cc_library(
         "xds_matcher",
         "xds_matcher_context",
         "xds_type_matcher_upb",
+        "//:grpc_base",
         "//:xds_client",
     ],
 )

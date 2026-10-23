@@ -228,6 +228,54 @@ TEST_F(CelParserTest, CelExtractStringBoolResultType) {
       ::testing::StartsWith(": [field:expr_extract.cel_expr_checked error:"));
 }
 
+// A control plane that declares `request` as dyn produces dyn-typed
+// expressions, e.g. `request['path']`.
+TEST_F(CelParserTest, CelExtractStringDynResultType) {
+  cel_expr_Expr* root;
+  cel_expr_CheckedExpr* checked = builder_.NewDynCheckedExpr(&root);
+  std::vector<cel_expr_Expr*> args = builder_.SetCall(root, "_[_]", 2);
+  builder_.SetIdent(args[0], "request");
+  builder_.SetStringConst(args[1], "path");
+  ValidationErrors errors;
+  auto extractor =
+      ParseCelExtractString(MakeCelExtractString(checked, "default"), &errors);
+  ASSERT_TRUE(errors.ok()) << ErrorMessage(errors);
+  ASSERT_NE(extractor, nullptr);
+  grpc_metadata_batch metadata;
+  RpcMatchContext context(&metadata);
+  // Missing key: evaluation error, so the default is used.
+  EXPECT_EQ(extractor->Extract(CelRequestResolver(context)), "default");
+  metadata.Set(HttpPathMetadata(), Slice::FromStaticString("/foo/bar"));
+  EXPECT_EQ(extractor->Extract(CelRequestResolver(context)), "/foo/bar");
+}
+
+TEST_F(CelParserTest, CelExtractStringDynNonStringResultUsesDefault) {
+  // `request.headers` is a map, not a string.
+  cel_expr_Expr* root;
+  cel_expr_CheckedExpr* checked = builder_.NewDynCheckedExpr(&root);
+  builder_.SetRequestField(root, "headers");
+  ValidationErrors errors;
+  auto extractor =
+      ParseCelExtractString(MakeCelExtractString(checked, "default"), &errors);
+  ASSERT_TRUE(errors.ok()) << ErrorMessage(errors);
+  ASSERT_NE(extractor, nullptr);
+  grpc_metadata_batch metadata;
+  RpcMatchContext context(&metadata);
+  EXPECT_EQ(extractor->Extract(CelRequestResolver(context)), "default");
+}
+
+TEST_F(CelParserTest, CelExpressionDynResultTypeRejectedForBool) {
+  cel_expr_Expr* root;
+  cel_expr_CheckedExpr* checked = builder_.NewDynCheckedExpr(&root);
+  builder_.SetIdent(root, "request");
+  ValidationErrors errors;
+  EXPECT_EQ(ParseCelExpression(MakeCelExpression(checked),
+                               CelProgram::ResultType::kBool, &errors),
+            nullptr);
+  EXPECT_THAT(ErrorMessage(errors),
+              ::testing::HasSubstr("must evaluate to bool"));
+}
+
 //
 // CelStringExtractor
 //

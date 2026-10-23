@@ -16,6 +16,7 @@
 
 #include "src/core/xds/grpc/xds_cel.h"
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -32,8 +33,10 @@
 #include "upb/mem/arena.hpp"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "absl/functional/function_ref.h"
 #include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "absl/time/time.h"
 
 namespace grpc_core {
 namespace testing {
@@ -104,6 +107,86 @@ class CelProgramTest : public ::testing::Test {
     return checked;
   }
 
+  // Makes expr a receiver-style call target.function(args...), returning
+  // the target followed by the args.
+  std::vector<cel_expr_Expr*> SetReceiverCall(cel_expr_Expr* expr,
+                                              absl::string_view function,
+                                              int num_args) {
+    cel_expr_Expr_Call* call =
+        cel_expr_Expr_mutable_call_expr(expr, arena_.ptr());
+    cel_expr_Expr_Call_set_function(call, cel_StringView_FromAbsl(function));
+    std::vector<cel_expr_Expr*> exprs = {builder_.NewExpr(
+        cel_expr_Expr_Call_mutable_target(call, arena_.ptr()))};
+    for (int i = 0; i < num_args; ++i) {
+      exprs.push_back(
+          builder_.NewExpr(cel_expr_Expr_Call_add_args(call, arena_.ptr())));
+    }
+    return exprs;
+  }
+
+  // Makes expr a list literal of string constants.
+  void SetStringList(cel_expr_Expr* expr,
+                     const std::vector<absl::string_view>& elements) {
+    cel_expr_Expr_CreateList* list =
+        cel_expr_Expr_mutable_list_expr(expr, arena_.ptr());
+    for (absl::string_view element : elements) {
+      builder_.SetStringConst(
+          builder_.NewExpr(
+              cel_expr_Expr_CreateList_add_elements(list, arena_.ptr())),
+          element);
+    }
+  }
+
+  struct MapEntry {
+    absl::string_view key;
+    absl::string_view value;
+  };
+
+  // Makes expr a map literal {key: value, ...} of string constants.
+  void SetStringMap(cel_expr_Expr* expr, const std::vector<MapEntry>& entries) {
+    cel_expr_Expr_CreateStruct* map =
+        cel_expr_Expr_mutable_struct_expr(expr, arena_.ptr());
+    for (const MapEntry& map_entry : entries) {
+      cel_expr_Expr_CreateStruct_Entry* entry =
+          cel_expr_Expr_CreateStruct_add_entries(map, arena_.ptr());
+      cel_expr_Expr_CreateStruct_Entry_set_id(entry, next_entry_id_++);
+      builder_.SetStringConst(
+          builder_.NewExpr(cel_expr_Expr_CreateStruct_Entry_mutable_map_key(
+              entry, arena_.ptr())),
+          map_entry.key);
+      builder_.SetStringConst(
+          builder_.NewExpr(cel_expr_Expr_CreateStruct_Entry_mutable_value(
+              entry, arena_.ptr())),
+          map_entry.value);
+    }
+  }
+
+  // Compiles and evaluates a bool expression built by build(root).
+  std::optional<bool> EvaluateBoolExpr(
+      absl::FunctionRef<void(cel_expr_Expr*)> build) {
+    cel_expr_Expr* root;
+    auto* checked = builder_.NewCheckedExpr(&root, ResultType::kBool);
+    build(root);
+    auto program = Compile(checked, ResultType::kBool);
+    if (program == nullptr) return std::nullopt;
+    return program->EvaluateBool(resolver_);
+  }
+
+  // Builds `<call> == expected`, where <call> is built by build_call().
+  std::optional<bool> EvaluateIntEquals(
+      absl::FunctionRef<void(cel_expr_Expr*)> build_call, int64_t expected) {
+    return EvaluateBoolExpr([&](cel_expr_Expr* root) {
+      auto args = builder_.SetCall(root, "_==_", 2);
+      build_call(args[0]);
+      builder_.SetIntConst(args[1], expected);
+    });
+  }
+
+  // Makes expr `timestamp(value)`.
+  void SetTimestamp(cel_expr_Expr* expr, absl::string_view value) {
+    builder_.SetStringConst(builder_.SetCall(expr, "timestamp", 1)[0], value);
+  }
+
   std::unique_ptr<CelProgram> Compile(const cel_expr_CheckedExpr* checked,
                                       ResultType result_type) {
     auto program = CelProgram::Create(checked, result_type);
@@ -122,6 +205,8 @@ class CelProgramTest : public ::testing::Test {
   upb::Arena arena_;
   CelExprBuilder builder_{arena_.ptr()};
   MapResolver resolver_;
+  // Map entry ids, kept well clear of the expr ids assigned by builder_.
+  int64_t next_entry_id_ = 1000000;
 };
 
 //
@@ -328,6 +413,230 @@ TEST_F(CelProgramTest, InvalidRegex) {
 TEST_F(CelProgramTest, RegexTooLarge) {
   ExpectInvalid(NewMatchesExpr("a{200}"), ResultType::kBool,
                 "exceeds the limit of 100");
+}
+
+//
+// Result type dyn
+//
+
+TEST_F(CelProgramTest, DynResultAcceptedForString) {
+  cel_expr_Expr* root;
+  auto* checked = builder_.NewDynCheckedExpr(&root);
+  builder_.SetIdent(root, "request");
+  auto program = Compile(checked, ResultType::kString);
+  ASSERT_NE(program, nullptr);
+  resolver_.SetString("request", "foo");
+  EXPECT_EQ(program->EvaluateString(resolver_), "foo");
+  // A non-string value at runtime is not a result.
+  resolver_.SetBool("request", true);
+  EXPECT_EQ(program->EvaluateString(resolver_), std::nullopt);
+  // ...so CelStringExtractor falls back to its default.
+  CelStringExtractor extractor(std::move(program), "default");
+  EXPECT_EQ(extractor.Extract(resolver_), "default");
+}
+
+TEST_F(CelProgramTest, DynResultRejectedForBool) {
+  cel_expr_Expr* root;
+  auto* checked = builder_.NewDynCheckedExpr(&root);
+  builder_.SetIdent(root, "request");
+  ExpectInvalid(checked, ResultType::kBool, "must evaluate to bool");
+}
+
+//
+// Functions
+//
+
+TEST_F(CelProgramTest, UnknownFunction) {
+  cel_expr_Expr* root;
+  auto* checked = builder_.NewCheckedExpr(&root, ResultType::kBool);
+  builder_.SetIdent(builder_.SetCall(root, "my_custom_func", 1)[0], "request");
+  ExpectInvalid(checked, ResultType::kBool, "failed to compile");
+}
+
+TEST_F(CelProgramTest, Ternary) {
+  cel_expr_Expr* root;
+  auto* checked = builder_.NewCheckedExpr(&root, ResultType::kString);
+  auto args = builder_.SetCall(root, "_?_:_", 3);
+  builder_.SetIdent(args[0], "request");
+  builder_.SetStringConst(args[1], "yes");
+  builder_.SetStringConst(args[2], "no");
+  auto program = Compile(checked, ResultType::kString);
+  ASSERT_NE(program, nullptr);
+  resolver_.SetBool("request", true);
+  EXPECT_EQ(program->EvaluateString(resolver_), "yes");
+  resolver_.SetBool("request", false);
+  EXPECT_EQ(program->EvaluateString(resolver_), "no");
+}
+
+TEST_F(CelProgramTest, SizeOfString) {
+  resolver_.SetString("request", "abc");
+  EXPECT_EQ(EvaluateIntEquals(
+                [&](cel_expr_Expr* call) {
+                  builder_.SetIdent(builder_.SetCall(call, "size", 1)[0],
+                                    "request");
+                },
+                3),
+            true);
+}
+
+TEST_F(CelProgramTest, SizeOfList) {
+  // Global style size(['a', 'b']).
+  EXPECT_EQ(EvaluateIntEquals(
+                [&](cel_expr_Expr* call) {
+                  SetStringList(builder_.SetCall(call, "size", 1)[0],
+                                {"a", "b"});
+                },
+                2),
+            true);
+  // Receiver style ['a', 'b', 'c'].size().
+  EXPECT_EQ(EvaluateIntEquals(
+                [&](cel_expr_Expr* call) {
+                  SetStringList(SetReceiverCall(call, "size", 0)[0],
+                                {"a", "b", "c"});
+                },
+                3),
+            true);
+}
+
+TEST_F(CelProgramTest, SizeOfMap) {
+  EXPECT_EQ(EvaluateIntEquals(
+                [&](cel_expr_Expr* call) {
+                  SetStringMap(builder_.SetCall(call, "size", 1)[0],
+                               {{"k1", "v"}, {"k2", "v"}});
+                },
+                2),
+            true);
+}
+
+//
+// Timestamps and durations
+//
+
+TEST_F(CelProgramTest, TimestampComparison) {
+  EXPECT_EQ(EvaluateBoolExpr([&](cel_expr_Expr* root) {
+              auto args = builder_.SetCall(root, "_<_", 2);
+              SetTimestamp(args[0], "2025-01-01T00:00:00Z");
+              SetTimestamp(args[1], "2026-01-01T00:00:00Z");
+            }),
+            true);
+}
+
+TEST_F(CelProgramTest, InvalidTimestampFailsEvaluation) {
+  EXPECT_EQ(EvaluateBoolExpr([&](cel_expr_Expr* root) {
+              auto args = builder_.SetCall(root, "_<_", 2);
+              SetTimestamp(args[0], "not a timestamp");
+              SetTimestamp(args[1], "2026-01-01T00:00:00Z");
+            }),
+            std::nullopt);
+}
+
+TEST_F(CelProgramTest, TimestampGetters) {
+  auto getter = [&](absl::string_view function,
+                    std::optional<absl::string_view> zone) {
+    return [this, function, zone](cel_expr_Expr* call) {
+      auto exprs = SetReceiverCall(call, function, zone.has_value() ? 1 : 0);
+      SetTimestamp(exprs[0], "2025-12-01T10:20:30.456Z");
+      if (zone.has_value()) builder_.SetStringConst(exprs[1], *zone);
+    };
+  };
+  EXPECT_EQ(EvaluateIntEquals(getter("getHours", std::nullopt), 10), true);
+  EXPECT_EQ(EvaluateIntEquals(getter("getMinutes", std::nullopt), 20), true);
+  EXPECT_EQ(EvaluateIntEquals(getter("getSeconds", std::nullopt), 30), true);
+  EXPECT_EQ(EvaluateIntEquals(getter("getMilliseconds", std::nullopt), 456),
+            true);
+  // UTC offset form.
+  EXPECT_EQ(EvaluateIntEquals(getter("getHours", "+05:30"), 15), true);
+  EXPECT_EQ(EvaluateIntEquals(getter("getMinutes", "+05:30"), 50), true);
+  EXPECT_EQ(EvaluateIntEquals(getter("getHours", "-05:30"), 4), true);
+  // IANA time zone form.  "UTC" is always available.
+  EXPECT_EQ(EvaluateIntEquals(getter("getHours", "UTC"), 10), true);
+  // Other zones need a zoneinfo database, which some platforms (e.g.
+  // Windows) do not have.
+  absl::TimeZone kolkata;
+  if (absl::LoadTimeZone("Asia/Kolkata", &kolkata)) {
+    EXPECT_EQ(EvaluateIntEquals(getter("getHours", "Asia/Kolkata"), 15), true);
+  }
+  // A zone that is neither an IANA name nor an offset is an evaluation
+  // error.
+  EXPECT_EQ(EvaluateIntEquals(getter("getHours", "Not/AZone"), 10),
+            std::nullopt);
+}
+
+TEST_F(CelProgramTest, DurationGetters) {
+  auto getter = [&](absl::string_view function) {
+    return [this, function](cel_expr_Expr* call) {
+      builder_.SetStringConst(
+          builder_.SetCall(SetReceiverCall(call, function, 0)[0], "duration",
+                           1)[0],
+          "3h25m");
+    };
+  };
+  EXPECT_EQ(EvaluateIntEquals(getter("getHours"), 3), true);
+  // Duration getters return the total, not the component.
+  EXPECT_EQ(EvaluateIntEquals(getter("getMinutes"), 205), true);
+}
+
+// The date getters are not implemented by cel-c, so expressions using them
+// are rejected rather than failing at runtime.
+TEST_F(CelProgramTest, UnsupportedTimestampGetter) {
+  cel_expr_Expr* root;
+  auto* checked = builder_.NewCheckedExpr(&root, ResultType::kBool);
+  auto eq_args = builder_.SetCall(root, "_==_", 2);
+  SetTimestamp(SetReceiverCall(eq_args[0], "getFullYear", 0)[0],
+               "2025-12-01T10:20:30Z");
+  builder_.SetIntConst(eq_args[1], 2025);
+  ExpectInvalid(checked, ResultType::kBool, "failed to compile");
+}
+
+//
+// List and map equality
+//
+
+TEST_F(CelProgramTest, ListEquality) {
+  auto list_op = [&](absl::string_view op, std::vector<absl::string_view> lhs,
+                     std::vector<absl::string_view> rhs) {
+    return EvaluateBoolExpr([&](cel_expr_Expr* root) {
+      auto args = builder_.SetCall(root, op, 2);
+      SetStringList(args[0], lhs);
+      SetStringList(args[1], rhs);
+    });
+  };
+  EXPECT_EQ(list_op("_==_", {"a", "x"}, {"a", "x"}), true);
+  EXPECT_EQ(list_op("_==_", {"a", "x"}, {"b", "x"}), false);
+  EXPECT_EQ(list_op("_==_", {"a", "x"}, {"a", "y"}), false);
+  EXPECT_EQ(list_op("_==_", {"a"}, {"a", "x"}), false);
+  EXPECT_EQ(list_op("_!=_", {"a", "x"}, {"b", "x"}), true);
+  EXPECT_EQ(list_op("_!=_", {"a", "x"}, {"a", "x"}), false);
+}
+
+TEST_F(CelProgramTest, MapEquality) {
+  auto map_op = [&](absl::string_view op, const std::vector<MapEntry>& lhs,
+                    const std::vector<MapEntry>& rhs) {
+    return EvaluateBoolExpr([&](cel_expr_Expr* root) {
+      auto args = builder_.SetCall(root, op, 2);
+      SetStringMap(args[0], lhs);
+      SetStringMap(args[1], rhs);
+    });
+  };
+  EXPECT_EQ(map_op("_==_", {{"k", "v"}}, {{"k", "v"}}), true);
+  EXPECT_EQ(map_op("_==_", {{"k", "v"}}, {{"k", "w"}}), false);
+  EXPECT_EQ(map_op("_!=_", {{"k", "v"}}, {{"k", "w"}}), true);
+  // Multiple entries: only the first, or only the last, value differs.
+  EXPECT_EQ(map_op("_==_", {{"a", "1"}, {"b", "2"}}, {{"a", "9"}, {"b", "2"}}),
+            false);
+  EXPECT_EQ(map_op("_==_", {{"a", "1"}, {"b", "2"}}, {{"a", "1"}, {"b", "9"}}),
+            false);
+  EXPECT_EQ(map_op("_!=_", {{"a", "1"}, {"b", "2"}}, {{"a", "9"}, {"b", "2"}}),
+            true);
+  // A key differs, or the sizes differ.
+  EXPECT_EQ(map_op("_==_", {{"a", "1"}, {"b", "2"}}, {{"a", "1"}, {"c", "2"}}),
+            false);
+  EXPECT_EQ(map_op("_==_", {{"a", "1"}}, {{"a", "1"}, {"b", "2"}}), false);
+  // Entry order does not matter.
+  EXPECT_EQ(map_op("_==_", {{"a", "1"}, {"b", "2"}}, {{"b", "2"}, {"a", "1"}}),
+            true);
+  EXPECT_EQ(map_op("_!=_", {{"a", "1"}, {"b", "2"}}, {{"b", "2"}, {"a", "1"}}),
+            false);
 }
 
 }  // namespace

@@ -3370,8 +3370,6 @@
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/error_space.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/error_space.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/function_scope.h" role="src" />
-    <file baseinstalldir="/" name="third_party/cel-c/cel-c/hash.cc" role="src" />
-    <file baseinstalldir="/" name="third_party/cel-c/cel-c/hash.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/align.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/alloca.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/any.cc" role="src" />
@@ -3379,7 +3377,6 @@
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/arc.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/array.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/asan.h" role="src" />
-    <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/bit.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/bit.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/bitset.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/bitset.h" role="src" />
@@ -3389,7 +3386,6 @@
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/compare.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/config.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/container.h" role="src" />
-    <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/ctype.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/ctype.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/deque.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/durationconv.cc" role="src" />
@@ -3398,7 +3394,6 @@
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/empty_list_value.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/empty_map_value.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/empty_map_value.h" role="src" />
-    <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/endian.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/flat_hash_map.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/generic_array.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/generic_array.h" role="src" />
@@ -3408,6 +3403,8 @@
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/generic_flat_hash.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/generic_string.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/generic_string.h" role="src" />
+    <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/hash.cc" role="src" />
+    <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/hash.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/list_value.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/malloc.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/malloc.h" role="src" />
@@ -3449,8 +3446,7 @@
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/struct_value.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/timestampconv.cc" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/timestampconv.h" role="src" />
-    <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/uchar.h" role="src" />
-    <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/uint128.h" role="src" />
+    <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/trivial_relocation.hpp" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/unaligned.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/unicode.h" role="src" />
     <file baseinstalldir="/" name="third_party/cel-c/cel-c/internal/utf8.cc" role="src" />

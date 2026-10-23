@@ -1125,6 +1125,165 @@ TEST_F(MatcherTest, ExceedsMaxDepth) {
 }
 
 //
+// gRFC A106 validation
+//
+
+class MatcherValidationTest : public MatcherTest {
+ protected:
+  // Returns a matcher list with one matcher whose predicate applies
+  // value_match to the header header_name.
+  static Matcher MakeHeaderMatcher(
+      absl::string_view header_name,
+      const xds::type::matcher::v3::StringMatcher& value_match) {
+    Matcher matcher_proto;
+    auto* field_matcher = matcher_proto.mutable_matcher_list()->add_matchers();
+    SetHeaderPredicate(
+        field_matcher->mutable_predicate()->mutable_single_predicate(),
+        header_name, value_match);
+    StringValue string_value;
+    string_value.set_value("foobar");
+    EXPECT_TRUE(field_matcher->mutable_on_match()
+                    ->mutable_action()
+                    ->mutable_typed_config()
+                    ->PackFrom(string_value));
+    return matcher_proto;
+  }
+
+  static void SetHeaderPredicate(
+      xds::type::matcher::v3::Matcher::MatcherList::Predicate::SinglePredicate*
+          predicate,
+      absl::string_view header_name,
+      const xds::type::matcher::v3::StringMatcher& value_match) {
+    HttpRequestHeaderMatchInput input;
+    input.set_header_name(std::string(header_name));
+    EXPECT_TRUE(
+        predicate->mutable_input()->mutable_typed_config()->PackFrom(input));
+    *predicate->mutable_value_match() = value_match;
+  }
+
+  static xds::type::matcher::v3::StringMatcher Exact(absl::string_view value) {
+    xds::type::matcher::v3::StringMatcher string_matcher;
+    string_matcher.set_exact(std::string(value));
+    return string_matcher;
+  }
+
+  // Parses matcher_proto and returns the resulting error message, or ""
+  // if there are no errors.
+  std::string ParseError(const Matcher& matcher_proto) {
+    ValidationErrors errors;
+    auto matcher = ParseXdsMatcher(decode_context_, ConvertToUpb(matcher_proto),
+                                   action_registry_, RpcMatchContext::Type(),
+                                   true, &errors);
+    if (errors.ok()) {
+      EXPECT_NE(matcher, nullptr);
+      return "";
+    }
+    return std::string(
+        errors.status(absl::StatusCode::kInvalidArgument, "").message());
+  }
+};
+
+TEST_F(MatcherValidationTest, PredicateListWithOnePredicate) {
+  for (bool is_or : {true, false}) {
+    Matcher matcher_proto = MakeHeaderMatcher("foo", Exact("bar"));
+    auto* predicate = matcher_proto.mutable_matcher_list()
+                          ->mutable_matchers(0)
+                          ->mutable_predicate();
+    auto single = predicate->single_predicate();
+    auto* list = is_or ? predicate->mutable_or_matcher()
+                       : predicate->mutable_and_matcher();
+    *list->add_predicate()->mutable_single_predicate() = single;
+    EXPECT_EQ(ParseError(matcher_proto),
+              absl::StrCat(": [field:matcher_list.matchers[0].predicate.",
+                           is_or ? "or_matcher" : "and_matcher",
+                           " error:predicate_list must contain at least 2 "
+                           "predicates]"));
+    // Two predicates are fine.
+    *list->add_predicate()->mutable_single_predicate() = single;
+    EXPECT_EQ(ParseError(matcher_proto), "");
+  }
+}
+
+TEST_F(MatcherValidationTest, EmptyStringMatcherPatterns) {
+  struct TestCase {
+    absl::string_view field;
+    void (*set)(xds::type::matcher::v3::StringMatcher*);
+  };
+  const TestCase kTestCases[] = {
+      {"prefix",
+       [](xds::type::matcher::v3::StringMatcher* m) { m->set_prefix(""); }},
+      {"suffix",
+       [](xds::type::matcher::v3::StringMatcher* m) { m->set_suffix(""); }},
+      {"contains",
+       [](xds::type::matcher::v3::StringMatcher* m) { m->set_contains(""); }},
+      {"safe_regex.regex",
+       [](xds::type::matcher::v3::StringMatcher* m) {
+         m->mutable_safe_regex()->set_regex("");
+       }},
+  };
+  for (const TestCase& test_case : kTestCases) {
+    xds::type::matcher::v3::StringMatcher string_matcher;
+    test_case.set(&string_matcher);
+    EXPECT_EQ(ParseError(MakeHeaderMatcher("foo", string_matcher)),
+              absl::StrCat(": [field:matcher_list.matchers[0].predicate."
+                           "single_predicate.value_match.",
+                           test_case.field, " error:must be non-empty]"));
+  }
+}
+
+TEST_F(MatcherValidationTest, EmptyExactPatternIsAllowed) {
+  EXPECT_EQ(ParseError(MakeHeaderMatcher("foo", Exact(""))), "");
+}
+
+TEST_F(MatcherValidationTest, InvalidHeaderNames) {
+  constexpr absl::string_view kHeaderNameField =
+      ": [field:matcher_list.matchers[0].predicate.single_predicate.input."
+      "value[envoy.type.matcher.v3.HttpRequestHeaderMatchInput].header_name "
+      "error:";
+  EXPECT_EQ(ParseError(MakeHeaderMatcher("", Exact("bar"))),
+            absl::StrCat(kHeaderNameField,
+                         "length must be in the range [1, 16384)]"));
+  EXPECT_EQ(
+      ParseError(MakeHeaderMatcher(std::string(16384, 'a'), Exact("bar"))),
+      absl::StrCat(kHeaderNameField,
+                   "length must be in the range [1, 16384)]"));
+  for (absl::string_view name : {"Foo", "foo bar", "foo:bar", ":", "::path"}) {
+    EXPECT_EQ(ParseError(MakeHeaderMatcher(name, Exact("bar"))),
+              absl::StrCat(kHeaderNameField, "not a valid HTTP/2 header name]"))
+        << name;
+  }
+}
+
+TEST_F(MatcherValidationTest, ValidHeaderNames) {
+  const std::string longest_name(16383, 'a');
+  for (absl::string_view name :
+       {absl::string_view("foo"), absl::string_view("x-foo_bar.baz"),
+        absl::string_view(":path"), absl::string_view(":authority"),
+        absl::string_view("foo-bin"), absl::string_view(longest_name)}) {
+    EXPECT_EQ(ParseError(MakeHeaderMatcher(name, Exact("bar"))), "") << name;
+  }
+}
+
+TEST_F(MatcherValidationTest, InvalidHeaderNameInMatcherTree) {
+  Matcher matcher_proto;
+  auto* tree = matcher_proto.mutable_matcher_tree();
+  HttpRequestHeaderMatchInput input;
+  input.set_header_name("Bad Name");
+  ASSERT_TRUE(tree->mutable_input()->mutable_typed_config()->PackFrom(input));
+  StringValue string_value;
+  string_value.set_value("foobar");
+  ASSERT_TRUE((*tree->mutable_exact_match_map()->mutable_map())["key"]
+                  .mutable_action()
+                  ->mutable_typed_config()
+                  ->PackFrom(string_value));
+  EXPECT_THAT(ParseError(matcher_proto),
+              ::testing::HasSubstr("matcher_tree.input.value[envoy.type."
+                                   "matcher.v3.HttpRequestHeaderMatchInput]."
+                                   "header_name error:not a valid HTTP/2 "
+                                   "header name"));
+}
+
+//
 // CEL input registry
 //
 

@@ -3203,8 +3203,6 @@ third_party/cel-c/cel-c/error_code.h \
 third_party/cel-c/cel-c/error_space.cc \
 third_party/cel-c/cel-c/error_space.h \
 third_party/cel-c/cel-c/function_scope.h \
-third_party/cel-c/cel-c/hash.cc \
-third_party/cel-c/cel-c/hash.h \
 third_party/cel-c/cel-c/internal/align.h \
 third_party/cel-c/cel-c/internal/alloca.h \
 third_party/cel-c/cel-c/internal/any.cc \
@@ -3212,7 +3210,6 @@ third_party/cel-c/cel-c/internal/any.h \
 third_party/cel-c/cel-c/internal/arc.h \
 third_party/cel-c/cel-c/internal/array.h \
 third_party/cel-c/cel-c/internal/asan.h \
-third_party/cel-c/cel-c/internal/bit.cc \
 third_party/cel-c/cel-c/internal/bit.h \
 third_party/cel-c/cel-c/internal/bitset.cc \
 third_party/cel-c/cel-c/internal/bitset.h \
@@ -3222,7 +3219,6 @@ third_party/cel-c/cel-c/internal/ckdint.h \
 third_party/cel-c/cel-c/internal/compare.h \
 third_party/cel-c/cel-c/internal/config.h \
 third_party/cel-c/cel-c/internal/container.h \
-third_party/cel-c/cel-c/internal/ctype.cc \
 third_party/cel-c/cel-c/internal/ctype.h \
 third_party/cel-c/cel-c/internal/deque.h \
 third_party/cel-c/cel-c/internal/durationconv.cc \
@@ -3231,7 +3227,6 @@ third_party/cel-c/cel-c/internal/empty_list_value.cc \
 third_party/cel-c/cel-c/internal/empty_list_value.h \
 third_party/cel-c/cel-c/internal/empty_map_value.cc \
 third_party/cel-c/cel-c/internal/empty_map_value.h \
-third_party/cel-c/cel-c/internal/endian.h \
 third_party/cel-c/cel-c/internal/flat_hash_map.h \
 third_party/cel-c/cel-c/internal/generic_array.cc \
 third_party/cel-c/cel-c/internal/generic_array.h \
@@ -3241,6 +3236,8 @@ third_party/cel-c/cel-c/internal/generic_flat_hash.cc \
 third_party/cel-c/cel-c/internal/generic_flat_hash.h \
 third_party/cel-c/cel-c/internal/generic_string.cc \
 third_party/cel-c/cel-c/internal/generic_string.h \
+third_party/cel-c/cel-c/internal/hash.cc \
+third_party/cel-c/cel-c/internal/hash.h \
 third_party/cel-c/cel-c/internal/list_value.cc \
 third_party/cel-c/cel-c/internal/malloc.cc \
 third_party/cel-c/cel-c/internal/malloc.h \
@@ -3282,8 +3279,7 @@ third_party/cel-c/cel-c/internal/string.h \
 third_party/cel-c/cel-c/internal/struct_value.cc \
 third_party/cel-c/cel-c/internal/timestampconv.cc \
 third_party/cel-c/cel-c/internal/timestampconv.h \
-third_party/cel-c/cel-c/internal/uchar.h \
-third_party/cel-c/cel-c/internal/uint128.h \
+third_party/cel-c/cel-c/internal/trivial_relocation.hpp \
 third_party/cel-c/cel-c/internal/unaligned.h \
 third_party/cel-c/cel-c/internal/unicode.h \
 third_party/cel-c/cel-c/internal/utf8.cc \

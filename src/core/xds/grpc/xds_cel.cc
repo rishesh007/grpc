@@ -160,6 +160,13 @@ absl::Status ValidateResultType(const cel_expr_CheckedExpr* checked_expr,
     return absl::InvalidArgumentError(
         "CEL expression has no type for its result");
   }
+  // A string extractor may also be typed dyn, e.g. `request['path']` when
+  // the control plane declares `request` as dyn.  Its result is then
+  // checked at runtime, falling back to CelExtractString.default_value.
+  if (result_type == CelProgram::ResultType::kString &&
+      cel_expr_Type_has_dyn(type)) {
+    return absl::OkStatus();
+  }
   const int32_t expected = result_type == CelProgram::ResultType::kBool
                                ? cel_expr_Type_BOOL
                                : cel_expr_Type_STRING;

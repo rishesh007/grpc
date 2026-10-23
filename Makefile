@@ -1785,12 +1785,9 @@ LIBGRPC_SRC = \
     third_party/cel-c/cel-c/error.cc \
     third_party/cel-c/cel-c/error_code.cc \
     third_party/cel-c/cel-c/error_space.cc \
-    third_party/cel-c/cel-c/hash.cc \
     third_party/cel-c/cel-c/internal/any.cc \
-    third_party/cel-c/cel-c/internal/bit.cc \
     third_party/cel-c/cel-c/internal/bitset.cc \
     third_party/cel-c/cel-c/internal/charconv.cc \
-    third_party/cel-c/cel-c/internal/ctype.cc \
     third_party/cel-c/cel-c/internal/durationconv.cc \
     third_party/cel-c/cel-c/internal/empty_list_value.cc \
     third_party/cel-c/cel-c/internal/empty_map_value.cc \
@@ -1798,6 +1795,7 @@ LIBGRPC_SRC = \
     third_party/cel-c/cel-c/internal/generic_deque.cc \
     third_party/cel-c/cel-c/internal/generic_flat_hash.cc \
     third_party/cel-c/cel-c/internal/generic_string.cc \
+    third_party/cel-c/cel-c/internal/hash.cc \
     third_party/cel-c/cel-c/internal/list_value.cc \
     third_party/cel-c/cel-c/internal/malloc.cc \
     third_party/cel-c/cel-c/internal/map_value.cc \

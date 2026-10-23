@@ -43,6 +43,9 @@ class CelExprBuilder {
   cel_expr_CheckedExpr* NewCheckedExpr(cel_expr_Expr** root,
                                        CelProgram::ResultType result_type);
 
+  // Creates a CheckedExpr whose result has type dyn.
+  cel_expr_CheckedExpr* NewDynCheckedExpr(cel_expr_Expr** root);
+
   // Assigns a fresh id to expr and returns it.
   cel_expr_Expr* NewExpr(cel_expr_Expr* expr);
 

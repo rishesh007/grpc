@@ -709,8 +709,10 @@ grpc_cc_test(
     name = "xds_cel_test",
     srcs = ["xds_cel_test.cc"],
     external_deps = [
+        "absl/functional:function_ref",
         "absl/status",
         "absl/strings",
+        "absl/time",
         "cel_c_runtime",
         "cel_c_string_view_absl",
         "cel_c_value",
@@ -745,6 +747,7 @@ grpc_cc_test(
     deps = [
         ":cel_expr_builder",
         "//:cel_expr_checked_upb",
+        "//:cel_expr_syntax_upb",
         "//src/core:metadata_batch",
         "//src/core:slice",
         "//src/core:xds_cel",

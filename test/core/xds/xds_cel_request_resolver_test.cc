@@ -30,6 +30,7 @@
 #include "cel-c/string_view_absl.h"
 #include "cel-c/value.h"
 #include "cel/expr/checked.upb.h"
+#include "cel/expr/syntax.upb.h"
 #include "src/core/call/metadata_batch.h"
 #include "src/core/lib/slice/slice.h"
 #include "src/core/xds/grpc/xds_cel.h"
@@ -195,8 +196,56 @@ TEST_F(CelRequestResolverTest, MapEquality) {
   }
 }
 
-// Exercises the map vtables directly, since cel-c's interpreter does not
-// yet support some map operations (e.g. size() of a map).
+TEST_F(CelRequestResolverTest, TeHeaderIsHidden) {
+  Append("te", "trailers");
+  EXPECT_EQ(EvaluateHeader("te"), std::nullopt);
+  EXPECT_EQ(EvaluateInHeaders("te"), false);
+}
+
+// size() of the lazily computed maps, via the interpreter.
+TEST_F(CelRequestResolverTest, Size) {
+  int64_t num_headers = 0;
+  context_.ForEachHeaderName([&](absl::string_view) { ++num_headers; });
+  // :path, :authority, x-foo, user-agent and content-type.
+  EXPECT_EQ(num_headers, 5);
+  struct TestCase {
+    absl::string_view field;  // Empty for `request` itself.
+    bool receiver_style;
+    int64_t expected;
+  };
+  for (const TestCase& test_case : {
+           TestCase{"headers", false, num_headers},  // size(request.headers)
+           TestCase{"headers", true, num_headers},   // request.headers.size()
+           TestCase{"", false, 7},                   // size(request)
+       }) {
+    cel_expr_Expr* root;
+    auto* checked = builder_.NewCheckedExpr(&root, ResultType::kBool);
+    auto eq_args = builder_.SetCall(root, "_==_", 2);
+    cel_expr_Expr* size_arg;
+    if (test_case.receiver_style) {
+      size_arg = builder_.NewExpr(cel_expr_Expr_Call_mutable_target(
+          cel_expr_Expr_mutable_call_expr(eq_args[0], arena_.ptr()),
+          arena_.ptr()));
+      cel_expr_Expr_Call_set_function(
+          cel_expr_Expr_mutable_call_expr(eq_args[0], arena_.ptr()),
+          cel_StringView_FromAbsl("size"));
+    } else {
+      size_arg = builder_.SetCall(eq_args[0], "size", 1)[0];
+    }
+    if (test_case.field.empty()) {
+      builder_.SetIdent(size_arg, "request");
+    } else {
+      builder_.SetRequestField(size_arg, test_case.field);
+    }
+    builder_.SetIntConst(eq_args[1], test_case.expected);
+    auto program = Compile(checked, ResultType::kBool);
+    ASSERT_NE(program, nullptr);
+    EXPECT_EQ(program->EvaluateBool(resolver_), true)
+        << test_case.field << " receiver_style=" << test_case.receiver_style;
+  }
+}
+
+// Exercises the map vtables directly, independent of the interpreter.
 class CelRequestMapTest : public CelRequestResolverTest {
  protected:
   CelRequestMapTest() {

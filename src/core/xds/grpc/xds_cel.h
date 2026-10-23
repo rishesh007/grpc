@@ -107,7 +107,7 @@ class CelStringExtractor {
 };
 
 // Checks that a type-checked CEL expression conforms to gRFC A106:
-// - its result type is result_type;
+// - its result type is result_type (or dyn, for kString);
 // - the only variable is `request`;
 // - no comprehensions (e.g. exists(), all(), cel.bind());
 // - no string() conversions and no string or list concatenation;
