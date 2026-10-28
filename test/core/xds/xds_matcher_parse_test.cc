@@ -18,21 +18,30 @@
 #include <google/protobuf/text_format.h>
 #include <google/protobuf/wrappers.pb.h>
 
+#include "cel/expr/checked.upb.h"
 #include "envoy/type/matcher/v3/http_inputs.pb.h"
 #include "google/protobuf/wrappers.upb.h"
+#include "src/core/call/metadata_batch.h"
 #include "src/core/util/down_cast.h"
 #include "src/core/util/upb_utils.h"
 #include "src/core/util/validation_errors.h"
 #include "src/core/xds/grpc/xds_bootstrap_grpc.h"
 #include "src/core/xds/grpc/xds_bootstrap_grpc_builder.h"
+#include "src/core/xds/grpc/xds_cel.h"
+#include "src/core/xds/grpc/xds_cel_request_resolver.h"
+#include "src/core/xds/grpc/xds_common_types.h"
 #include "src/core/xds/grpc/xds_matcher.h"
 #include "src/core/xds/grpc/xds_matcher_action.h"
 #include "src/core/xds/grpc/xds_matcher_context.h"
+#include "src/core/xds/grpc/xds_matcher_input.h"
 #include "src/core/xds/xds_client/xds_client.h"
 #include "src/core/xds/xds_client/xds_resource_type.h"
 #include "test/core/test_util/test_config.h"
+#include "test/core/xds/cel_expr_builder.h"
 #include "upb/mem/arena.hpp"
 #include "upb/reflection/def.hpp"  // For upb_DefPool
+#include "xds/type/matcher/v3/cel.pb.h"
+#include "xds/type/matcher/v3/http_inputs.pb.h"
 #include "xds/type/matcher/v3/matcher.pb.h"
 #include "xds/type/matcher/v3/matcher.upb.h"
 #include "xds/type/v3/typed_struct.pb.h"
@@ -45,7 +54,10 @@ namespace {
 
 using ::envoy::type::matcher::v3::HttpRequestHeaderMatchInput;
 using ::google::protobuf::StringValue;
+using ::xds::type::matcher::v3::CelMatcher;
 using ::xds::type::matcher::v3::Matcher;
+using HttpAttributesCelMatchInputProto =
+    ::xds::type::matcher::v3::HttpAttributesCelMatchInput;
 using ::xds::type::v3::TypedStruct;
 
 // A simple action that holds a string, used for verification.
@@ -684,12 +696,11 @@ TEST_F(MatcherTest, MatcherListSinglePredicateEmpty) {
       ParseXdsMatcher(decode_context_, ConvertToUpb(matcher_proto),
                       action_registry_, RpcMatchContext::Type(), true, &errors);
   EXPECT_FALSE(errors.ok());
-  EXPECT_EQ(
-      errors.status(absl::StatusCode::kInvalidArgument, "").message(),
-      ": [field:matcher_list.matchers[0].predicate.single_predicate.input "
-      "error:field not present;"
-      " field:matcher_list.matchers[0].predicate.single_predicate.value_match "
-      "error:field not present]");
+  EXPECT_EQ(errors.status(absl::StatusCode::kInvalidArgument, "").message(),
+            ": [field:matcher_list.matchers[0].predicate.single_predicate."
+            "custom_match error:field not present;"
+            " field:matcher_list.matchers[0].predicate.single_predicate.input "
+            "error:field not present]");
 }
 
 TEST_F(MatcherTest, MatcherListSinglePredicateInvalidValueMatch) {
@@ -1111,6 +1122,387 @@ TEST_F(MatcherTest, ExceedsMaxDepth) {
             "matcher_tree.exact_match_map.on_match.matcher."
             "matcher_tree.exact_match_map.on_match.matcher "
             "error:matcher tree exceeds max recursion depth]");
+}
+
+//
+// gRFC A106 validation
+//
+
+class MatcherValidationTest : public MatcherTest {
+ protected:
+  // Returns a matcher list with one matcher whose predicate applies
+  // value_match to the header header_name.
+  static Matcher MakeHeaderMatcher(
+      absl::string_view header_name,
+      const xds::type::matcher::v3::StringMatcher& value_match) {
+    Matcher matcher_proto;
+    auto* field_matcher = matcher_proto.mutable_matcher_list()->add_matchers();
+    SetHeaderPredicate(
+        field_matcher->mutable_predicate()->mutable_single_predicate(),
+        header_name, value_match);
+    StringValue string_value;
+    string_value.set_value("foobar");
+    EXPECT_TRUE(field_matcher->mutable_on_match()
+                    ->mutable_action()
+                    ->mutable_typed_config()
+                    ->PackFrom(string_value));
+    return matcher_proto;
+  }
+
+  static void SetHeaderPredicate(
+      xds::type::matcher::v3::Matcher::MatcherList::Predicate::SinglePredicate*
+          predicate,
+      absl::string_view header_name,
+      const xds::type::matcher::v3::StringMatcher& value_match) {
+    HttpRequestHeaderMatchInput input;
+    input.set_header_name(std::string(header_name));
+    EXPECT_TRUE(
+        predicate->mutable_input()->mutable_typed_config()->PackFrom(input));
+    *predicate->mutable_value_match() = value_match;
+  }
+
+  static xds::type::matcher::v3::StringMatcher Exact(absl::string_view value) {
+    xds::type::matcher::v3::StringMatcher string_matcher;
+    string_matcher.set_exact(std::string(value));
+    return string_matcher;
+  }
+
+  // Parses matcher_proto and returns the resulting error message, or ""
+  // if there are no errors.
+  std::string ParseError(const Matcher& matcher_proto) {
+    ValidationErrors errors;
+    auto matcher = ParseXdsMatcher(decode_context_, ConvertToUpb(matcher_proto),
+                                   action_registry_, RpcMatchContext::Type(),
+                                   true, &errors);
+    if (errors.ok()) {
+      EXPECT_NE(matcher, nullptr);
+      return "";
+    }
+    return std::string(
+        errors.status(absl::StatusCode::kInvalidArgument, "").message());
+  }
+};
+
+TEST_F(MatcherValidationTest, PredicateListWithOnePredicate) {
+  for (bool is_or : {true, false}) {
+    Matcher matcher_proto = MakeHeaderMatcher("foo", Exact("bar"));
+    auto* predicate = matcher_proto.mutable_matcher_list()
+                          ->mutable_matchers(0)
+                          ->mutable_predicate();
+    auto single = predicate->single_predicate();
+    auto* list = is_or ? predicate->mutable_or_matcher()
+                       : predicate->mutable_and_matcher();
+    *list->add_predicate()->mutable_single_predicate() = single;
+    EXPECT_EQ(ParseError(matcher_proto),
+              absl::StrCat(": [field:matcher_list.matchers[0].predicate.",
+                           is_or ? "or_matcher" : "and_matcher",
+                           " error:predicate_list must contain at least 2 "
+                           "predicates]"));
+    // Two predicates are fine.
+    *list->add_predicate()->mutable_single_predicate() = single;
+    EXPECT_EQ(ParseError(matcher_proto), "");
+  }
+}
+
+TEST_F(MatcherValidationTest, EmptyStringMatcherPatterns) {
+  struct TestCase {
+    absl::string_view field;
+    void (*set)(xds::type::matcher::v3::StringMatcher*);
+  };
+  const TestCase kTestCases[] = {
+      {"prefix",
+       [](xds::type::matcher::v3::StringMatcher* m) { m->set_prefix(""); }},
+      {"suffix",
+       [](xds::type::matcher::v3::StringMatcher* m) { m->set_suffix(""); }},
+      {"contains",
+       [](xds::type::matcher::v3::StringMatcher* m) { m->set_contains(""); }},
+      {"safe_regex.regex",
+       [](xds::type::matcher::v3::StringMatcher* m) {
+         m->mutable_safe_regex()->set_regex("");
+       }},
+  };
+  for (const TestCase& test_case : kTestCases) {
+    xds::type::matcher::v3::StringMatcher string_matcher;
+    test_case.set(&string_matcher);
+    EXPECT_EQ(ParseError(MakeHeaderMatcher("foo", string_matcher)),
+              absl::StrCat(": [field:matcher_list.matchers[0].predicate."
+                           "single_predicate.value_match.",
+                           test_case.field, " error:must be non-empty]"));
+  }
+}
+
+TEST_F(MatcherValidationTest, EmptyExactPatternIsAllowed) {
+  EXPECT_EQ(ParseError(MakeHeaderMatcher("foo", Exact(""))), "");
+}
+
+TEST_F(MatcherValidationTest, InvalidHeaderNames) {
+  constexpr absl::string_view kHeaderNameField =
+      ": [field:matcher_list.matchers[0].predicate.single_predicate.input."
+      "value[envoy.type.matcher.v3.HttpRequestHeaderMatchInput].header_name "
+      "error:";
+  EXPECT_EQ(ParseError(MakeHeaderMatcher("", Exact("bar"))),
+            absl::StrCat(kHeaderNameField,
+                         "length must be in the range [1, 16384)]"));
+  EXPECT_EQ(
+      ParseError(MakeHeaderMatcher(std::string(16384, 'a'), Exact("bar"))),
+      absl::StrCat(kHeaderNameField,
+                   "length must be in the range [1, 16384)]"));
+  for (absl::string_view name : {"Foo", "foo bar", "foo:bar", ":", "::path"}) {
+    EXPECT_EQ(ParseError(MakeHeaderMatcher(name, Exact("bar"))),
+              absl::StrCat(kHeaderNameField, "not a valid HTTP/2 header name]"))
+        << name;
+  }
+}
+
+TEST_F(MatcherValidationTest, ValidHeaderNames) {
+  const std::string longest_name(16383, 'a');
+  for (absl::string_view name :
+       {absl::string_view("foo"), absl::string_view("x-foo_bar.baz"),
+        absl::string_view(":path"), absl::string_view(":authority"),
+        absl::string_view("foo-bin"), absl::string_view(longest_name)}) {
+    EXPECT_EQ(ParseError(MakeHeaderMatcher(name, Exact("bar"))), "") << name;
+  }
+}
+
+TEST_F(MatcherValidationTest, InvalidHeaderNameInMatcherTree) {
+  Matcher matcher_proto;
+  auto* tree = matcher_proto.mutable_matcher_tree();
+  HttpRequestHeaderMatchInput input;
+  input.set_header_name("Bad Name");
+  ASSERT_TRUE(tree->mutable_input()->mutable_typed_config()->PackFrom(input));
+  StringValue string_value;
+  string_value.set_value("foobar");
+  ASSERT_TRUE((*tree->mutable_exact_match_map()->mutable_map())["key"]
+                  .mutable_action()
+                  ->mutable_typed_config()
+                  ->PackFrom(string_value));
+  EXPECT_THAT(ParseError(matcher_proto),
+              ::testing::HasSubstr("matcher_tree.input.value[envoy.type."
+                                   "matcher.v3.HttpRequestHeaderMatchInput]."
+                                   "header_name error:not a valid HTTP/2 "
+                                   "header name"));
+}
+
+//
+// CEL input registry
+//
+
+class CelInputRegistryTest : public MatcherTest {
+ protected:
+  const XdsMatcherInputRegistry<CelRequestResolver>& registry() {
+    return DownCast<const GrpcXdsBootstrap&>(xds_client_->bootstrap())
+        .matcher_cel_input_registry();
+  }
+
+  std::unique_ptr<XdsMatcher::InputValue<CelRequestResolver>> ParseInput(
+      absl::string_view type, absl::string_view serialized_value,
+      ValidationErrors* errors) {
+    XdsExtension extension;
+    extension.type = type;
+    extension.value = serialized_value;
+    return registry().ParseAndCreateInput(decode_context_, extension,
+                                          RpcMatchContext::Type(), errors);
+  }
+};
+
+TEST_F(CelInputRegistryTest, HttpAttributesCelMatchInput) {
+  ValidationErrors errors;
+  auto input = ParseInput("xds.type.matcher.v3.HttpAttributesCelMatchInput", "",
+                          &errors);
+  ASSERT_TRUE(errors.ok())
+      << errors.status(absl::StatusCode::kInvalidArgument, "").message();
+  ASSERT_NE(input, nullptr);
+  EXPECT_EQ(input->ToString(), "HttpAttributesCelMatchInput");
+  EXPECT_TRUE(input->Equals(HttpAttributesCelMatchInput()));
+  grpc_metadata_batch metadata;
+  RpcMatchContext context(&metadata);
+  EXPECT_TRUE(input->GetValue(context).has_value());
+}
+
+TEST_F(CelInputRegistryTest, MalformedHttpAttributesCelMatchInput) {
+  ValidationErrors errors;
+  auto input = ParseInput("xds.type.matcher.v3.HttpAttributesCelMatchInput",
+                          "\xff", &errors);
+  EXPECT_EQ(input, nullptr);
+  EXPECT_THAT(
+      errors.status(absl::StatusCode::kInvalidArgument, "").message(),
+      ::testing::HasSubstr("Failed to parse HttpAttributesCelMatchInput"));
+}
+
+TEST_F(CelInputRegistryTest, StringInputNotSupported) {
+  ValidationErrors errors;
+  auto input = ParseInput("envoy.type.matcher.v3.HttpRequestHeaderMatchInput",
+                          "", &errors);
+  EXPECT_EQ(input, nullptr);
+  EXPECT_THAT(
+      errors.status(absl::StatusCode::kInvalidArgument, "").message(),
+      ::testing::HasSubstr("Unsupported Input type:envoy.type.matcher.v3."
+                           "HttpRequestHeaderMatchInput"));
+}
+
+//
+// CelMatcher
+//
+
+class CelMatcherParseTest : public MatcherTest {
+ protected:
+  // Returns a CelMatcher whose expr_match.cel_expr_checked is checked.
+  CelMatcher MakeCelMatcher(const cel_expr_CheckedExpr* checked) {
+    size_t size;
+    char* bytes =
+        cel_expr_CheckedExpr_serialize(checked, upb_arena_.ptr(), &size);
+    CelMatcher cel_matcher;
+    EXPECT_TRUE(cel_matcher.mutable_expr_match()
+                    ->mutable_cel_expr_checked()
+                    ->ParseFromArray(bytes, size));
+    return cel_matcher;
+  }
+
+  // Returns a matcher with a single predicate that applies custom_match to
+  // input.
+  static Matcher MakeMatcher(const google::protobuf::Message& custom_match,
+                             const google::protobuf::Message& input) {
+    Matcher matcher_proto;
+    auto* field_matcher = matcher_proto.mutable_matcher_list()->add_matchers();
+    auto* predicate =
+        field_matcher->mutable_predicate()->mutable_single_predicate();
+    predicate->mutable_input()->mutable_typed_config()->PackFrom(input);
+    predicate->mutable_custom_match()->mutable_typed_config()->PackFrom(
+        custom_match);
+    StringValue string_value;
+    string_value.set_value("foobar");
+    field_matcher->mutable_on_match()
+        ->mutable_action()
+        ->mutable_typed_config()
+        ->PackFrom(string_value);
+    return matcher_proto;
+  }
+
+  std::unique_ptr<XdsMatcher> Parse(const Matcher& matcher_proto,
+                                    ValidationErrors* errors) {
+    return ParseXdsMatcher(decode_context_, ConvertToUpb(matcher_proto),
+                           action_registry_, RpcMatchContext::Type(), true,
+                           errors);
+  }
+
+  // Parses matcher_proto and returns the resulting error message.
+  std::string ParseError(const Matcher& matcher_proto) {
+    ValidationErrors errors;
+    Parse(matcher_proto, &errors);
+    return std::string(
+        errors.status(absl::StatusCode::kInvalidArgument, "").message());
+  }
+
+  CelExprBuilder builder_{upb_arena_.ptr()};
+};
+
+TEST_F(CelMatcherParseTest, Basic) {
+  ValidationErrors errors;
+  auto matcher =
+      Parse(MakeMatcher(MakeCelMatcher(builder_.HeaderEquals("foo", "bar")),
+                        HttpAttributesCelMatchInputProto()),
+            &errors);
+  ASSERT_TRUE(errors.ok())
+      << errors.status(absl::StatusCode::kInvalidArgument, "").message();
+  ASSERT_NE(matcher, nullptr);
+  EXPECT_THAT(
+      matcher->ToString(),
+      ::testing::HasSubstr(
+          "predicate=SinglePredicate{input=HttpAttributesCelMatchInput, "
+          "matcher=CelMatcher{CelProgram{"));
+}
+
+TEST_F(CelMatcherParseTest, MissingExprMatch) {
+  EXPECT_THAT(
+      ParseError(MakeMatcher(CelMatcher(), HttpAttributesCelMatchInputProto())),
+      ::testing::HasSubstr("custom_match.value[xds.type.matcher.v3.CelMatcher]"
+                           ".expr_match error:field not present"));
+}
+
+TEST_F(CelMatcherParseTest, CelExprStringNotSupported) {
+  CelMatcher cel_matcher = MakeCelMatcher(builder_.HeaderEquals("foo", "bar"));
+  cel_matcher.mutable_expr_match()->set_cel_expr_string("true");
+  EXPECT_THAT(
+      ParseError(MakeMatcher(cel_matcher, HttpAttributesCelMatchInputProto())),
+      ::testing::HasSubstr("expr_match.cel_expr_string error:not supported"));
+}
+
+TEST_F(CelMatcherParseTest, CelExprCheckedMissing) {
+  // Parsed expressions are ignored.
+  CelMatcher cel_matcher;
+  cel_matcher.mutable_expr_match()->mutable_cel_expr_parsed();
+  EXPECT_THAT(
+      ParseError(MakeMatcher(cel_matcher, HttpAttributesCelMatchInputProto())),
+      ::testing::HasSubstr(
+          "expr_match.cel_expr_checked error:field not present"));
+}
+
+TEST_F(CelMatcherParseTest, InvalidExpression) {
+  cel_expr_Expr* root;
+  cel_expr_CheckedExpr* checked =
+      builder_.NewCheckedExpr(&root, CelProgram::ResultType::kBool);
+  builder_.SetIdent(root, "foo");
+  EXPECT_THAT(ParseError(MakeMatcher(MakeCelMatcher(checked),
+                                     HttpAttributesCelMatchInputProto())),
+              ::testing::HasSubstr("expr_match.cel_expr_checked error:"));
+}
+
+TEST_F(CelMatcherParseTest, NonBoolResultType) {
+  cel_expr_Expr* root;
+  cel_expr_CheckedExpr* checked =
+      builder_.NewCheckedExpr(&root, CelProgram::ResultType::kString);
+  builder_.SetRequestField(root, "path");
+  EXPECT_THAT(ParseError(MakeMatcher(MakeCelMatcher(checked),
+                                     HttpAttributesCelMatchInputProto())),
+              ::testing::HasSubstr("expr_match.cel_expr_checked error:"));
+}
+
+TEST_F(CelMatcherParseTest, UnsupportedCustomMatchType) {
+  StringValue string_value;
+  EXPECT_THAT(
+      ParseError(MakeMatcher(string_value, HttpAttributesCelMatchInputProto())),
+      ::testing::HasSubstr("custom_match.value[google.protobuf.StringValue] "
+                           "error:unsupported custom_match type"));
+}
+
+TEST_F(CelMatcherParseTest, StringInputWithCelMatcher) {
+  HttpRequestHeaderMatchInput input;
+  input.set_header_name("foo");
+  EXPECT_THAT(
+      ParseError(MakeMatcher(
+          MakeCelMatcher(builder_.HeaderEquals("foo", "bar")), input)),
+      ::testing::HasSubstr("Unsupported Input type:envoy.type.matcher.v3."
+                           "HttpRequestHeaderMatchInput"));
+}
+
+TEST_F(CelMatcherParseTest, CelInputWithValueMatch) {
+  Matcher matcher_proto =
+      MakeMatcher(MakeCelMatcher(builder_.HeaderEquals("foo", "bar")),
+                  HttpAttributesCelMatchInputProto());
+  auto* predicate = matcher_proto.mutable_matcher_list()
+                        ->mutable_matchers(0)
+                        ->mutable_predicate()
+                        ->mutable_single_predicate();
+  predicate->mutable_value_match()->set_exact("bar");
+  EXPECT_THAT(ParseError(matcher_proto),
+              ::testing::HasSubstr("Unsupported Input type:xds.type.matcher."
+                                   "v3.HttpAttributesCelMatchInput"));
+}
+
+TEST_F(CelMatcherParseTest, NoValueMatchOrCustomMatch) {
+  Matcher matcher_proto =
+      MakeMatcher(MakeCelMatcher(builder_.HeaderEquals("foo", "bar")),
+                  HttpAttributesCelMatchInputProto());
+  matcher_proto.mutable_matcher_list()
+      ->mutable_matchers(0)
+      ->mutable_predicate()
+      ->mutable_single_predicate()
+      ->clear_custom_match();
+  EXPECT_THAT(
+      ParseError(matcher_proto),
+      ::testing::HasSubstr(
+          "single_predicate error:one of value_match or custom_match must be "
+          "set"));
 }
 
 }  // namespace

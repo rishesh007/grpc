@@ -29,6 +29,7 @@
 #include "src/core/util/validation_errors.h"
 #include "src/core/xds/grpc/certificate_provider_store.h"
 #include "src/core/xds/grpc/xds_audit_logger_registry.h"
+#include "src/core/xds/grpc/xds_cel_request_resolver.h"
 #include "src/core/xds/grpc/xds_cluster_specifier_plugin.h"
 #include "src/core/xds/grpc/xds_http_filter_registry.h"
 #include "src/core/xds/grpc/xds_lb_policy_registry.h"
@@ -176,6 +177,10 @@ class GrpcXdsBootstrap final : public XdsBootstrap {
   matcher_string_input_registry() const {
     return matcher_string_input_registry_;
   }
+  const XdsMatcherInputRegistry<CelRequestResolver>&
+  matcher_cel_input_registry() const {
+    return matcher_cel_input_registry_;
+  }
 
   // Exposed for testing purposes only.
   const std::map<std::string, GrpcAuthority>& authorities() const {
@@ -202,6 +207,7 @@ class GrpcXdsBootstrap final : public XdsBootstrap {
   XdsLbPolicyRegistry lb_policy_registry_;
   XdsAuditLoggerRegistry audit_logger_registry_;
   XdsMatcherInputRegistry<absl::string_view> matcher_string_input_registry_;
+  XdsMatcherInputRegistry<CelRequestResolver> matcher_cel_input_registry_;
 };
 
 }  // namespace grpc_core
